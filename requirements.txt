@@ -19,3 +19,4 @@ beanie
 bson
 pydantic
 pymongo
+pydantic_settings

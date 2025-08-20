@@ -32,3 +32,4 @@ class UserListRespponse(BaseModel):
     total: int
     page: int
     size: int
+    
