@@ -16,7 +16,7 @@ httpx
 
 python-dotenv
 beanie
-bson
+# bson
 pydantic
 pymongo
 pydantic_settings

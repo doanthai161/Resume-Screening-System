@@ -1,0 +1,72 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# C extensions
+*.so
+
+# Virtual environment
+venv/
+.venv/
+ENV/
+env/
+.ENV/
+.python-version
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# VS Code settings
+.vscode/
+.settings/
+
+# Pytest cache
+.pytest_cache/
+
+# MyPy cache
+.mypy_cache/
+
+# Coverage reports
+htmlcov/
+.coverage
+coverage.xml
+*.cover
+
+# PyInstaller
+dist/
+build/
+*.spec
+
+# Unit test / test output
+*.log
+
+# Local databases
+*.sqlite3
+*.db
+
+# MacOS / Linux / Windows extra files
+.DS_Store
+Thumbs.db
+
+# Env config, secrets, local configs
+.env
+.env.*
+*.local
+secrets.json
+
+# Pycharm
+.idea/
+*.iml
+
+# Misc
+__pypackages__/
+# Ignore pip tools
+pip-wheel-metadata/
+*.egg-info/
+*.egg
+.eggs/
+
+# Ignore Swagger/OpenAPI auto-gen if exists
+openapi.json
+docs.json
