@@ -20,3 +20,6 @@ beanie
 pydantic
 pymongo
 pydantic_settings
+fastapi_mail
+jose
+passlib
