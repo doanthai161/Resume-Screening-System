@@ -5,6 +5,8 @@ from app.dependencies.error_code import ErrorCode
 
 class UserCreate(BaseModel):
     email: EmailStr
+    full_name: Optional[str] = None
+    phone_number: Optional[str] = None
     hashed_password: str
     role: int
     address: Optional[str] = None
@@ -18,12 +20,16 @@ class UserCreate(BaseModel):
         return v
 
 class UserUpdate(BaseModel):
+    full_name: Optional[str]
+    phone_number: Optional[str]
     role: Optional[int]
     address: Optional[str]
 
 class UserResponse(BaseModel):
     id: str
     email: EmailStr
+    full_name: Optional[str]
+    phone_number: Optional[str]
     role:int
     address: Optional[str]
 
