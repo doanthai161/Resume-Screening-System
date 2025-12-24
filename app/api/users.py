@@ -7,7 +7,7 @@ from typing import Optional
 from pydantic import BaseModel, EmailStr
 from app.dependencies.error_code import ErrorCode
 from app.models.user import User
-from app.repositories.config import settings
+from app.core.config import settings
 from app.utils.password import verify_password
 from app.schemas.user import (
     UserResponse,
