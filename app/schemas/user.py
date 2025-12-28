@@ -7,22 +7,21 @@ class UserCreate(BaseModel):
     email: EmailStr
     full_name: Optional[str] = None
     phone_number: Optional[str] = None
-    hashed_password: str
-    role: int
+    password: str
     address: Optional[str] = None
 
     @field_validator("password")
-    def validate_password(cls, v):
+    @classmethod
+    def validate_password(cls, v: str):
         if len(v) < 6:
-            raise HTTPException(
-                status_code=400, detail=ErrorCode.PASSWORD_MUST_BE_AT_LEAST_6_CHARACTERS
-            )
+            raise ValueError("Password must be at least 6 characters")
+        if len(v.encode("utf-8")) > 72:
+            raise ValueError("Password too long")
         return v
 
 class UserUpdate(BaseModel):
     full_name: Optional[str]
     phone_number: Optional[str]
-    role: Optional[int]
     address: Optional[str]
 
 class UserResponse(BaseModel):
@@ -30,7 +29,6 @@ class UserResponse(BaseModel):
     email: EmailStr
     full_name: Optional[str]
     phone_number: Optional[str]
-    role:int
     address: Optional[str]
 
 class UserListRespponse(BaseModel):
@@ -38,4 +36,17 @@ class UserListRespponse(BaseModel):
     total: int
     page: int
     size: int
-    
+
+class RegisterRequest(BaseModel):
+    email: EmailStr
+    password: str
+    full_name: str | None = None
+
+    @field_validator("password")
+    @classmethod
+    def validate_password(cls, v: str):
+        if len(v.encode("utf-8")) > 72:
+            raise ValueError("Password must be at most 72 bytes")
+        if len(v) < 8:
+            raise ValueError("Password must be at least 8 characters")
+        return v

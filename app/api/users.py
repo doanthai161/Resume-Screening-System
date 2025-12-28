@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, status, FastAPI
 from app.core.security import get_current_user, require_permission
-from app.schemas.user import UserCreate, UserUpdate, UserResponse, UserListRespponse
+from app.schemas.user import UserCreate, UserUpdate, UserResponse, UserListRespponse, RegisterRequest
 from app.models.user import User
 from app.core.security import (
     blacklist_token,
@@ -21,7 +21,7 @@ from app.utils.otp import generate_otp
 from app.core.rate_limiter import limiter
 from slowapi.errors import RateLimitExceeded
 from slowapi import _rate_limit_exceeded_handler
-
+from fastapi import Request, BackgroundTasks
 from datetime import datetime, timedelta, timezone
 
 router = APIRouter()
@@ -31,7 +31,7 @@ app = FastAPI()
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
-from fastapi import Request, BackgroundTasks
+
 
 @router.post("/request-otp")
 @limiter.limit("3/minute")
@@ -42,7 +42,7 @@ async def request_otp(
 ):
     try:
         if await User.find_one(User.email == data.email):
-            raise HTTPException(status_code=400, detail="Email already registered")
+            raise HTTPException(status_code=400, detail=ErrorCode.EMAIL_ALREADY_REGISTERED)
 
         await EmailOTP.find(
             EmailOTP.email == data.email,
@@ -106,7 +106,8 @@ async def verify_otp_and_register(
         )
     
 @router.post("/login", response_model=UserResponse)
-async def login(data: UserCreate):
+@limiter.limit("5/minute")
+async def login(data: UserCreate, request: Request):
     user = await User.find_one(User.email == data.email)
     if not user or not verify_password(data.hashed_password, user.hashed_password):
         raise HTTPException(
@@ -127,7 +128,6 @@ async def login(data: UserCreate):
         token_type="bearer",
     )
 
-from fastapi import Request
 
 @router.post("/logout", status_code=status.HTTP_200_OK)
 async def logout(
@@ -158,3 +158,46 @@ async def logout(
     await blacklist_token(jti, expires_at)
 
     return {"message": "Logout successful"}
+
+
+@router.post("/register", status_code=status.HTTP_201_CREATED, response_model=UserResponse)
+@limiter.limit("3/minute")
+async def register(
+    data: RegisterRequest,
+    request: Request,
+    background_tasks: BackgroundTasks
+):
+    if await User.find_one(User.email == data.email):
+        raise HTTPException(
+            status_code=400,
+            detail=ErrorCode.EMAIL_ALREADY_REGISTERED,
+        )
+    print("User settings:", hasattr(User, "_document_settings"))
+
+
+    user = User(
+        email=data.email,
+        full_name=data.full_name,
+        hashed_password=get_password_hash(data.password),
+        is_active=False,
+    )
+    await user.insert()
+
+    otp = generate_otp()
+    expires_at = datetime.now(timezone.utc) + timedelta(minutes=10)
+
+    await EmailOTP(
+        email=data.email,
+        otp=otp,
+        expires_at=expires_at,
+    ).insert()
+
+    background_tasks.add_task(send_otp_email, data.email, otp)
+
+    return UserResponse(
+        id=str(user.id),
+        email=user.email,
+        full_name=user.full_name,
+        phone_number=user.phone_number,
+        address=user.address,
+    )

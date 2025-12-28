@@ -22,7 +22,7 @@ ALGORITHM = os.getenv("ALGORITHM")
 if not SECRET_KEY or not ALGORITHM:
     raise RuntimeError("Missing SECRET_KEY or ALGORITHM in environment variables")
 
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+pwd_context = CryptContext(schemes=["argon2"], deprecated="auto")
 security = HTTPBearer()
 blacklist_tokens: Set[str] = set()
 

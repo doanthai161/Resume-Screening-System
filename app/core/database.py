@@ -12,6 +12,7 @@ from app.models.actor import Actor
 from app.models.user_actor import UserActor
 from app.models.company_branch import CompanyBranch
 from app.models.candidate_evaluation import CandidateEvaluation
+from app.models.email_otp import EmailOTP
 from pymongo.errors import DuplicateKeyError
 import os
 import datetime
@@ -30,6 +31,7 @@ DOCUMENT_MODELS = [
     CompanyBranch,
     JobRequirement,
     CandidateEvaluation,
+    EmailOTP,
 ]
 
 async def _ensure_default_permissions() -> None:

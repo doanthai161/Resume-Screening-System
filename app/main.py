@@ -2,6 +2,7 @@ from fastapi import FastAPI
 from contextlib import asynccontextmanager
 from app.core.database import init_db
 import uvicorn
+from app.dependencies.versions import api_router
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -9,6 +10,7 @@ async def lifespan(app: FastAPI):
     yield
 
 app = FastAPI(lifespan=lifespan)
+app.include_router(api_router, prefix="/api")
 
 @app.get("/")
 async def hello():

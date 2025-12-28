@@ -19,7 +19,7 @@ class User(Document):
         name = "users"
         indexes = [
             IndexModel([("email", 1)], name="idx_users_email", unique=True),
-            IndexModel([("full_name", 1)], name="idx_users_full_name", unique=True),
+            IndexModel([("full_name", 1)], name="idx_users_full_name"),
         ]
 
     class Config:
