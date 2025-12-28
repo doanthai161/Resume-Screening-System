@@ -3,8 +3,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Callable, List, Optional, Set
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-from jose import JWTError
-import jwt
+from jose import JWTError, jwt
 from passlib.context import CryptContext
 
 from app.dependencies.error_code import ErrorCode
