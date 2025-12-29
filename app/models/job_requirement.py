@@ -1,4 +1,5 @@
-from datetime import datetime, timezone
+from datetime import datetime
+from app.utils.time import now_vn
 from typing import List, Optional
 from beanie import Document
 from pydantic import Field
@@ -19,8 +20,8 @@ class JobRequirement(Document):
     expiration_time: Optional[datetime] = Field(None, description="Expiration date of the job requirement")
     is_open: bool = Field(default=True, description="Is the job requirement open?")
     is_active: bool = Field(default=True, description="Is the job requirement active?")
-    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
-    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    created_at: datetime = Field(default_factory=lambda: now_vn())
+    updated_at: datetime = Field(default_factory=lambda: now_vn())
 
     class Settings:
         name = "job_requirements"

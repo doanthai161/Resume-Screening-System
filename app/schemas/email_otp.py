@@ -7,4 +7,3 @@ class VerifyOTPRegisterRequest(BaseModel):
     email: EmailStr
     otp: str
     password: str
-    full_name: str | None = None

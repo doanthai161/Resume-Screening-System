@@ -1,7 +1,8 @@
 from pydantic import Field
 from beanie import Document
 from bson import ObjectId
-from datetime import datetime, timezone
+from datetime import datetime
+from app.utils.time import now_vn
 from typing import Optional
 from pymongo import IndexModel
 
@@ -10,8 +11,8 @@ class CandidateEvaluation(Document):
     job_posting_id: ObjectId = Field(..., description="ID of the job posting")
     summary: Optional[str] = Field(None, description="Summary of the candidate evaluation")
     score: Optional[float] = Field(None, description="Score assigned to the candidate")
-    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
-    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    created_at: datetime = Field(default_factory=lambda: now_vn())
+    updated_at: datetime = Field(default_factory=lambda: now_vn())
 
     class Settings:
         name = "candidate_evaluations"

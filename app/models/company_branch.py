@@ -1,6 +1,7 @@
 from pydantic import Field
 from beanie import Document
-from datetime import datetime, timezone
+from datetime import datetime
+from app.utils.time import now_vn
 from bson import ObjectId
 from typing import Optional, List
 from pymongo import IndexModel
@@ -19,8 +20,8 @@ class CompanyBranch(Document):
     working_days: List[str] = Field(..., description="Working days of the branch")
     overtime_policy: Optional[str] = Field(None, description="Overtime policy of the branch")
     is_active: bool = Field(default=True, description="Is the branch active?")
-    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
-    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    created_at: datetime = Field(default_factory=lambda: now_vn())
+    updated_at: datetime = Field(default_factory=lambda: now_vn())
 
     class Settings:
         name = "company_branches"

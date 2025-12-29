@@ -1,6 +1,7 @@
 from pydantic import Field 
 from beanie import Document
-from datetime import datetime, timezone
+from datetime import datetime
+from app.utils.time import now_vn
 from bson import ObjectId
 from typing import Optional
 from pymongo import IndexModel
@@ -17,8 +18,8 @@ class Company(Document):
     logo_url: Optional[str] = Field(None, description="URL to the company logo image")
     website: str = Field(..., description="Company website URL")
     is_active: bool = Field(default=True, description="Is the company active?")
-    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
-    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    created_at: datetime = Field(default_factory=lambda: now_vn())
+    updated_at: datetime = Field(default_factory=lambda: now_vn())
 
     class Settings:
         name = "companies"

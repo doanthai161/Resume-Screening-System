@@ -4,6 +4,8 @@ from typing import Optional
 from beanie import Document
 from pydantic import EmailStr, Field
 from pymongo import IndexModel
+from app.utils.time import now_vn
+
 
 class User(Document):
     email: EmailStr = Field(..., description="User email, unique")
@@ -12,9 +14,9 @@ class User(Document):
     address: Optional[str] = Field(None, max_length=200, description="Address")
     phone_number: Optional[str] = Field(None, max_length=15, description="Phone number")
     is_active: bool = Field(True, description="Is account active")
-    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
-    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
-    
+    created_at: datetime = Field(default_factory=lambda: now_vn())
+    updated_at: datetime = Field(default_factory=lambda: now_vn())
+
     class Settings:
         name = "users"
         indexes = [

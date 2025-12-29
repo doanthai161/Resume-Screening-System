@@ -31,6 +31,7 @@ from app.core.rate_limiter import limiter
 from slowapi.errors import RateLimitExceeded
 from slowapi import _rate_limit_exceeded_handler
 from fastapi import Request, BackgroundTasks
+from app.utils.time import now_vn
 from datetime import datetime, timedelta, timezone
 
 router = APIRouter()
@@ -41,6 +42,10 @@ app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 
+def ensure_utc(dt: datetime) -> datetime:
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=timezone.utc)
+    return dt
 
 @router.post("/request-otp")
 @limiter.limit("3/minute")
@@ -78,7 +83,7 @@ async def request_otp(
 
 @router.post("/verify-otp-register")
 @limiter.limit("5/minute")
-async def verify_otp_and_register(
+async def verify_otp(
     request: Request,
     data: VerifyOTPRegisterRequest
 ):
@@ -88,23 +93,30 @@ async def verify_otp_and_register(
             EmailOTP.otp == data.otp,
             EmailOTP.is_used == False,
         )
+        expires_at = ensure_utc(otp_record.expires_at)
 
         if not otp_record:
-            raise HTTPException(status_code=400, detail="Invalid OTP")
+            raise HTTPException(status_code=400, detail=ErrorCode.INVALID_OTP)
 
-        if otp_record.expires_at < datetime.now(timezone.utc):
-            raise HTTPException(status_code=400, detail="OTP expired")
-
-        if await User.find_one(User.email == data.email):
-            raise HTTPException(status_code=400, detail="Email already registered")
-
-        await User(
-            email=data.email,
-            full_name=data.full_name,
-            hashed_password=get_password_hash(data.password),
-        ).insert()
+        now = datetime.now(timezone.utc)
+        if expires_at <= now:
+            raise HTTPException(status_code=400, detail=ErrorCode.OTP_EXPIRED)
 
         otp_record.is_used = True
+        user = await User.find_one({"email": data.email, "is_active": False})
+        if not user:
+            raise HTTPException(
+                status_code=400,
+                detail=ErrorCode.USER_NOT_FOUND
+            )
+        if not verify_password(data.password, user.hashed_password):
+            raise HTTPException(
+                status_code=401,
+                detail=ErrorCode.INVALID_CREDENTIALS
+            )
+        
+        user.is_active = True
+        await user.save()
         await otp_record.save()
 
         return {"message": "Register successful"}
