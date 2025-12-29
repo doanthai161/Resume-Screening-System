@@ -158,35 +158,27 @@ async def login(request: Request, data: LoginRequest):
         ),
     )
 
-@router.post("/logout", status_code=status.HTTP_200_OK)
+@router.post("/logout")
 async def logout(
-    request: Request,
-    current_user: CurrentUser = Depends(get_current_user),
+    request: Request, current_user: CurrentUser = Depends(get_current_user)
 ):
-    auth_header = request.headers.get("Authorization")
-    if not auth_header or not auth_header.startswith("Bearer "):
+    try:
+        logger.info(f"Logout endpoint called for user: {current_user.user_id}")
+        auth_header = request.headers.get("authorization", "")
+        token = auth_header.replace("Bearer ", "").strip()
+
+        if token:
+            blacklist_token(token)
+            logger.info(f"Token blacklisted for user: {current_user.user_id}")
+
+        return {"msg": "Logout successful"}
+    except Exception as e:
+        logger.error(f"Error during logout for user '{current_user.user_id}': {e}", exc_info=True)
         raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail=ErrorCode.INVALID_TOKEN,
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=ErrorCode.INTERNAL_SERVER_ERROR
         )
 
-    token = auth_header.split(" ")[1]
-
-    payload = decode_jwt_token(token)
-
-    jti = payload.get("jti")
-    exp = payload.get("exp")
-
-    if not jti or not exp:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Invalid token payload",
-        )
-
-    expires_at = datetime.fromtimestamp(exp, tz=timezone.utc)
-    await blacklist_token(jti, expires_at)
-
-    return {"message": "Logout successful"}
 
 
 @router.post("/register", status_code=status.HTTP_201_CREATED, response_model=UserResponse)
