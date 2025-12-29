@@ -222,3 +222,24 @@ async def register(
         phone_number=user.phone_number,
         address=user.address,
     )
+
+
+@router.get("/", response_model=List[UserResponse])
+@limiter.limit("10/minute")
+async def get_users(
+    request: Request,
+    current_user: CurrentUser = Depends(
+        require_permission("users:view")
+    ),
+):
+    users = await User.find(User.is_active == True).to_list()
+    return [
+        UserResponse(
+            id=str(user.id),
+            email=user.email,
+            full_name=user.full_name,
+            phone_number=user.phone_number,
+            address=user.address,
+        )
+        for user in users
+    ]
