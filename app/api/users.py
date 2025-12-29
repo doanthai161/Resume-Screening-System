@@ -1,6 +1,14 @@
+from contextvars import Token
 from fastapi import APIRouter, Depends, HTTPException, status, FastAPI
 from app.core.security import get_current_user, require_permission
-from app.schemas.user import UserCreate, UserUpdate, UserResponse, UserListRespponse, RegisterRequest
+from app.schemas.user import (
+    AccessToken,
+    LoginRequest,
+    RegisterRequest,
+    UserResponse,
+    VerifyOTPResponse,
+
+)
 from app.models.user import User
 from app.core.security import (
     blacklist_token,
@@ -12,6 +20,7 @@ from app.core.security import (
     require_permission,
     decode_jwt_token,
 )
+from app.logs.logging_config import logger
 from app.dependencies.error_code import ErrorCode
 from typing import List, Optional
 from app.schemas.email_otp import RequestOTPRequest, VerifyOTPRegisterRequest
@@ -105,29 +114,37 @@ async def verify_otp_and_register(
             detail=ErrorCode.TOO_MANY_REQUESTS,
         )
     
-@router.post("/login", response_model=UserResponse)
+@router.post("/login", response_model=VerifyOTPResponse)
 @limiter.limit("5/minute")
-async def login(data: UserCreate, request: Request):
-    user = await User.find_one(User.email == data.email)
-    if not user or not verify_password(data.hashed_password, user.hashed_password):
+async def login(request: Request, data: LoginRequest):
+    user = await User.find_one({"email": data.email})
+    if not user or not verify_password(data.password, user.hashed_password):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail=ErrorCode.INVALID_CREDENTIALS,
         )
-
-    access_token_expires = timedelta(minutes=60)
+    if not user.is_active:
+        logger.warning(f"Login attempt for inactive or unverified user: {data.email}")
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=ErrorCode.USER_NOT_FOUND,
+        )
+    access_token_expires = timedelta(minutes=120)
     access_token = create_access_token(
         data={"sub": user.email}, expires_delta=access_token_expires
     )
+    token_data = AccessToken(access_token=access_token)
 
-    return UserResponse(
-        id=str(user.id),
-        email=user.email,
-        full_name=user.full_name,
-        access_token=access_token,
-        token_type="bearer",
+    return VerifyOTPResponse(
+        token=token_data,
+        user=UserResponse(
+            id=str(user.id),
+            email=user.email,
+            full_name=user.full_name,
+            phone_number=user.phone_number,
+            address=user.address,
+        ),
     )
-
 
 @router.post("/logout", status_code=status.HTTP_200_OK)
 async def logout(
