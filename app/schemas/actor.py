@@ -10,7 +10,6 @@ class ActorUpdate(BaseModel):
     description: Optional[str]
 
 class ActorResponse(BaseModel):
-    id: str
     name: str
     description: Optional[str]
 
