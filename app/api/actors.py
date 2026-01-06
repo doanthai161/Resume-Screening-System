@@ -1,13 +1,16 @@
 from bson import ObjectId
-from fastapi import Request, BackgroundTasks, APIRouter, HTTPException, status, FastAPI
+from fastapi import Request, BackgroundTasks, APIRouter, HTTPException, status, FastAPI, Depends
 from app.utils.time import now_vn
-from datetime import datetime, timedelta, timezone
 from app.models.actor import Actor
 from app.schemas.actor import ActorCreate, ActorResponse, ActorUpdate
 from app.core.rate_limiter import limiter
 from slowapi.errors import RateLimitExceeded
 from slowapi import _rate_limit_exceeded_handler
 from app.logs.logging_config import logger
+from app.api.permissions import (
+    CurrentUser,
+    require_permission,
+)
 
 router = APIRouter()
 app = FastAPI()
@@ -20,14 +23,18 @@ app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 async def create_actor(
     request: Request,
     data: ActorCreate,
-    background_tasks: BackgroundTasks
+    background_tasks: BackgroundTasks,
+    current_user: CurrentUser = Depends(
+        require_permission("actors:create")
+    ),
+    
 ):
     try:
         background_tasks.add_task(
             logger.info,
             f"Creating actor with name: {data.name}"
         )
-        existing_actor = await Actor.find_one(Actor.name == data.name)
+        existing_actor = await Actor.find_one({'name': data.name, 'is_active': True})
         if existing_actor:
             raise HTTPException(status_code=400, detail="Actor already exists")
 
@@ -62,7 +69,10 @@ async def create_actor(
 @limiter.limit("10/minute")
 async def list_actors(
     request: Request,
-    background_tasks: BackgroundTasks
+    background_tasks: BackgroundTasks,
+    current_user: CurrentUser = Depends(
+        require_permission("actors:view")
+    ),
 ):
     try:
         background_tasks.add_task(
@@ -94,7 +104,10 @@ async def update_actor(
     request: Request,
     actor_id: str,
     data: ActorUpdate,
-    background_tasks: BackgroundTasks
+    background_tasks: BackgroundTasks,
+    current_user: CurrentUser = Depends(
+        require_permission("actors:update")
+    ),
 ):
     try:
         background_tasks.add_task(
@@ -135,7 +148,10 @@ async def update_actor(
 async def get_actor(
     request: Request,
     actor_id: str,
-    background_tasks: BackgroundTasks
+    background_tasks: BackgroundTasks,
+    current_user: CurrentUser = Depends(
+        require_permission("actors:view")
+    ),
 ):
     try:
         background_tasks.add_task(
@@ -166,7 +182,10 @@ async def get_actor(
 async def delete_actor(
     request: Request,
     actor_id: str,
-    background_tasks: BackgroundTasks
+    background_tasks: BackgroundTasks,
+    current_user: CurrentUser = Depends(
+        require_permission("actors:delete")
+    ),
 ):
     try:
         background_tasks.add_task(

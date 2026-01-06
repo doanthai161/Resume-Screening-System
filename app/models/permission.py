@@ -9,6 +9,7 @@ from typing import Optional
 class Permission(Document):
     name: str = Field(..., description="Name of the permission")
     description: Optional[str] = Field(None, description="Description of the permission")
+    is_active: bool = Field(default=True, description="Indicates if the permission is active")
     created_at: datetime = Field(default_factory=lambda: now_vn())
     updated_at: datetime = Field(default_factory=lambda: now_vn())
 

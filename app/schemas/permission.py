@@ -6,6 +6,7 @@ class PermissionCreate(BaseModel):
     description: str
 
 class PermissionUpdate(BaseModel):
+    name: Optional[str]
     description: Optional[str]
 
 class PermissionResponse(BaseModel):
