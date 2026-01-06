@@ -1,5 +1,6 @@
 from typing import Optional
 from pydantic import BaseModel
+from app.schemas.permission import PermissionResponse
 
 class ActorCreate(BaseModel):
     name: str
@@ -18,3 +19,9 @@ class ActorListResponse(BaseModel):
     total: int
     page: int
     size: int
+
+class ActorDetailResponse(BaseModel):
+    id: str
+    name: str
+    description: Optional[str]
+    permissions: list[PermissionResponse]
