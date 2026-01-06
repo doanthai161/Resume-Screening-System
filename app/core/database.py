@@ -63,6 +63,81 @@ async def _ensure_default_permissions() -> None:
         logger.info("no default permissions to create.")
 
 
+async def _ensure_default_actors() -> None:
+    admin_role_name = settings.ADMIN_ROLE_NAME
+    admin_role = await Actor.find_one(Actor.name == admin_role_name)
+
+    if not admin_role:
+        try:
+            logger.info(f"Creating default actor: {admin_role_name}")
+            admin_role = Actor(
+                name=admin_role_name, 
+                description="permission for system administrator.",
+                is_default=True
+            )
+            await admin_role.insert()
+        except DuplicateKeyError:
+            logger.info(f"Actor '{admin_role_name}' already exists, fetching...")
+            admin_role = await Actor.find_one(Actor.name == admin_role_name)
+
+    if admin_role:
+        all_permissions = await Permission.find_all().to_list()
+        target_admin_perm_ids = {perm.id for perm in all_permissions}
+            
+        current_admin_links = await ActorPermission.find(
+            ActorPermission.actor_id == admin_role.id
+        ).to_list()
+        current_admin_perm_ids = {link.permission_id for link in current_admin_links}
+
+        missing_admin_perm_ids = target_admin_perm_ids - current_admin_perm_ids
+            
+        if missing_admin_perm_ids:
+            links_to_create = [
+                ActorPermission(actor_id=admin_role.id, permission_id=perm_id)
+                for perm_id in missing_admin_perm_ids
+            ]
+            await ActorPermission.insert_many(links_to_create)
+            logger.info(f"Assigned {len(links_to_create)} new permissions to actor '{admin_role_name}'.")
+        else:
+            logger.info(f"Actor '{admin_role_name}' already has all permissions.")
+
+    staff_role_name = settings.DEFAULT_ROLE_NAME
+    staff_role = await Actor.find_one(Actor.name == staff_role_name)
+
+    if not staff_role:
+        try:
+            logger.info(f"Creating default actor: '{staff_role_name}'.")
+            staff_role = Actor(
+                name=staff_role_name,
+                description=f"permission for '{staff_role_name}'.",
+                is_default=True
+            )
+            await staff_role.insert()
+        except DuplicateKeyError:
+            logger.info(f"Actor '{staff_role_name}' already exists, fetching...")
+            staff_role = await Actor.find_one(Actor.name == staff_role_name)
+    
+    if staff_role:
+        view_permissions = await Permission.find({"name": {"$regex": r":view$"}}).to_list()
+        target_staff_perm_ids = {perm.id for perm in view_permissions}
+
+        current_staff_links = await ActorPermission.find(
+            ActorPermission.actor_id == staff_role.id
+        ).to_list()
+        current_staff_perm_ids = {link.permission_id for link in current_staff_links}
+
+        missing_staff_perm_ids = target_staff_perm_ids - current_staff_perm_ids
+
+        if missing_staff_perm_ids:
+            links_to_create = [
+                ActorPermission(actor_id=staff_role.id, permission_id=perm_id)
+                for perm_id in missing_staff_perm_ids
+            ]
+            await ActorPermission.insert_many(links_to_create)
+            logger.info(f"Assigned {len(links_to_create)} new view permissions to actor '{staff_role_name}'.")
+        else:
+            logger.info(f"Actor '{staff_role_name}' already has all view permissions.")
+
 async def init_db():
     client = motor.motor_asyncio.AsyncIOMotorClient(settings.mongo_uri)
     await init_beanie(
@@ -74,6 +149,7 @@ async def init_db():
     if not os.path.exists(INIT_FILE_PATH):
         logger.info(f'File {INIT_FILE_PATH} not found. Starting default data initialization.')
         await _ensure_default_permissions()
+        await _ensure_default_actors()
 
         try:
             with open(INIT_FILE_PATH, 'w', encoding='utf-8') as f:
