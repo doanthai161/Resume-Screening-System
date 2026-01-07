@@ -33,6 +33,9 @@ from slowapi import _rate_limit_exceeded_handler
 from fastapi import Request, BackgroundTasks
 from app.utils.time import now_vn
 from datetime import datetime, timedelta, timezone
+from app.models.actor import Actor
+from app.models.user_actor import UserActor
+from app.core.config import settings
 
 router = APIRouter()
 
@@ -203,6 +206,19 @@ async def register(
         is_active=False,
     )
     await user.insert()
+    try:
+        default_actor = await Actor.find_one(Actor.name == settings.DEFAULT_ROLE_NAME)
+        if not default_actor:
+            background_tasks.add_task(logger.error, f"Default actor '{settings.DEFAULT_ROLE_NAME}' not found. Cannot assign to user '{data.email}'.")
+
+        else:
+            await UserActor(
+                user_id=user.id,
+                actor_id=default_actor.id
+            ).insert()
+            background_tasks.add_task(logger.info, f"Assigned default actor '{settings.DEFAULT_ROLE_NAME}' to user '{data.email}'.")
+    except Exception as e:
+        logger.error(f"Error assigning default actor to user '{data.email}': {e}", exc_info=True)
 
     otp = generate_otp()
     expires_at = datetime.now(timezone.utc) + timedelta(minutes=10)
