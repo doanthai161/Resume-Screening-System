@@ -91,7 +91,7 @@ async def update_company(
     data: CompanyUpdate,
     background_tasks: BackgroundTasks,
     current_user: CurrentUser = Depends(
-        require_permission("companies:update")
+        require_permission("companies:edit")
     ),
 ):
     try:

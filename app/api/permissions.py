@@ -1,5 +1,5 @@
 from bson import ObjectId
-from fastapi import Request, BackgroundTasks, APIRouter, HTTPException, status, FastAPI, Depends
+from fastapi import Request, BackgroundTasks, APIRouter, HTTPException, status, FastAPI, Depends, Query
 from app.utils.time import now_vn
 from datetime import datetime, timedelta, timezone
 from app.models.permission import Permission
@@ -69,39 +69,32 @@ async def create_permission(
 @limiter.limit("10/minute")
 async def list_permissions(
     request: Request,
-    skip: int = 0,
-    limit: int = 10,
+    page: int = Query(1, ge=1),
+    size: int = Query(10, ge=1, le=100),
     current_user: CurrentUser = Depends(
         require_permission("permissions:view")
     ),
 ):
-    try:
-        permissions = await Permission.find(
-            {'is_active': True}
-        ).skip(skip).limit(limit).to_list()
-        total = await Permission.find(
-            {'is_active': True}
-        ).count()
+    skip = (page - 1) * size
 
-        permission_responses = [
-            PermissionResponse(
-                id=str(permission.id),
-                name=permission.name,
-                description=permission.description,
-                is_active=permission.is_active,
-            ) for permission in permissions
+    permissions = await Permission.find(
+        {"is_active": True}
+    ).skip(skip).limit(size).to_list()
+
+    total = await Permission.find(
+        {"is_active": True}
+    ).count()
+
+    return PermissionListResponse(
+        total=total,
+        page=page,
+        size=size,
+        permissions=[
+            PermissionResponse.model_validate(p)
+            for p in permissions
         ]
+    )
 
-        return PermissionListResponse(
-            total=total,
-            permissions=permission_responses
-        )
-    except RateLimitExceeded:
-        logger.error("Rate limit exceeded while listing permissions")
-        raise HTTPException(
-            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-            detail="Too many requests",
-        )
     
 @router.put("/update-permission/{permission_id}", response_model=PermissionResponse)
 @limiter.limit("5/minute")
@@ -111,7 +104,7 @@ async def update_permission(
     data: PermissionUpdate,
     background_tasks: BackgroundTasks,
     current_user: CurrentUser = Depends(
-        require_permission("permissions:update")
+        require_permission("permissions:edit")
     ),
 ):
     try:

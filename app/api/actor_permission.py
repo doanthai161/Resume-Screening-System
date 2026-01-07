@@ -30,7 +30,7 @@ async def assign_permission_to_actor(
     permission_ids: list[str],
     background_tasks: BackgroundTasks,
     current_user: CurrentUser = Depends(
-        require_permission("permissions:update")
+        require_permission("permissions:edit")
     ),
 ):
     try:
@@ -82,7 +82,7 @@ async def unassign_permission_from_actor(
     permission_ids: list[str],
     background_tasks: BackgroundTasks,
     current_user: CurrentUser = Depends(
-        require_permission("permissions:update")
+        require_permission("permissions:edit")
     ),
 ):
     try:

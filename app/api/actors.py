@@ -106,7 +106,7 @@ async def update_actor(
     data: ActorUpdate,
     background_tasks: BackgroundTasks,
     current_user: CurrentUser = Depends(
-        require_permission("actors:update")
+        require_permission("actors:edit")
     ),
 ):
     try:

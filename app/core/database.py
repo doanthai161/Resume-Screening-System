@@ -50,7 +50,7 @@ async def _ensure_default_permissions() -> None:
             perm_name = f"{model_name}:{action}"
 
             if perm_name not in existing_perms_set:
-                perms_to_create.append(Permission(name=perm_name, mo_ta=f"permission {action} for {model_name}"))
+                perms_to_create.append(Permission(name=perm_name, description=f"permission {action} for {model_name}", is_active=True))
                 existing_perms_set.add(perm_name)
     
     if perms_to_create:
