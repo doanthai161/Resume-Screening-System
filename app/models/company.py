@@ -18,6 +18,7 @@ class Company(Document):
     logo_url: Optional[str] = Field(None, description="URL to the company logo image")
     website: str = Field(..., description="Company website URL")
     is_active: bool = Field(default=True, description="Is the company active?")
+    updated_by: Optional[ObjectId] = Field(None, description="ID of the user who last updated the company")
     created_at: datetime = Field(default_factory=lambda: now_vn())
     updated_at: datetime = Field(default_factory=lambda: now_vn())
 

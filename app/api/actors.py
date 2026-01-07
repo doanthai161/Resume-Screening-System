@@ -7,7 +7,7 @@ from app.core.rate_limiter import limiter
 from slowapi.errors import RateLimitExceeded
 from slowapi import _rate_limit_exceeded_handler
 from app.logs.logging_config import logger
-from app.api.permissions import (
+from app.core.security import (
     CurrentUser,
     require_permission,
 )

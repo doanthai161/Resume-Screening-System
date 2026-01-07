@@ -25,7 +25,6 @@ class CompanyUpdate(BaseModel):
     is_active: Optional[bool]
 
 class CompanyResponse(BaseModel):
-    id: str
     user_id: str
     name: str
     company_short_name: str
@@ -35,7 +34,6 @@ class CompanyResponse(BaseModel):
     email: EmailStr
     logo_url: Optional[str]
     website: str
-    is_active: bool
 
 class CompanyListResponse(BaseModel):
     companies: list[CompanyResponse]
