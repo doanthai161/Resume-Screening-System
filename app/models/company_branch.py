@@ -12,6 +12,7 @@ class CompanyBranch(Document):
     branch_name: str = Field(..., description="Name of the company branch")
     phone_number: Optional[str] = Field(None, description="Contact phone number for the branch")
     address: str = Field(..., description="Physical address of the branch")
+    city: Optional[str] = Field(None, description="City where the branch is located")
     description: Optional[str] = Field(None, description="Description of the branch")
     company_type: Optional[str] = Field(None, description="Type of the company branch")
     company_industry: Optional[str] = Field(None, description="Industry sector of the company branch")
@@ -20,6 +21,8 @@ class CompanyBranch(Document):
     working_days: List[str] = Field(..., description="Working days of the branch")
     overtime_policy: Optional[str] = Field(None, description="Overtime policy of the branch")
     is_active: bool = Field(default=True, description="Is the branch active?")
+    created_by: ObjectId = Field(..., description="ID of the user who created the branch")
+    updated_by: Optional[ObjectId] = Field(None, description="ID of the user who last updated the branch")
     created_at: datetime = Field(default_factory=lambda: now_vn())
     updated_at: datetime = Field(default_factory=lambda: now_vn())
 

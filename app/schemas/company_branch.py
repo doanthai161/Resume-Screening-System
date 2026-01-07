@@ -13,6 +13,7 @@ class CompanyBranchCreate(BaseModel):
     company_industry: Optional[str] = None
     country: Optional[str] = None
     company_size: int
+    city: Optional[str] = None
     working_days: list[str]
     overtime_policy: Optional[str] = None
 
