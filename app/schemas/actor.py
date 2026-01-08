@@ -20,7 +20,11 @@ class ActorListResponse(BaseModel):
     page: int
     size: int
 
-class ActorDetailResponse(BaseModel):
+class AssignPermissionRequest(BaseModel):
+    actor_id: str
+    permission_ids: list[str]
+
+class AssignPermissionResponse(BaseModel):
     id: str
     name: str
     description: Optional[str]

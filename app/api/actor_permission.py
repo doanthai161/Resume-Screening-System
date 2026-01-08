@@ -4,7 +4,7 @@ from app.utils.time import now_vn
 from app.models.actor import Actor
 from app.models.permission import Permission
 from app.models.actor_permission import ActorPermission
-from app.schemas.actor import ActorDetailResponse
+from app.schemas.actor import AssignPermissionRequest, AssignPermissionResponse
 from app.schemas.permission import PermissionResponse
 from app.core.rate_limiter import limiter
 from bson.errors import InvalidId
@@ -22,107 +22,109 @@ app = FastAPI()
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
-@router.post("/actor-permission", response_model=dict)
+@router.post("/actor-permission",response_model=AssignPermissionResponse)
 @limiter.limit("5/minute")
 async def assign_permission_to_actor(
     request: Request,
-    actor_id: str,
-    permission_ids: list[str],
+    payload: AssignPermissionRequest,
     background_tasks: BackgroundTasks,
-    current_user: CurrentUser = Depends(
-        require_permission("permissions:edit")
-    ),
+    current_user: CurrentUser = Depends(require_permission("permissions:edit")),
 ):
     try:
-        background_tasks.add_task(
-            logger.info,
-            f"Assigning permissions to actor ID: {actor_id}"
-        )
-        actor = await Actor.find_one(Actor.id == ObjectId(actor_id), Actor.is_active == True)
-        if not actor:
-            raise HTTPException(status_code=404, detail="Actor not found")
+        actor_oid = ObjectId(payload.actor_id)
+        perm_oids = [ObjectId(pid) for pid in payload.permission_ids]
+    except Exception:
+        raise HTTPException(400, "Invalid actor_id or permission_ids")
 
-        for perm_id in permission_ids:
-            permission = await Permission.find_one(Permission.id == ObjectId(perm_id), Permission.is_active == True)
-            if not permission:
-                raise HTTPException(status_code=404, detail=f"Permission ID {perm_id} not found")
+    actor = await Actor.find_one({"_id": actor_oid, "is_active": True})
+    if not actor:
+        raise HTTPException(404, "Actor not found")
 
-            existing_link = await ActorPermission.find_one({
-                "actor_id": actor.id,
-                "permission_id": permission.id
-            })
-            if not existing_link:
-                link = ActorPermission(
+    permissions = await Permission.find(
+        {"_id": {"$in": perm_oids}, "is_active": True}
+    ).to_list()
+
+    if len(permissions) != len(perm_oids):
+        raise HTTPException(404, "One or more permissions not found")
+
+    links = []
+    for permission in permissions:
+        exists = await ActorPermission.find_one({
+            "actor_id": actor.id,
+            "permission_id": permission.id
+        })
+        if not exists:
+            links.append(
+                ActorPermission(
                     actor_id=actor.id,
-                    permission_id=permission.id
+                    permission_id=permission.id,
+                    created_at=now_vn(),
+                    created_by=current_user.user_id,
                 )
-                await link.insert()
+            )
 
-        background_tasks.add_task(
-            logger.info,
-            f"Permissions assigned to actor ID: {actor_id}"
-        )
+    if links:
+        await ActorPermission.insert_many(links)
 
-        return {"message": "Permissions assigned successfully"}
-    except RateLimitExceeded:
-        background_tasks.add_task(
-            logger.error,
-            "Rate limit exceeded while assigning permissions to actor"
-        )
-        raise HTTPException(
-            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-            detail="Rate limit exceeded"
-        )
-    
-@router.post("/unasign_permission", response_model=dict)
+    background_tasks.add_task(
+        logger.info,
+        f"Permissions assigned to actor ID: {payload.actor_id}"
+    )
+
+    return {"message": "Permissions assigned successfully"}
+
+
+@router.post("/unassign-permission", response_model=dict)
 @limiter.limit("5/minute")
 async def unassign_permission_from_actor(
     request: Request,
     actor_id: str,
     permission_ids: list[str],
     background_tasks: BackgroundTasks,
-    current_user: CurrentUser = Depends(
-        require_permission("permissions:edit")
-    ),
+    current_user: CurrentUser = Depends(require_permission("permissions:edit")),
 ):
+    if not permission_ids:
+        raise HTTPException(400, "permission_ids cannot be empty")
+    background_tasks.add_task(
+        logger.info,
+        f"Unassigning {len(perm_oids)} permissions from actor {actor_id}"
+    )
+
     try:
-        background_tasks.add_task(
-            logger.info,
-            f"Unassigning permissions from actor ID: {actor_id}"
-        )
-        actor = await Actor.find_one(Actor.id == ObjectId(actor_id), Actor.is_active == True)
-        if not actor:
-            raise HTTPException(status_code=404, detail="Actor not found")
+        actor_oid = ObjectId(actor_id)
+        perm_oids = [ObjectId(pid) for pid in permission_ids]
+    except Exception:
+        raise HTTPException(400, "Invalid actor_id or permission_ids")
 
-        for perm_id in permission_ids:
-            permission = await Permission.find_one(Permission.id == ObjectId(perm_id), Permission.is_active == True)
-            if not permission:
-                raise HTTPException(status_code=404, detail=f"Permission ID {perm_id} not found")
+    actor = await Actor.find_one(
+        Actor.id == actor_oid,
+        Actor.is_active == True
+    )
+    if not actor:
+        raise HTTPException(404, "Actor not found")
 
-            existing_link = await ActorPermission.find_one({
-                "actor_id": actor.id,
-                "permission_id": permission.id
-            })
-            if existing_link:
-                await existing_link.delete()
+    background_tasks.add_task(
+        logger.info,
+        f"Unassigning permissions from actor ID: {actor_id}"
+    )
 
-        background_tasks.add_task(
-            logger.info,
-            f"Permissions unassigned from actor ID: {actor_id}"
-        )
+    await ActorPermission.find({
+        "actor_id": actor.id,
+        "permission_id": {"$in": perm_oids}
+    }).delete()
 
-        return {"message": "Permissions unassigned successfully"}
-    except RateLimitExceeded:
-        background_tasks.add_task(
-            logger.error,
-            "Rate limit exceeded while unassigning permissions from actor"
-        )
-        raise HTTPException(
-            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-            detail="Rate limit exceeded"
-        )
+    background_tasks.add_task(
+        logger.info,
+        f"Permissions unassigned from actor ID: {actor_id}"
+    )
+
+    return {
+        "message": "Permissions unassigned successfully",
+        "count": len(perm_oids)
+    }
+
     
-@router.get("/actor-permissions/{actor_id}",response_model=ActorDetailResponse)
+@router.get("/actor-permissions/{actor_id}",response_model=AssignPermissionResponse)
 @limiter.limit("10/minute")
 async def get_actor_permissions(
     request: Request,
@@ -220,7 +222,7 @@ async def get_actor_permissions(
             f"Fetched permissions for actor ID: {actor_id}"
         )
 
-        return ActorDetailResponse(
+        return AssignPermissionResponse(
             id=str(actor_doc["_id"]),
             name=actor_doc["name"],
             description=actor_doc.get("description"),

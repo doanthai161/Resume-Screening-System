@@ -2,6 +2,7 @@ from typing import Optional
 from pydantic import BaseModel, EmailStr, field_validator, model_validator
 from fastapi import HTTPException
 from app.dependencies.error_code import ErrorCode
+from app.schemas.actor import ActorResponse
 
 
 class LoginRequest(BaseModel):
@@ -63,3 +64,8 @@ class AccessToken(BaseModel):
 class VerifyOTPResponse(BaseModel):
     token: AccessToken
     user: UserResponse
+
+class UserActorResponse(BaseModel):
+    user_id: str
+    full_name: Optional[str]
+    actor: ActorResponse
