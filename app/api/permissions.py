@@ -90,7 +90,11 @@ async def list_permissions(
         page=page,
         size=size,
         permissions=[
-            PermissionResponse.model_validate(p)
+            PermissionResponse(
+                id=str(p.id),
+                name=p.name,
+                description=p.description,
+            )
             for p in permissions
         ]
     )

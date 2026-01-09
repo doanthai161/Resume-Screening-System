@@ -124,7 +124,10 @@ async def unassign_permission_from_actor(
     }
 
     
-@router.get("/actor-permissions/{actor_id}",response_model=AssignPermissionResponse)
+@router.get(
+    "/actor-permissions/{actor_id}",
+    response_model=AssignPermissionResponse
+)
 @limiter.limit("10/minute")
 async def get_actor_permissions(
     request: Request,
@@ -134,110 +137,106 @@ async def get_actor_permissions(
         require_permission("actors:view")
     ),
 ):
+    # 1️⃣ Validate ObjectId
     try:
-        try:
-            actor_object_id = ObjectId(actor_id)
-        except InvalidId:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Invalid actor_id format"
-            )
-
-        background_tasks.add_task(
-            logger.info,
-            f"Fetching permissions for actor ID: {actor_id}"
+        actor_object_id = ObjectId(actor_id)
+    except InvalidId:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid actor_id format"
         )
 
-        pipeline = [
-            {
-                "$match": {
-                    "_id": actor_object_id,
-                    "is_active": True
-                }
-            },
-            {
-                "$lookup": {
-                    "from": "actor_permissions",
-                    "localField": "_id",
-                    "foreignField": "actor_id",
-                    "as": "actor_permissions"
-                }
-            },
-            {
-                "$lookup": {
-                    "from": "permissions",
-                    "let": {
-                        "permission_ids": "$actor_permissions.permission_id"
-                    },
-                    "pipeline": [
-                        {
-                            "$match": {
-                                "$expr": {
-                                    "$and": [
-                                        {"$in": ["$_id", "$$permission_ids"]},
-                                        {"$eq": ["$is_active", True]}
-                                    ]
-                                }
+    background_tasks.add_task(
+        logger.info,
+        f"Fetching permissions for actor ID: {actor_id}"
+    )
+
+    # 2️⃣ Aggregation pipeline
+    pipeline = [
+        {
+            "$match": {
+                "_id": actor_object_id,
+                "is_active": True
+            }
+        },
+        {
+            "$lookup": {
+                "from": "actor_permissions",
+                "localField": "_id",
+                "foreignField": "actor_id",
+                "as": "actor_permissions"
+            }
+        },
+        {
+            "$lookup": {
+                "from": "permissions",
+                "let": {
+                    "permission_ids": "$actor_permissions.permission_id"
+                },
+                "pipeline": [
+                    {
+                        "$match": {
+                            "$expr": {
+                                "$and": [
+                                    {"$in": ["$_id", "$$permission_ids"]},
+                                    {"$eq": ["$is_active", True]}
+                                ]
                             }
                         }
-                    ],
-                    "as": "permissions"
-                }
-            },
-            {
-                "$project": {
-                    "_id": 1,
-                    "name": 1,
-                    "description": 1,
-                    "permissions": {
-                        "$map": {
-                            "input": "$permissions",
-                            "as": "perm",
-                            "in": {
-                                "id": {"$toString": "$$perm._id"},
-                                "name": "$$perm.name",
-                                "description": "$$perm.description",
-                                "is_active": "$$perm.is_active"
-                            }
+                    }
+                ],
+                "as": "permissions"
+            }
+        },
+        {
+            "$project": {
+                "_id": 1,
+                "name": 1,
+                "description": 1,
+                "permissions": {
+                    "$map": {
+                        "input": "$permissions",
+                        "as": "perm",
+                        "in": {
+                            "id": {"$toString": "$$perm._id"},
+                            "name": "$$perm.name",
+                            "description": "$$perm.description",
+                            "is_active": "$$perm.is_active"
                         }
                     }
                 }
             }
-        ]
+        }
+    ]
 
-        result = (
-            await Actor.aggregate(pipeline).to_list(length=1)
-        )
+    try:
+        collection = Actor.get_motor_collection()
+    except AttributeError:
+        collection = Actor.get_pymongo_collection()
 
-        if not result:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Actor not found"
-            )
+    cursor = collection.aggregate(pipeline)
+    result = await cursor.to_list(length=1)
 
-        actor_doc = result[0]
-
-        background_tasks.add_task(
-            logger.info,
-            f"Fetched permissions for actor ID: {actor_id}"
-        )
-
-        return AssignPermissionResponse(
-            id=str(actor_doc["_id"]),
-            name=actor_doc["name"],
-            description=actor_doc.get("description"),
-            permissions=[
-                PermissionResponse(**perm)
-                for perm in actor_doc.get("permissions", [])
-            ]
-        )
-
-    except RateLimitExceeded:
-        background_tasks.add_task(
-            logger.error,
-            "Rate limit exceeded while fetching actor permissions"
-        )
+    if not result:
         raise HTTPException(
-            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-            detail="Rate limit exceeded"
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Actor not found"
         )
+
+    actor_doc = result[0]
+
+    background_tasks.add_task(
+        logger.info,
+        f"Fetched permissions for actor ID: {actor_id}"
+    )
+
+    # 5️⃣ Map sang response model
+    return AssignPermissionResponse(
+        id=str(actor_doc["_id"]),
+        name=actor_doc["name"],
+        description=actor_doc.get("description"),
+        permissions=[
+            PermissionResponse(**perm)
+            for perm in actor_doc.get("permissions", [])
+        ]
+    )
