@@ -44,7 +44,6 @@ class CompanyBranchResponse(BaseModel):
     company_size: int
     working_days: list[str]
     overtime_policy: Optional[str]
-    is_active: bool
 
 class CompanyBranchListResponse(BaseModel):
     company_branches: list[CompanyBranchResponse]

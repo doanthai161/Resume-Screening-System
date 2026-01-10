@@ -1,5 +1,5 @@
 from typing import Optional
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel, EmailStr, ConfigDict
 from datetime import datetime
 
 class CompanyCreate(BaseModel):
@@ -21,7 +21,6 @@ class CompanyUpdate(BaseModel):
     email: Optional[EmailStr]
     logo_url: Optional[str]
     website: Optional[str]
-    is_active: Optional[bool]
 
 class CompanyResponse(BaseModel):
     user_id: str

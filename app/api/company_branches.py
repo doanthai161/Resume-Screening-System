@@ -67,7 +67,21 @@ async def create_company_branch(
             )
         raise
 
-    return CompanyBranchResponse.model_validate(company_branch)
+    return CompanyBranchResponse(
+        id=ObjectId(company_branch.id),
+        company_id=ObjectId(company_branch.company_id),
+        bussiness_type=company_branch.bussiness_type,
+        branch_name=company_branch.branch_name,
+        phone_number=company_branch.phone_number,
+        address=company_branch.address,
+        description=company_branch.description,
+        company_type=company_branch.company_type,
+        company_industry=company_branch.company_industry,
+        country=company_branch.country,
+        company_size=company_branch.company_size,
+        working_days=list(company_branch.working_days),
+        overtime_policy=company_branch.overtime_policy,
+    )
 
 
 @router.get("/company-branches", response_model=CompanyBranchListResponse)

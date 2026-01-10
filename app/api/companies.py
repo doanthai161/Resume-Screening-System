@@ -116,6 +116,7 @@ async def list_companies(
                 email=company.email,
                 logo_url=company.logo_url,
                 website=company.website,
+                created_at=company.created_at
             )
             for company in companies
         ],
@@ -157,16 +158,27 @@ async def update_company(
     )
 
     company = await Company.find_one(
-        {"_id": oid, "is_active": True}).update(
-        {"$set": update_data},
-        return_document=True
+        {"_id": oid, "is_active": True}
     )
 
     if not company:
         raise HTTPException(status_code=404, detail="Company not found")
 
-    return CompanyResponse.model_validate(company)
+    company.set(update_data)
+    await company.save()
 
+    return CompanyResponse(
+        user_id=str(company.user_id),
+        name=company.name,
+        company_short_name=company.company_short_name,
+        description=company.description,
+        company_code=company.company_code,
+        tax_code=company.tax_code,
+        email=company.email,
+        logo_url=company.logo_url,
+        website=company.website,
+        created_at=company.created_at
+    )
 
 @router.get("/get-company/{company_id}", response_model=CompanyResponse)
 @limiter.limit("10/minute")
@@ -193,8 +205,18 @@ async def get_company(
     if not company:
         raise HTTPException(status_code=404, detail="Company not found")
 
-    return CompanyResponse.model_validate(company)
-
+    return CompanyResponse(
+        user_id=str(company.user_id),
+        name=company.name,
+        company_short_name=company.company_short_name,
+        description=company.description,
+        company_code=company.company_code,
+        tax_code=company.tax_code,
+        email=company.email,
+        logo_url=company.logo_url,
+        website=company.website,
+        created_at=company.created_at
+    )
 
 @router.delete("/delete-company/{company_id}", status_code=200)
 @limiter.limit("5/minute")
