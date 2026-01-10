@@ -12,6 +12,7 @@ from app.core.security import (
     require_permission,
     get_current_user,
 )
+from app.models.user_company import UserCompany
 
 
 router = APIRouter()
@@ -66,10 +67,15 @@ async def create_company_branch(
                 detail="Company branch already exists"
             )
         raise
+    user_company = UserCompany(
+        user_id=ObjectId(current_user.user_id),
+        company_id=ObjectId(data.company_id)
+    )
+    await user_company.insert()
 
     return CompanyBranchResponse(
-        id=ObjectId(company_branch.id),
-        company_id=ObjectId(company_branch.company_id),
+        id=str(company_branch.id),
+        company_id=str(company_branch.company_id),
         bussiness_type=company_branch.bussiness_type,
         branch_name=company_branch.branch_name,
         phone_number=company_branch.phone_number,
@@ -113,7 +119,7 @@ async def list_company_branches(
         f"User {current_user.user_id} listing branches of company {company_id}, page={page}, size={size}"
     )
 
-    total = await CompanyBranch.count_documents(filter_query)
+    total = await CompanyBranch.find(filter_query).count()
 
     branches = await CompanyBranch.find(
         filter_query
@@ -124,8 +130,21 @@ async def list_company_branches(
         page=page,
         size=size,
         company_branches=[
-            CompanyBranchResponse.model_validate(branch)
-            for branch in branches
+            CompanyBranchResponse(
+                        id=str(cb.id),
+                        company_id=str(cb.company_id),
+                        bussiness_type=cb.bussiness_type,
+                        branch_name=cb.branch_name,
+                        phone_number=cb.phone_number,
+                        address=cb.address,
+                        description=cb.description,
+                        company_type=cb.company_type,
+                        company_industry=cb.company_industry,
+                        country=cb.country,
+                        company_size=cb.company_size,
+                        working_days=list(cb.working_days),
+                        overtime_policy=cb.overtime_policy,
+            ) for cb in branches
         ]
     )
 
@@ -166,14 +185,27 @@ async def update_company_branch(
     )
 
     company_branch = await CompanyBranch.find_one(
-            {"_id": oid, "is_active": True}).update(
-            {"$set": update_data},
-            return_document=True
-        )
+            {"_id": oid, "is_active": True})
     if not company_branch:
         raise HTTPException(status_code=404, detail="Company branch not found")
+    company_branch.set(update_data)
+    await company_branch.save()
 
-    return CompanyBranchResponse.model_validate(company_branch)
+    return CompanyBranchResponse(
+        id=str(company_branch.id),
+        company_id=str(company_branch.company_id),
+        bussiness_type=company_branch.bussiness_type,
+        branch_name=company_branch.branch_name,
+        phone_number=company_branch.phone_number,
+        address=company_branch.address,
+        description=company_branch.description,
+        company_type=company_branch.company_type,
+        company_industry=company_branch.company_industry,
+        country=company_branch.country,
+        company_size=company_branch.company_size,
+        working_days=list(company_branch.working_days),
+        overtime_policy=company_branch.overtime_policy,
+    )
 
 @router.delete("/company-branches/{branch_id}", status_code=204)
 @limiter.limit("3/minute")
@@ -212,3 +244,5 @@ async def delete_company_branch(
 
     if not result:
         raise HTTPException(status_code=404, detail="Company branch not found")
+    
+    return {"message": "Company_branch deleted successfully"}

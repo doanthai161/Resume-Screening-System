@@ -28,7 +28,6 @@ class CompanyBranchUpdate(BaseModel):
     company_size: Optional[int]
     working_days: Optional[list[str]]
     overtime_policy: Optional[str]
-    is_active: Optional[bool]
 
 class CompanyBranchResponse(BaseModel):
     id: str
