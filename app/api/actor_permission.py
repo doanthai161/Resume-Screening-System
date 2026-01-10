@@ -22,7 +22,7 @@ app = FastAPI()
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
-@router.post("/actor-permission",response_model=AssignPermissionResponse)
+@router.post("/actor-permission",response_model=dict)
 @limiter.limit("5/minute")
 async def assign_permission_to_actor(
     request: Request,

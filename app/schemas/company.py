@@ -1,9 +1,8 @@
 from typing import Optional
 from pydantic import BaseModel, EmailStr
-from bson import ObjectId
+from datetime import datetime
 
 class CompanyCreate(BaseModel):
-    user_id: ObjectId
     name: str
     company_short_name: str
     description: Optional[str] = None
@@ -34,6 +33,7 @@ class CompanyResponse(BaseModel):
     email: EmailStr
     logo_url: Optional[str]
     website: str
+    created_at: datetime
 
 class CompanyListResponse(BaseModel):
     companies: list[CompanyResponse]

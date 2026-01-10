@@ -1,9 +1,8 @@
 from typing import Optional
 from pydantic import BaseModel
-from bson import ObjectId
 
 class CompanyBranchCreate(BaseModel):
-    company_id: ObjectId
+    company_id: str
     bussiness_type: str
     branch_name: str
     phone_number: Optional[str] = None

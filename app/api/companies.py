@@ -36,16 +36,18 @@ async def create_company(
     )
 
     company = Company(
+        user_id= ObjectId(current_user.user_id),
         name=data.name,
         description=data.description,
         company_short_name=data.company_short_name,
+        company_code=data.company_code,
+
         tax_code=data.tax_code,
         email=data.email,
         logo_url=data.logo_url,
         website=data.website,
         is_active=True,
         created_at=now_vn(),
-        created_by=current_user.user_id,
     )
 
     try:
@@ -58,7 +60,18 @@ async def create_company(
             )
         raise
 
-    return CompanyResponse.model_validate(company)
+    return CompanyResponse(
+        user_id=str(company.user_id),
+        name=company.name,
+        company_short_name=company.company_short_name,
+        description=company.description,
+        company_code=company.company_code,
+        tax_code=company.tax_code,
+        email=company.email,
+        logo_url=company.logo_url,
+        website=company.website,
+        created_at=company.created_at
+    )
 
     
 @router.get("/list-companies", response_model=CompanyListResponse)
@@ -66,22 +79,51 @@ async def create_company(
 async def list_companies(
     request: Request,
     background_tasks: BackgroundTasks,
-    page: 1,
-    size: 10,
-    current_user: CurrentUser = Depends(get_current_user)
+    page: int = 1,
+    size: int = 10,
+    current_user: CurrentUser = Depends(get_current_user),
 ):
     background_tasks.add_task(
         logger.info,
-        f"User {current_user.user_id} listing companies: page {page}, size {size}"
+        f"User {current_user.user_id} listing companies: page={page}, size={size}"
     )
+
+    if page < 1 or size < 1:
+        raise HTTPException(
+            status_code=400,
+            detail="page and size must be greater than 0"
+        )
 
     skip = (page - 1) * size
-    companies_cursor = Company.find({"is_active": True}).skip(skip).limit(size)
-    companies = await companies_cursor.to_list(length=size)
+
+    companies = await Company.find(
+        {"is_active": True}
+    ).skip(skip).limit(size).to_list()
+
+    total = await Company.find(
+        {"is_active": True}
+    ).count()
 
     return CompanyListResponse(
-        companies=[CompanyResponse.model_validate(company) for company in companies]
+        companies=[
+            CompanyResponse(
+                user_id=str(company.user_id),
+                name=company.name,
+                company_short_name=company.company_short_name,
+                description=company.description,
+                company_code=company.company_code,
+                tax_code=company.tax_code,
+                email=company.email,
+                logo_url=company.logo_url,
+                website=company.website,
+            )
+            for company in companies
+        ],
+        total=total,
+        page=page,
+        size=size,
     )
+
 
 @router.patch("/update-company/{company_id}", response_model=CompanyResponse)
 @limiter.limit("5/minute")

@@ -9,6 +9,8 @@ from bson import ObjectId
 class UserActor(Document):
     user_id: ObjectId = Field(..., description="ID of the user")
     actor_id: ObjectId = Field(..., description="ID of the actor")
+    created_by: ObjectId = Field(..., description="ID of the user created")
+    updated_by: Optional[ObjectId] = Field(None, description="User Update user_actor")
     created_at: datetime = Field(default_factory=lambda: now_vn())
     updated_at: datetime = Field(default_factory=lambda: now_vn())
 

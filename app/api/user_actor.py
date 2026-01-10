@@ -40,7 +40,7 @@ async def assign_actor_to_user(
 
     background_tasks.add_task(
         logger.info,
-        f"User {current_user.id} assigning actor {actor_id} to user {user_id}"
+        f"User {current_user.user_id} assigning actor {actor_id} to user {user_id}"
     )
 
     user = await User.find_one(
@@ -55,15 +55,17 @@ async def assign_actor_to_user(
     if not actor:
         raise HTTPException(status_code=404, detail="Actor not found")
 
-    link = UserActor(
-        user_id=user_oid,
-        actor_id=actor_oid,
-        created_at=now_vn(),
-        created_by=current_user.user_id
+    user_actor = await UserActor.find_one(
+        {"user_id": user_oid}
     )
+    if not user_actor:
+        raise HTTPException(status_code=404, detail="User not found")
+ 
+    user_actor.updated_by = current_user.user_id
+    user_actor.actor_id = actor_oid
 
     try:
-        await link.insert()
+        await user_actor.save()
     except Exception as exc:
         if "E11000" in str(exc):
             raise HTTPException(
