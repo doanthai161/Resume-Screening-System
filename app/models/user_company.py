@@ -8,7 +8,7 @@ from typing import Optional
 
 class UserCompany(Document):
     user_id: ObjectId = Field(..., description="ID of the user")
-    company_id: ObjectId = Field(..., description="ID of the company")
+    company_branch_id: ObjectId = Field(..., description="ID of the company")
     created_by: Optional[ObjectId] = Field(None, description="ID of the user who last assign user to company")
     updated_by: Optional[ObjectId] = Field(None, description="ID of the user who last unssign user to the company")
     is_active: bool = Field(default=True, description="Is the user active in company?")

@@ -27,6 +27,7 @@ app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 async def assign_user_to_company_branch(
     request: Request,
     data: AssignUserToCompanyBranch,
+    background_tasks: BackgroundTasks,
     current_user: CurrentUser = Depends(require_permission("companies:create")),
 ):
     try:
@@ -53,28 +54,37 @@ async def assign_user_to_company_branch(
     existed = await UserCompany.find_one(
         {
             "user_id": uid,
-            "company_branch_id": cbid,
-            "is_active": True
+            "company_branch_id": cbid
         }
     )
-    if existed:
+    if existed.is_active == True:
         raise HTTPException(
             status_code=409,
             detail="User already assigned to this company branch"
         )
+    elif existed.is_active == False:
+        existed.is_active = True
+        existed.updated_by = ObjectId(current_user.user_id),
+        existed.updated_at = now_vn()
 
-    user_company_branch = UserCompany(
-        user_id=uid,
-        company_branch_id=cbid,
-        created_by=ObjectId(current_user.user_id),
-        created_at=now_vn(),
-        is_active=True
-    )
-    await user_company_branch.save()
-
-    logger.info(
-        f"User {uid} assigned to company_branch {cbid} by {current_user.user_id}"
-    )
+        await existed.save()
+        background_tasks.add_task(
+            logger.info, f"resigned user: {uid} to company branch: {cbid}"
+        )
+        
+    else:
+        user_company_branch = UserCompany(
+            user_id=uid,
+            company_branch_id=cbid,
+            created_by=ObjectId(current_user.user_id),
+            created_at=now_vn(),
+            is_active=True
+        )
+        await user_company_branch.save()
+        background_tasks.add_task(
+            logger.info,
+            f"User {uid} assigned to company_branch {cbid} by {current_user.user_id}"
+        )
 
     return {
         "message": "User assigned to company branch successfully"

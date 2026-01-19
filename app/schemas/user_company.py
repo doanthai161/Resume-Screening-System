@@ -1,4 +1,4 @@
-from typing import Optional, list
+from typing import Optional
 from app.schemas.user import UserResponse
 from app.schemas.company_branch import CompanyBranchResponse
 from datetime import datetime
