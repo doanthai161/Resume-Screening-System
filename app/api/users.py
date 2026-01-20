@@ -7,6 +7,8 @@ from app.schemas.user import (
     RegisterRequest,
     UserResponse,
     VerifyOTPResponse,
+    UserListRespponse,
+    UserUpdate,
 
 )
 from app.models.user import User
@@ -36,6 +38,7 @@ from datetime import datetime, timedelta, timezone
 from app.models.actor import Actor
 from app.models.user_actor import UserActor
 from app.core.config import settings
+from bson import ObjectId
 
 router = APIRouter()
 
@@ -240,22 +243,162 @@ async def register(
     )
 
 
-@router.get("/", response_model=List[UserResponse])
+@router.get("/", response_model=UserListRespponse)
 @limiter.limit("10/minute")
 async def get_users(
     request: Request,
+    background_tasks: BackgroundTasks,
+    page: int = 1,
+    size: int = 10,
     current_user: CurrentUser = Depends(
         require_permission("users:view")
     ),
 ):
+    background_tasks.add_task(
+        logger.info,
+        f"User: {current_user.user_id} get users"
+    )
+
+    if page < 1 or size < 1:
+        raise HTTPException(
+            status_code=400,
+            detail="page and size must be greater than 0"
+        )
+
+    skip = (page - 1) * size
+    
     users = await User.find(User.is_active == True).to_list()
-    return [
-        UserResponse(
+    total = users.count()
+    return UserListRespponse(
+        users=[
+            UserResponse(
+                id=str(user.id),
+                email=user.email,
+                full_name=user.full_name,
+                phone_number=user.phone_number,
+                address=user.address,
+            ) for user in users
+        ],
+        total=total,
+        page=page,
+        size=size,
+    )
+
+@router.get("/detail_user", response_model=UserResponse)
+@limiter.limit("10/minute")
+async def get_users(
+    request: Request,
+    user_id: str,
+    background_tasks: BackgroundTasks,
+    current_user: CurrentUser = Depends(
+        require_permission("users:view")
+    ),
+):
+    try:
+        uid = ObjectId(user_id)
+    except:
+        raise HTTPException(status_code=400, detail="Invalid user_id")
+    
+    background_tasks.add_task(
+        logger.info,
+        f"User: {current_user.user_id} get user_detail: {user_id}"
+    )
+    user = await User.find_one(
+        {"_id": uid, "is_active": True}
+    )
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    
+    return UserResponse(
             id=str(user.id),
             email=user.email,
             full_name=user.full_name,
             phone_number=user.phone_number,
             address=user.address,
-        )
-        for user in users
-    ]
+    )
+
+@router.patch("/update-user/{user_id}", response_model=UserResponse)
+@limiter.limit("10/minute")
+async def update_user(
+    request: Request,
+    user_id: str,
+    data: UserUpdate,
+    background_tasks: BackgroundTasks,
+    current_user: CurrentUser = Depends(
+        require_permission("users:edit")
+    ),
+):
+    try:
+        uid = ObjectId(user_id)
+    except:
+        raise HTTPException(status_code=400, detail="Invalid user_id")
+    background_tasks.add_task(
+        logger.info,
+        f"User: {current_user.user_id} edit user: {user_id}"
+    )
+
+    user = await User.find_one(
+        {"_id": uid, "is_active": True}
+    )
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    update_data = data.model_dump(exclude_unset=True)
+
+    if not update_data:
+        raise HTTPException(status_code=400, detail="No fields to update")
+    
+    update_data.update({
+        "updated_at": now_vn(),
+    })
+
+    background_tasks.add_task(
+        logger.info,
+        f"User {current_user.user_id} updating user_id: {user_id}: {list(update_data.keys())}"
+    )
+    user.set(update_data)
+    await user.save()
+
+    return UserResponse(
+            id=str(user.id),
+            email=user.email,
+            full_name=user.full_name,
+            phone_number=user.phone_number,
+            address=user.address,
+    )
+
+@router.delete("/delete_user/{user_id}", status_code=200)
+@limiter.limit("5/minute")
+async def delete_user(
+    request: Request,
+    user_id: str,
+    background_tasks: BackgroundTasks,
+    current_user: CurrentUser = Depends(
+        require_permission("users:delete")
+    ),
+):
+    try:
+        uid = ObjectId(user_id)
+    except:
+        raise HTTPException(status_code=400, detail="Invalid user_id")
+    background_tasks.add_task(
+        logger.info,
+        f"User: {current_user.user_id} edit user: {user_id}"
+    )
+    
+    result = await User.find_one(
+        {"_id": uid, "is_active": True}
+    ).update(
+        {
+            "$set": {
+                "is_active": False,
+                "updated_at": now_vn()
+            }
+        }
+    )
+    if result.matched_count ==0:
+        raise HTTPException(status_code=404, detail="User not found or already deleted")
+    
+    background_tasks.add_task(
+        logger.info,
+        f"User {user_id} soft-deleted by user: {current_user.user_id}"
+    )
