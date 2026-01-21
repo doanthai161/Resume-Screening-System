@@ -4,8 +4,8 @@ from bson import ObjectId
 from datetime import datetime
 
 class JobRequirementCreate(BaseModel):
-    user_id: ObjectId
-    company_id: ObjectId
+    user_id: str
+    company_branch_id: str
     title: str
     programming_languages: list[str]
     skills_required: list[str]
@@ -30,7 +30,7 @@ class JobRequirementUpdate(BaseModel):
 class JobRequirementResponse(BaseModel):
     id: str
     user_id: str
-    company_id: str
+    company_branch_id: str
     title: str
     programming_languages: list[str]
     skills_required: list[str]
@@ -40,7 +40,6 @@ class JobRequirementResponse(BaseModel):
     salary_max: Optional[int]
     expiration_time: Optional[datetime]
     is_open: bool
-    is_active: bool
     created_at: datetime
     updated_at: datetime
 

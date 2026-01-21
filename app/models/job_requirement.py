@@ -9,7 +9,7 @@ from bson import ObjectId
 
 class JobRequirement(Document):
     user_id: ObjectId = Field(..., description="ID of the user who created the job requirement")
-    company_id: ObjectId = Field(..., description="ID of the company associated with the job requirement")
+    company_branch_id: ObjectId = Field(..., description="ID of the company branch associated with the job requirement")
     title: str = Field(..., description="Title of the job requirement")
     programming_languages: List[str] = Field(..., description="List of required programming languages")
     skills_required: List[str] = Field(..., description="List of required skills")
@@ -27,7 +27,7 @@ class JobRequirement(Document):
         name = "job_requirements"
         indexes = [
             IndexModel([("user_id", 1)], name="idx_job_requirements_user_id"),
-            IndexModel([("company_id", 1)], name="idx_job_requirements_company_id"),
+            IndexModel([("company_branch_id", 1)], name="idx_job_requirements_company_branch_id"),
             IndexModel([("is_open", 1)], name="idx_job_requirements_is_open"),
             IndexModel([("is_active", 1)], name="idx_job_requirements_is_active"),
         ]

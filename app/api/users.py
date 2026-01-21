@@ -209,19 +209,18 @@ async def register(
         is_active=False,
     )
     await user.insert()
-    try:
-        default_actor = await Actor.find_one(Actor.name == settings.DEFAULT_ROLE_NAME)
-        if not default_actor:
-            background_tasks.add_task(logger.error, f"Default actor '{settings.DEFAULT_ROLE_NAME}' not found. Cannot assign to user '{data.email}'.")
-
-        else:
-            await UserActor(
-                user_id=user.id,
-                actor_id=default_actor.id
-            ).insert()
-            background_tasks.add_task(logger.info, f"Assigned default actor '{settings.DEFAULT_ROLE_NAME}' to user '{data.email}'.")
-    except Exception as e:
-        logger.error(f"Error assigning default actor to user '{data.email}': {e}", exc_info=True)
+    default_actor = await Actor.find_one(Actor.name == settings.DEFAULT_ROLE_NAME)
+    if not default_actor:
+        background_tasks.add_task(logger.error, f"Default actor '{settings.DEFAULT_ROLE_NAME}' not found. Cannot assign to user '{data.email}'.")
+        raise HTTPException(status_code=404, detail="Default actor not found")
+    
+    user_actor = UserActor(
+        user_id=ObjectId(user.id),
+        actor_id=ObjectId(default_actor.id),
+        created_by=ObjectId(user.id),
+    )
+    await user_actor.insert()
+    background_tasks.add_task(logger.info, f"Assigned default actor '{settings.DEFAULT_ROLE_NAME}' to user '{data.email}'.")
 
     otp = generate_otp()
     expires_at = datetime.now(timezone.utc) + timedelta(minutes=10)
@@ -268,7 +267,7 @@ async def get_users(
     skip = (page - 1) * size
     
     users = await User.find(User.is_active == True).to_list()
-    total = users.count()
+    total = len(users)
     return UserListRespponse(
         users=[
             UserResponse(
@@ -325,7 +324,7 @@ async def update_user(
     data: UserUpdate,
     background_tasks: BackgroundTasks,
     current_user: CurrentUser = Depends(
-        require_permission("users:edit")
+        get_current_user
     ),
 ):
     try:
@@ -336,6 +335,8 @@ async def update_user(
         logger.info,
         f"User: {current_user.user_id} edit user: {user_id}"
     )
+    if current_user.user_id != user_id:
+        await require_permission("users:edit")(current_user)
 
     user = await User.find_one(
         {"_id": uid, "is_active": True}
