@@ -20,6 +20,9 @@ class JobRequirement(Document):
     expiration_time: Optional[datetime] = Field(None, description="Expiration date of the job requirement")
     is_open: bool = Field(default=True, description="Is the job requirement open?")
     is_active: bool = Field(default=True, description="Is the job requirement active?")
+    screening_model_id: Optional[ObjectId] = Field(None, description="AI model used to screen")
+    auto_screening_enabled: bool = Field(True, description="Is auto screening enabled?")
+    screening_threshold: float = Field(70.0, ge=0.0, le=100.0, description="Threshold score to pass screening")
     created_at: datetime = Field(default_factory=lambda: now_vn())
     updated_at: datetime = Field(default_factory=lambda: now_vn())
 
@@ -30,6 +33,8 @@ class JobRequirement(Document):
             IndexModel([("company_branch_id", 1)], name="idx_job_requirements_company_branch_id"),
             IndexModel([("is_open", 1)], name="idx_job_requirements_is_open"),
             IndexModel([("is_active", 1)], name="idx_job_requirements_is_active"),
+            IndexModel([("auto_screening_enabled", 1)], name="idx_job_auto_screening"),
+            IndexModel([("expiration_time", 1)], name="idx_job_expiration", sparse=True),
         ]
     class Config:
         arbitrary_types_allowed = True
