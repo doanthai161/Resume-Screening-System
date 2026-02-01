@@ -8,7 +8,13 @@ from app.schemas.actor import ActorResponse
 class LoginRequest(BaseModel):
     email: EmailStr
     password: str
-
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "email": "user@example.com",
+                "password": "password123"
+            }
+        }
 class UserCreate(BaseModel):
     email: EmailStr
     full_name: Optional[str] = None
