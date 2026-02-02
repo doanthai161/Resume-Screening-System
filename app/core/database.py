@@ -26,7 +26,6 @@ import logging
 logger = logging.getLogger(__name__)
 INIT_FILE_PATH = ".initdb"
 
-# ==================== CẬP NHẬT DANH SÁCH MODELS ====================
 DOCUMENT_MODELS = [
     User,
     Company,
@@ -39,14 +38,12 @@ DOCUMENT_MODELS = [
     JobRequirement,
     CandidateEvaluation,
     EmailOTP,
-    # Thêm các model mới
     ResumeFile,
     ScreeningResult,
     AIModel,
-    JobApplication,  # Nếu có
+    JobApplication,
 ]
 
-# ==================== TẠO MODEL TỪ DICTIONARY ====================
 MODEL_NAMES = {
     "User": User,
     "Company": Company,

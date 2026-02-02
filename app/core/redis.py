@@ -1,4 +1,3 @@
-# app/core/redis.py
 import redis
 from redis.asyncio import Redis
 from app.core.config import settings

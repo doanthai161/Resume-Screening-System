@@ -308,8 +308,7 @@ async def generic_exception_handler(request: Request, exc: Exception):
 
 app.include_router(
     api_router,
-    prefix=settings.API_V1_STR,
-    tags=["api"]
+    prefix=settings.API_V1_STR
 )
 
 @app.get("/", tags=["Health"], include_in_schema=False)
