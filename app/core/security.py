@@ -342,7 +342,6 @@ async def get_current_user(
     request: Request,
     token: Optional[str] = Depends(get_token_from_request)
 ) -> CurrentUser:
-    """Get current authenticated user with permissions"""
     from app.dependencies.error_code import ErrorCode
     
     if not token:
@@ -352,7 +351,6 @@ async def get_current_user(
             headers={"WWW-Authenticate": "Bearer"},
         )
     
-    # Check token blacklist
     if await is_token_blacklisted(token):
         logger.warning(f"Blacklisted token attempt: {token[:20]}...")
         raise HTTPException(
@@ -360,7 +358,6 @@ async def get_current_user(
             detail=ErrorCode.TOKEN_EXPIRED,
         )
     
-    # Decode token
     token_payload = decode_jwt_token(token)
     if not token_payload or not token_payload.sub:
         raise HTTPException(
@@ -368,14 +365,12 @@ async def get_current_user(
             detail=ErrorCode.INVALID_CREDENTIALS,
         )
     
-    # Check token expiration
     if token_payload.exp and datetime.fromtimestamp(token_payload.exp, tz=timezone.utc) < datetime.now(timezone.utc):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail=ErrorCode.TOKEN_EXPIRED,
         )
     
-    # Get user
     user = await User.find_one(User.email == token_payload.email, User.is_active == True)
     if not user:
         raise HTTPException(
@@ -383,7 +378,6 @@ async def get_current_user(
             detail=ErrorCode.USER_NOT_FOUND,
         )
     
-    # Get user's actors
     actor_links = await UserActor.find(
         UserActor.user_id == user.id
     ).to_list()
@@ -395,7 +389,6 @@ async def get_current_user(
             {"_id": {"$in": actor_ids}, "is_active": True}
         ).to_list()
     
-    # Get permissions from actors
     active_actor_ids = [actor.id for actor in actors]
     permissions = []
     if active_actor_ids:
@@ -408,7 +401,6 @@ async def get_current_user(
                 {"_id": {"$in": permission_ids}, "is_active": True}
             ).to_list()
     
-    # Log successful authentication (for audit trail)
     logger.info(f"User authenticated: {user.email}, roles: {[a.name for a in actors]}")
     
     return CurrentUser(

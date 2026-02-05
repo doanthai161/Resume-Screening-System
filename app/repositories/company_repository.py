@@ -20,46 +20,38 @@ logger = logging.getLogger(__name__)
 
 class CompanyRepository:
     CACHE_PREFIX = "company:"
-    COMPANY_CACHE_TTL = 3600  # 1 hour for company data
-    BRANCH_CACHE_TTL = 3600   # 1 hour for branch data
-    USER_COMPANY_CACHE_TTL = 1800  # 30 minutes for user-company relationships
+    COMPANY_CACHE_TTL = 3600 
+    BRANCH_CACHE_TTL = 3600 
+    USER_COMPANY_CACHE_TTL = 1800 
         
     @staticmethod
     def _get_company_cache_key(company_id: str) -> str:
-        """Generate cache key for company"""
         return f"{CompanyRepository.CACHE_PREFIX}company:{company_id}"
     
     @staticmethod
     def _get_branch_cache_key(branch_id: str) -> str:
-        """Generate cache key for company branch"""
         return f"{CompanyRepository.CACHE_PREFIX}branch:{branch_id}"
     
     @staticmethod
     def _get_user_companies_cache_key(user_id: str) -> str:
-        """Generate cache key for user's companies"""
         return f"{CompanyRepository.CACHE_PREFIX}user_companies:{user_id}"
     
     @staticmethod
     def _get_user_branches_cache_key(user_id: str) -> str:
-        """Generate cache key for user's company branches"""
         return f"{CompanyRepository.CACHE_PREFIX}user_branches:{user_id}"
     
     @staticmethod
     def _get_company_branches_cache_key(company_id: str) -> str:
-        """Generate cache key for company's branches"""
         return f"{CompanyRepository.CACHE_PREFIX}company_branches:{company_id}"
     
     @staticmethod
     def _get_user_branch_access_cache_key(user_id: str, branch_id: str) -> str:
-        """Generate cache key for user's access to a specific branch"""
         return f"{CompanyRepository.CACHE_PREFIX}user_access:{user_id}:{branch_id}"
     
-    # ==================== COMPANY OPERATIONS ====================
     
     @staticmethod
     @monitor_db_operation("company_create")
     async def create_company(company_data: CompanyCreate, owner_id: str) -> Company:
-        """Create a new company with the specified owner"""
         try:
             owner_id_obj = ObjectId(owner_id)
             
@@ -67,7 +59,7 @@ class CompanyRepository:
             if not owner:
                 raise ValueError(f"Owner with ID {owner_id} does not exist")
             
-            company_dict = company_data.dict()
+            company_dict = company_data.model_dump()
             company_dict["owner_id"] = owner_id_obj
             company_dict["created_at"] = now_vn()
             company_dict["updated_at"] = now_vn()
@@ -100,13 +92,12 @@ class CompanyRepository:
     @monitor_db_operation("company_get")
     @monitor_cache_operation("company_get")
     async def get_company(company_id: str) -> Optional[Company]:
-        """Get company by ID with caching"""
         cache_key = CompanyRepository._get_company_cache_key(company_id)
         cached_data = await CompanyRepository._get_from_cache(cache_key)
         
         if cached_data:
             logger.debug(f"Cache hit for company: {company_id}")
-            company = Company.parse_obj(cached_data)
+            company = Company.model_validate(cached_data)
             setattr(company, '_from_cache', True)
             return company
         
@@ -132,7 +123,7 @@ class CompanyRepository:
             if not company:
                 return None
             
-            update_dict = update_data.dict(exclude_unset=True)
+            update_dict = update_data.model_dump(exclude_unset=True)
             for field, value in update_dict.items():
                 setattr(company, field, value)
             
@@ -187,7 +178,6 @@ class CompanyRepository:
             logger.error(f"Error deleting company {company_id}: {e}", exc_info=True)
             return False
     
-    # ==================== COMPANY BRANCH OPERATIONS ====================
     
     @staticmethod
     @monitor_db_operation("branch_create")
@@ -197,12 +187,10 @@ class CompanyRepository:
         created_by: str
     ) -> CompanyBranch:
         try:
-            # Verify company exists and user has permission
             company = await Company.get(ObjectId(company_id))
             if not company:
                 raise ValueError(f"Company with ID {company_id} does not exist")
             
-            # Check if user has permission to create branch
             has_permission = False
             for member in company.members:
                 if str(member["user_id"]) == created_by:
@@ -356,7 +344,7 @@ class CompanyRepository:
         
         if cached_data:
             logger.debug(f"Cache hit for user companies: {user_id}")
-            companies = [Company.parse_obj(item) for item in cached_data]
+            companies = [Company.model_validate(item) for item in cached_data]
             for company in companies:
                 setattr(company, '_from_cache', True)
             return companies
@@ -367,7 +355,6 @@ class CompanyRepository:
                 "is_active": True
             }).to_list()
             
-            # Cache the result
             if companies:
                 await CompanyRepository._set_cache(
                     cache_key, 
@@ -386,30 +373,25 @@ class CompanyRepository:
     @monitor_db_operation("branch_list_user")
     @monitor_cache_operation("branch_list_user")
     async def get_user_company_branches(user_id: str) -> List[CompanyBranch]:
-        """Get all company branches that a user has access to"""
-        # Try cache first
         cache_key = CompanyRepository._get_user_branches_cache_key(user_id)
         cached_data = await CompanyRepository._get_from_cache(cache_key)
         
         if cached_data:
             logger.debug(f"Cache hit for user branches: {user_id}")
-            branches = [CompanyBranch.parse_obj(item) for item in cached_data]
+            branches = [CompanyBranch.model_validate(item) for item in cached_data]
             for branch in branches:
                 setattr(branch, '_from_cache', True)
             return branches
         
         try:
-            # Get user's companies first
             companies = await CompanyRepository.get_user_companies(user_id)
             company_ids = [company.id for company in companies]
             
-            # Get active branches for these companies
             branches = await CompanyBranch.find({
                 "company_id": {"$in": company_ids},
                 "is_active": True
             }).to_list()
             
-            # Cache the result
             if branches:
                 await CompanyRepository._set_cache(
                     cache_key, 
@@ -428,14 +410,12 @@ class CompanyRepository:
     @monitor_db_operation("branch_list_company")
     @monitor_cache_operation("branch_list_company")
     async def get_company_branches(company_id: str) -> List[CompanyBranch]:
-        """Get all branches for a company"""
-        # Try cache first
         cache_key = CompanyRepository._get_company_branches_cache_key(company_id)
         cached_data = await CompanyRepository._get_from_cache(cache_key)
         
         if cached_data:
             logger.debug(f"Cache hit for company branches: {company_id}")
-            branches = [CompanyBranch.parse_obj(item) for item in cached_data]
+            branches = [CompanyBranch.model_validate(item) for item in cached_data]
             for branch in branches:
                 setattr(branch, '_from_cache', True)
             return branches
@@ -446,7 +426,6 @@ class CompanyRepository:
                 "is_active": True
             }).sort("created_at").to_list()
             
-            # Cache the result
             if branches:
                 await CompanyRepository._set_cache(
                     cache_key, 
@@ -470,22 +449,18 @@ class CompanyRepository:
         skip: int = 0,
         limit: int = 20
     ) -> Tuple[List[Company], int]:
-        """Search companies with filters"""
         try:
             query = {"is_active": True}
             
-            # Text search
             if search_term:
                 query["$or"] = [
                     {"name": {"$regex": search_term, "$options": "i"}},
                     {"description": {"$regex": search_term, "$options": "i"}},
                 ]
             
-            # Filter by industry
             if industry:
                 query["industry"] = {"$regex": industry, "$options": "i"}
             
-            # Filter by location
             if location:
                 query["$or"] = [
                     {"city": {"$regex": location, "$options": "i"}},
@@ -506,8 +481,6 @@ class CompanyRepository:
             logger.error(f"Error searching companies: {e}", exc_info=True)
             return [], 0
     
-    # ==================== MEMBERSHIP & PERMISSION OPERATIONS ====================
-    
     @staticmethod
     @monitor_db_operation("company_add_member")
     async def add_company_member(
@@ -517,13 +490,11 @@ class CompanyRepository:
         permissions: Optional[List[str]] = None,
         added_by: str = None
     ) -> bool:
-        """Add a user as a member to a company"""
         try:
             company = await Company.get(ObjectId(company_id))
             if not company:
                 raise ValueError(f"Company with ID {company_id} does not exist")
             
-            # Check if adder has permission
             if added_by:
                 can_add = False
                 for member in company.members:
@@ -535,12 +506,10 @@ class CompanyRepository:
                 if not can_add:
                     raise ValueError("User does not have permission to add members")
             
-            # Check if user already exists
             for member in company.members:
                 if str(member["user_id"]) == user_id:
                     raise ValueError("User is already a member of this company")
             
-            # Add new member
             new_member = {
                 "user_id": ObjectId(user_id),
                 "role": role,
@@ -553,7 +522,6 @@ class CompanyRepository:
             company.updated_at = now_vn()
             await company.save()
             
-            # Invalidate user's company cache
             await CompanyRepository._delete_cache(CompanyRepository._get_user_companies_cache_key(user_id))
             await CompanyRepository._delete_cache(CompanyRepository._get_user_branches_cache_key(user_id))
             
@@ -573,13 +541,10 @@ class CompanyRepository:
         user_id: str,
         removed_by: str
     ) -> bool:
-        """Remove a user from a company"""
         try:
             company = await Company.get(ObjectId(company_id))
             if not company:
                 raise ValueError(f"Company with ID {company_id} does not exist")
-            
-            # Check if remover has permission and is not removing themselves if they're the only owner
             can_remove = False
             is_owner_removing = False
             
@@ -594,14 +559,11 @@ class CompanyRepository:
             if not can_remove:
                 raise ValueError("User does not have permission to remove members")
             
-            # Check if owner is trying to remove themselves
             if is_owner_removing:
-                # Count other owners
                 owner_count = sum(1 for m in company.members if m["role"] == "owner" and str(m["user_id"]) != user_id)
                 if owner_count == 0:
                     raise ValueError("Cannot remove the only owner of the company")
             
-            # Remove the member
             original_length = len(company.members)
             company.members = [m for m in company.members if str(m["user_id"]) != user_id]
             
@@ -611,7 +573,6 @@ class CompanyRepository:
             company.updated_at = now_vn()
             await company.save()
             
-            # Invalidate user's company cache
             await CompanyRepository._delete_cache(CompanyRepository._get_user_companies_cache_key(user_id))
             await CompanyRepository._delete_cache(CompanyRepository._get_user_branches_cache_key(user_id))
             
@@ -633,13 +594,11 @@ class CompanyRepository:
         permissions: Optional[List[str]] = None,
         updated_by: str = None
     ) -> bool:
-        """Update a member's role and permissions in a company"""
         try:
             company = await Company.get(ObjectId(company_id))
             if not company:
                 raise ValueError(f"Company with ID {company_id} does not exist")
             
-            # Check if updater has permission
             if updated_by:
                 can_update = False
                 for member in company.members:
@@ -651,12 +610,10 @@ class CompanyRepository:
                 if not can_update:
                     raise ValueError("User does not have permission to update members")
             
-            # Find and update the member
             member_found = False
             for member in company.members:
                 if str(member["user_id"]) == user_id:
                     if role:
-                        # Prevent changing the last owner's role
                         if member["role"] == "owner" and role != "owner":
                             owner_count = sum(1 for m in company.members if m["role"] == "owner")
                             if owner_count <= 1:
@@ -675,7 +632,6 @@ class CompanyRepository:
             company.updated_at = now_vn()
             await company.save()
             
-            # Invalidate user's company cache
             await CompanyRepository._delete_cache(CompanyRepository._get_user_companies_cache_key(user_id))
             await CompanyRepository._delete_cache(CompanyRepository._get_user_branches_cache_key(user_id))
             
@@ -695,8 +651,6 @@ class CompanyRepository:
         user_id: str,
         company_branch_id: str
     ) -> bool:
-        """Validate that a user has access to a specific company branch"""
-        # Try cache first
         cache_key = CompanyRepository._get_user_branch_access_cache_key(user_id, company_branch_id)
         cached_data = await CompanyRepository._get_from_cache(cache_key)
         
@@ -705,21 +659,17 @@ class CompanyRepository:
             return cached_data
         
         try:
-            # Get the branch
             branch = await CompanyBranch.get(ObjectId(company_branch_id))
             if not branch or not branch.is_active:
                 result = False
             else:
-                # Get the company
                 company = await Company.get(branch.company_id)
                 if not company or not company.is_active:
                     result = False
                 else:
-                    # Check if user is a member of the company
                     result = any(str(member["user_id"]) == user_id for member in company.members)
             
-            # Cache the result (shorter TTL for access validation)
-            await CompanyRepository._set_cache(cache_key, result, 300)  # 5 minutes
+            await CompanyRepository._set_cache(cache_key, result, 300)
             
             return result
             
@@ -730,7 +680,6 @@ class CompanyRepository:
     @staticmethod
     @monitor_db_operation("company_get_user_role")
     async def get_user_company_role(user_id: str, company_id: str) -> Optional[str]:
-        """Get a user's role in a company"""
         try:
             company = await Company.get(ObjectId(company_id))
             if not company:
@@ -746,25 +695,19 @@ class CompanyRepository:
             logger.error(f"Error getting user role: {e}")
             return None
     
-    # ==================== STATISTICS OPERATIONS ====================
-    
     @staticmethod
     @monitor_db_operation("company_stats")
     async def get_company_statistics(company_id: str) -> Dict[str, Any]:
-        """Get statistics for a company"""
         try:
-            # Get company
             company = await Company.get(ObjectId(company_id))
             if not company:
                 raise ValueError("Company not found")
             
-            # Get branch count
             branch_count = await CompanyBranch.find({
                 "company_id": ObjectId(company_id),
                 "is_active": True
             }).count()
             
-            # Get member count by role
             member_stats = {
                 "total": len(company.members),
                 "owners": sum(1 for m in company.members if m["role"] == "owner"),
@@ -773,7 +716,6 @@ class CompanyRepository:
                 "members": sum(1 for m in company.members if m["role"] == "member")
             }
             
-            # Calculate average members per branch
             avg_members_per_branch = member_stats["total"] / branch_count if branch_count > 0 else 0
             
             stats = {
@@ -797,7 +739,6 @@ class CompanyRepository:
                 "calculated_at": datetime.now().isoformat()
             }
     
-    # ==================== CACHE HELPER METHODS ====================
     
     @staticmethod
     async def _get_from_cache(key: str) -> Optional[Any]:
@@ -817,7 +758,6 @@ class CompanyRepository:
     
     @staticmethod
     async def _set_cache(key: str, data: Any, ttl: Optional[int] = None) -> None:
-        """Set data in Redis cache"""
         if not is_redis_available():
             return
         
@@ -831,7 +771,6 @@ class CompanyRepository:
     
     @staticmethod
     async def _delete_cache(key: str) -> None:
-        """Delete data from Redis cache"""
         if not is_redis_available():
             return
         
@@ -843,26 +782,22 @@ class CompanyRepository:
     
     @staticmethod
     async def _invalidate_company_caches(company: Company) -> None:
-        """Invalidate all caches related to a company"""
         if not is_redis_available():
             return
         
         try:
             redis_client = get_redis()
             
-            # Patterns to delete
             patterns = [
-                f"{CompanyRepository.CACHE_PREFIX}company:{company.id}",  # Company cache
-                f"{CompanyRepository.CACHE_PREFIX}company_branches:{company.id}",  # Company branches
+                f"{CompanyRepository.CACHE_PREFIX}company:{company.id}",
+                f"{CompanyRepository.CACHE_PREFIX}company_branches:{company.id}",
             ]
             
-            # Add user company caches for all members
             for member in company.members:
                 user_id = str(member["user_id"])
                 patterns.append(f"{CompanyRepository.CACHE_PREFIX}user_companies:{user_id}")
                 patterns.append(f"{CompanyRepository.CACHE_PREFIX}user_branches:{user_id}")
             
-            # Delete all matching keys
             import asyncio
             delete_tasks = []
             for pattern in patterns:
@@ -879,29 +814,24 @@ class CompanyRepository:
     
     @staticmethod
     async def _invalidate_branch_caches(branch: CompanyBranch) -> None:
-        """Invalidate all caches related to a company branch"""
         if not is_redis_available():
             return
         
         try:
             redis_client = get_redis()
             
-            # Patterns to delete
             patterns = [
-                f"{CompanyRepository.CACHE_PREFIX}branch:{branch.id}",  # Branch cache
-                f"{CompanyRepository.CACHE_PREFIX}company_branches:{branch.company_id}",  # Company branches list
+                f"{CompanyRepository.CACHE_PREFIX}branch:{branch.id}",
+                f"{CompanyRepository.CACHE_PREFIX}company_branches:{branch.company_id}",
             ]
             
-            # Get company to invalidate user caches
             company = await Company.get(branch.company_id)
             if company:
                 for member in company.members:
                     user_id = str(member["user_id"])
                     patterns.append(f"{CompanyRepository.CACHE_PREFIX}user_branches:{user_id}")
-                    # Also invalidate user access cache for this branch
                     patterns.append(f"{CompanyRepository.CACHE_PREFIX}user_access:{user_id}:{branch.id}")
             
-            # Delete all matching keys
             import asyncio
             delete_tasks = []
             for pattern in patterns:
@@ -918,7 +848,6 @@ class CompanyRepository:
     
     @staticmethod
     async def clear_all_cache() -> None:
-        """Clear all company and branch cache"""
         if not is_redis_available():
             return
         

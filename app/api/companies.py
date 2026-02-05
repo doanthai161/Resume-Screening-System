@@ -1,4 +1,3 @@
-# app/api/v1/endpoints/companies.py
 from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, status, Request, BackgroundTasks
 from fastapi.responses import JSONResponse
@@ -13,9 +12,6 @@ from app.schemas.company import (
     CompanyUpdate,
     CompanyResponse,
     CompanyListResponse,
-    CompanyBranchCreate,
-    CompanyBranchUpdate,
-    CompanyBranchResponse
 )
 from app.core.security import get_current_user, require_permission
 from app.models.user import User
@@ -25,7 +21,6 @@ from app.middleware.audit_log import audit_log_action
 router = APIRouter()
 logger = logging.getLogger(__name__)
 
-# Rate limiter
 limiter = Limiter(key_func=get_remote_address)
 
 
@@ -45,24 +40,20 @@ async def create_company(
     background_tasks: BackgroundTasks,
     current_user: User = Depends(get_current_user)
 ):
-    """Create a new company"""
     import time
     start_time = time.time()
     
     try:
-        # Use repository to create company
         company = await CompanyRepository.create_company(
             company_data=company_data,
             owner_id=str(current_user.id)
         )
         
-        # Background logging
         background_tasks.add_task(
             logger.info,
             f"Company created: {company.id} - {company.name} by user {current_user.id}"
         )
         
-        # Convert to response model
         return CompanyResponse(
             id=str(company.id),
             name=company.name,
@@ -114,12 +105,10 @@ async def list_companies(
     industry: Optional[str] = None,
     current_user: User = Depends(get_current_user)
 ):
-    """List companies with pagination"""
     import time
     start_time = time.time()
     
     try:
-        # Validate pagination
         if page < 1:
             page = 1
         if size < 1 or size > 100:
@@ -127,16 +116,13 @@ async def list_companies(
         
         skip = (page - 1) * size
         
-        # Get user's companies from repository
         user_companies = await CompanyRepository.get_user_companies(str(current_user.id))
         
-        # If user wants all companies (admin), use search
         is_admin = current_user.is_superuser or "admin" in current_user.permissions
         companies = []
         total = 0
         
         if is_admin and (search or industry):
-            # Admin can search all companies
             companies, total = await CompanyRepository.search_companies(
                 search_term=search,
                 industry=industry,
@@ -144,11 +130,9 @@ async def list_companies(
                 limit=size
             )
         else:
-            # Regular user gets their companies
             companies = user_companies[skip:skip + size]
             total = len(user_companies)
         
-        # Convert to response models
         company_responses = []
         for company in companies:
             company_responses.append(CompanyResponse(
@@ -206,12 +190,10 @@ async def get_company(
     background_tasks: BackgroundTasks,
     current_user: User = Depends(get_current_user)
 ):
-    """Get company by ID"""
     import time
     start_time = time.time()
     
     try:
-        # Get company from repository
         company = await CompanyRepository.get_company(company_id)
         if not company:
             raise HTTPException(
@@ -219,7 +201,6 @@ async def get_company(
                 detail="Company not found"
             )
         
-        # Check if user has access to this company
         user_companies = await CompanyRepository.get_user_companies(str(current_user.id))
         has_access = any(str(c.id) == company_id for c in user_companies)
         
@@ -404,217 +385,3 @@ async def delete_company(
     finally:
         record_response_time("delete_company", time.time() - start_time)
 
-
-# ==================== COMPANY BRANCH ENDPOINTS ====================
-
-@router.post(
-    "/{company_id}/branches",
-    response_model=CompanyBranchResponse,
-    status_code=status.HTTP_201_CREATED,
-    summary="Create company branch",
-    description="Create a new branch for a company"
-)
-@limiter.limit("5/minute")
-@monitor_endpoint("create_company_branch")
-@audit_log_action("company_branch.created")
-async def create_company_branch(
-    request: Request,
-    company_id: str,
-    branch_data: CompanyBranchCreate,
-    background_tasks: BackgroundTasks,
-    current_user: User = Depends(get_current_user)
-):
-    """Create a new company branch"""
-    import time
-    start_time = time.time()
-    
-    try:
-        # Create branch using repository
-        branch = await CompanyRepository.create_company_branch(
-            company_id=company_id,
-            branch_data=branch_data,
-            created_by=str(current_user.id)
-        )
-        
-        background_tasks.add_task(
-            logger.info,
-            f"Company branch created: {branch.id} - {branch.name} by user {current_user.id}"
-        )
-        
-        return CompanyBranchResponse(
-            id=str(branch.id),
-            company_id=str(branch.company_id),
-            name=branch.name,
-            description=branch.description,
-            address=branch.address,
-            city=branch.city,
-            country=branch.country,
-            phone=branch.phone,
-            email=branch.email,
-            is_headquarters=branch.is_headquarters,
-            is_active=branch.is_active,
-            created_at=branch.created_at,
-            updated_at=branch.updated_at
-        )
-        
-    except ValueError as e:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=str(e)
-        )
-    except Exception as e:
-        logger.error(f"Error creating company branch: {e}", exc_info=True)
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to create company branch"
-        )
-    finally:
-        record_response_time("create_company_branch", time.time() - start_time)
-
-
-@router.get(
-    "/{company_id}/branches",
-    response_model=List[CompanyBranchResponse],
-    summary="List company branches",
-    description="List all branches for a company"
-)
-@limiter.limit("10/minute")
-@monitor_endpoint("list_company_branches")
-async def list_company_branches(
-    request: Request,
-    company_id: str,
-    background_tasks: BackgroundTasks,
-    current_user: User = Depends(get_current_user)
-):
-    """List company branches"""
-    import time
-    start_time = time.time()
-    
-    try:
-        # Check if user has access to company
-        user_companies = await CompanyRepository.get_user_companies(str(current_user.id))
-        has_access = any(str(c.id) == company_id for c in user_companies)
-        
-        if not has_access and not (current_user.is_superuser or "admin" in current_user.permissions):
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Access denied"
-            )
-        
-        # Get branches using repository
-        branches = await CompanyRepository.get_company_branches(company_id)
-        
-        background_tasks.add_task(
-            logger.info,
-            f"User {current_user.id} listed branches for company {company_id}"
-        )
-        
-        return [
-            CompanyBranchResponse(
-                id=str(branch.id),
-                company_id=str(branch.company_id),
-                name=branch.name,
-                description=branch.description,
-                address=branch.address,
-                city=branch.city,
-                country=branch.country,
-                phone=branch.phone,
-                email=branch.email,
-                is_headquarters=branch.is_headquarters,
-                is_active=branch.is_active,
-                created_at=branch.created_at,
-                updated_at=branch.updated_at
-            )
-            for branch in branches
-        ]
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error listing company branches: {e}", exc_info=True)
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to list company branches"
-        )
-    finally:
-        record_response_time("list_company_branches", time.time() - start_time)
-
-
-@router.get(
-    "/{company_id}/branches/{branch_id}",
-    response_model=CompanyBranchResponse,
-    summary="Get company branch",
-    description="Get branch details by ID"
-)
-@limiter.limit("30/minute")
-@monitor_endpoint("get_company_branch")
-async def get_company_branch(
-    request: Request,
-    company_id: str,
-    branch_id: str,
-    background_tasks: BackgroundTasks,
-    current_user: User = Depends(get_current_user)
-):
-    """Get company branch by ID"""
-    import time
-    start_time = time.time()
-    
-    try:
-        # Validate user access to branch
-        has_access = await CompanyRepository.validate_user_access(
-            user_id=str(current_user.id),
-            company_branch_id=branch_id
-        )
-        
-        if not has_access and not (current_user.is_superuser or "admin" in current_user.permissions):
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Access denied"
-            )
-        
-        # Get branch using repository
-        branch = await CompanyRepository.get_company_branch(branch_id)
-        if not branch:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Branch not found"
-            )
-        
-        # Verify branch belongs to company
-        if str(branch.company_id) != company_id:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Branch does not belong to specified company"
-            )
-        
-        background_tasks.add_task(
-            logger.info,
-            f"User {current_user.id} retrieved branch {branch_id}"
-        )
-        
-        return CompanyBranchResponse(
-            id=str(branch.id),
-            company_id=str(branch.company_id),
-            name=branch.name,
-            description=branch.description,
-            address=branch.address,
-            city=branch.city,
-            country=branch.country,
-            phone=branch.phone,
-            email=branch.email,
-            is_headquarters=branch.is_headquarters,
-            is_active=branch.is_active,
-            created_at=branch.created_at,
-            updated_at=branch.updated_at
-        )
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error getting branch {branch_id}: {e}", exc_info=True)
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to get branch"
-        )
-    finally:
-        record_response_time("get_company_branch", time.time() - start_time)

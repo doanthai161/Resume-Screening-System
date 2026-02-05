@@ -117,8 +117,6 @@ class Monitoring:
             duration = time.time() - trace.start_time
             trace.tags["duration_ms"] = duration * 1000
             trace.tags["success"] = "error" not in trace.tags
-            
-            # Record span duration as metric
             self.record_metric(
                 name=f"span_duration_{name}",
                 value=duration,
@@ -145,7 +143,6 @@ def monitor_endpoint(endpoint_name: str):
         async def async_wrapper(*args, **kwargs):
             start_time = time.time()
             
-            # Extract request object for context
             request = None
             for arg in args:
                 if hasattr(arg, 'method') and hasattr(arg, 'url'):
@@ -168,7 +165,6 @@ def monitor_endpoint(endpoint_name: str):
                 try:
                     result = await func(*args, **kwargs)
                     
-                    # Record success metric
                     monitoring.record_metric(
                         name=f"endpoint_{endpoint_name}_calls",
                         tags={"status": "success", "method": trace_tags["method"]}
@@ -177,14 +173,12 @@ def monitor_endpoint(endpoint_name: str):
                     return result
                     
                 except Exception as e:
-                    # Record error metric
                     monitoring.record_metric(
                         name=f"endpoint_{endpoint_name}_calls",
                         tags={"status": "error", "method": trace_tags["method"], "error": type(e).__name__}
                     )
                     raise
                 finally:
-                    # Record response time
                     duration = time.time() - start_time
                     monitoring.record_metric(
                         name=f"endpoint_{endpoint_name}_duration",
@@ -430,7 +424,6 @@ def end_trace(trace: TraceContext, success: bool = True):
 
 
 def record_response_time(endpoint_name: str, duration: float):
-    """Record response time for an endpoint"""
     monitoring.record_metric(
         name=f"response_time_{endpoint_name}",
         value=duration,
@@ -443,7 +436,6 @@ def record_business_metric(
     value: float = 1.0,
     tags: Optional[Dict[str, str]] = None
 ):
-    """Record a business metric"""
     monitoring.record_metric(
         name=f"business_{metric_name}",
         value=value,
@@ -452,7 +444,6 @@ def record_business_metric(
 
 
 def get_monitoring_data() -> Dict[str, Any]:
-    """Get all monitoring data for health checks or metrics endpoints"""
     return {
         "metrics": monitoring.get_metrics(),
         "tracing_enabled": monitoring._tracing_enabled,

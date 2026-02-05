@@ -3,6 +3,7 @@ from pydantic import BaseModel, EmailStr, field_validator, model_validator
 from fastapi import HTTPException
 from app.dependencies.error_code import ErrorCode
 from app.schemas.actor import ActorResponse
+from datetime import datetime
 
 
 class LoginRequest(BaseModel):
@@ -75,3 +76,16 @@ class UserActorResponse(BaseModel):
     user_id: str
     full_name: Optional[str]
     actor: ActorResponse
+
+
+class UserFilter(BaseModel):
+    email: Optional[str] = None
+    full_name: Optional[str] = None
+    phone: Optional[str] = None
+    is_verified: Optional[bool] = None
+    role: Optional[str] = None
+    is_active: Optional[bool] = None
+    created_at_from: Optional[datetime] = None
+    created_at_to: Optional[datetime] = None
+    updated_at_from: Optional[datetime] = None
+    updated_at_to: Optional[datetime] = None
