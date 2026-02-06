@@ -34,17 +34,14 @@ class Settings(BaseSettings):
     @computed_field
     @property
     def MONGODB_URL(self) -> str:
-        """Computed MongoDB connection URL"""
         return f"{self.MONGODB_URI}/{self.MONGODB_DB_NAME}"
     
-    # ==================== REDIS ====================
     REDIS_URL: str = Field(default="redis://localhost:6379/0", description="Redis connection URL")
     REDIS_MAX_CONNECTIONS: int = Field(default=10, description="Maximum Redis connections in pool")
     REDIS_SOCKET_TIMEOUT: int = Field(default=5, description="Redis socket timeout in seconds")
     REDIS_SOCKET_CONNECT_TIMEOUT: int = Field(default=5, description="Redis connection timeout in seconds")
     REDIS_CACHE_TTL: int = Field(default=3600, description="Default Redis cache TTL in seconds (1 hour)")
     
-    # ==================== SECURITY ====================
     SECRET_KEY: SecretStr = Field(
         default_factory=lambda: SecretStr(secrets.token_urlsafe(32)),
         min_length=32,
@@ -129,7 +126,7 @@ class Settings(BaseSettings):
     FIRST_SUPERUSER_PASSWORD: str = Field(default="changethis", description="First superuser password")
     FIRST_SUPERUSER_FULL_NAME: str = Field(default="Admin User", description="First superuser full name")
     CREATE_FIRST_SUPERUSER: bool = Field(default=True, description="Create first superuser on startup")
-    
+
     # ==================== VALIDATORS ====================
     @field_validator("CORS_ORIGINS", "CORS_ALLOW_METHODS", "CORS_ALLOW_HEADERS", "CORS_EXPOSE_HEADERS", mode="before")
     @classmethod
@@ -391,8 +388,12 @@ class Settings(BaseSettings):
         env_file=".env",
         env_file_encoding="utf-8",
         case_sensitive=False,
-        extra="ignore"
+        extra="allow",
     )
-
+    # class Config:
+    #     env_file=".env",
+    #     env_file_encoding="utf-8",
+    #     case_sensitive=False,
+    #     extra="allow"
 
 settings = Settings()

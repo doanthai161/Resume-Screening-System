@@ -29,13 +29,17 @@ class JobRequirement(Document):
     class Settings:
         name = "job_requirements"
         indexes = [
-            IndexModel([("user_id", 1)], name="idx_job_requirements_user_id"),
-            IndexModel([("company_branch_id", 1)], name="idx_job_requirements_company_branch_id"),
-            IndexModel([("is_open", 1)], name="idx_job_requirements_is_open"),
-            IndexModel([("is_active", 1)], name="idx_job_requirements_is_active"),
-            IndexModel([("auto_screening_enabled", 1)], name="idx_job_auto_screening"),
-            IndexModel([("expiration_time", 1)], name="idx_job_expiration", sparse=True),
+            {"key": [("user_id", 1)], "name": "idx_job_requirements_user_id"},
+            {"key": [("company_branch_id", 1)], "name": "idx_job_requirements_company_branch_id"},
+            {"key": [("is_open", 1)], "name": "idx_job_requirements_is_open"},
+            {"key": [("is_active", 1)], "name": "idx_job_requirements_is_active"},
+            {"key": [("auto_screening_enabled", 1)], "name": "idx_job_auto_screening"},
+            {"key": [("expiration_time", 1)], "name": "idx_job_expiration", "sparse": True},
+            {"key": [("company_branch_id", 1), ("is_open", 1)], "name": "idx_job_branch_open"},
+            {"key": [("company_branch_id", 1), ("is_active", 1)], "name": "idx_job_branch_active"},
+            {"key": [("title", 1)], "name": "idx_job_title"},
         ]
+
     class Config:
         arbitrary_types_allowed = True
         

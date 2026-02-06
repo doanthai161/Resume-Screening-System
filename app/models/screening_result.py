@@ -65,16 +65,14 @@ class ScreeningResult(Document):
     class Settings:
         name = "screening_results"
         indexes = [
-            IndexModel(
-                [("resume_file_id", 1), ("job_requirement_id", 1)],
-                name="idx_screening_resume_job",
-                unique=True
-            ),
-            IndexModel([("job_requirement_id", 1)], name="idx_screening_job"),
-            IndexModel([("evaluator_id", 1)], name="idx_screening_evaluator"),
-            IndexModel([("overall_score", -1)], name="idx_screening_score_desc"),
-            IndexModel([("status", 1)], name="idx_screening_status"),
-            IndexModel([("evaluated_at", -1)], name="idx_screening_evaluated_desc"),
+            {"key": [("resume_file_id", 1), ("job_requirement_id", 1)], "name": "idx_screening_resume_job", "unique": True},
+            {"key": [("job_requirement_id", 1)], "name": "idx_screening_job"},
+            {"key": [("evaluator_id", 1)], "name": "idx_screening_evaluator"},
+            {"key": [("overall_score", -1)], "name": "idx_screening_score_desc"},
+            {"key": [("status", 1)], "name": "idx_screening_status"},
+            {"key": [("evaluated_at", -1)], "name": "idx_screening_evaluated_desc"},
+            {"key": [("job_requirement_id", 1), ("overall_score", -1)], "name": "idx_screening_job_score"},
+            {"key": [("job_requirement_id", 1), ("status", 1)], "name": "idx_screening_job_status"},
         ]
     
     class Config:

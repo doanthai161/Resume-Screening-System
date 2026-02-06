@@ -1,4 +1,3 @@
-# app/models/resume_file.py
 from typing import Optional, List, Dict, Any
 from datetime import datetime
 from pydantic import BaseModel, Field, HttpUrl
@@ -32,17 +31,13 @@ class ResumeFile(Document):
     company_branch_id: Optional[ObjectId] = Field(None, description="ID chi nhánh công ty")
     checksum: str = Field(..., description="Checksum để tránh duplicate")
     
-    # Parsed data
     parsed_data: Optional[ParsedResumeData] = Field(None)
     
-    # Status
     status: str = Field("pending", pattern="^(pending|processing|parsed|error)$")
     processing_errors: List[str] = Field(default_factory=list)
     
-    # Metadata
     metadata: Dict[str, Any] = Field(default_factory=dict)
     
-    # Timestamps
     uploaded_at: datetime = Field(default_factory=lambda: now_vn())
     processed_at: Optional[datetime] = Field(None)
     last_accessed_at: Optional[datetime] = Field(None)
@@ -50,13 +45,15 @@ class ResumeFile(Document):
     class Settings:
         name = "resume_files"
         indexes = [
-            IndexModel([("uploader_id", 1)], name="idx_resume_files_uploader"),
-            IndexModel([("user_id", 1)], name="idx_resume_files_user", sparse=True),
-            IndexModel([("company_branch_id", 1)], name="idx_resume_files_company", sparse=True),
-            IndexModel([("checksum", 1)], name="idx_resume_files_checksum", unique=True),
-            IndexModel([("status", 1)], name="idx_resume_files_status"),
-            IndexModel([("uploaded_at", -1)], name="idx_resume_files_uploaded_desc"),
-            IndexModel([("parsed_data.skills", 1)], name="idx_resume_files_skills"),
+            {"key": [("uploader_id", 1)], "name": "idx_resume_files_uploader"},
+            {"key": [("user_id", 1)], "name": "idx_resume_files_user", "sparse": True},
+            {"key": [("company_branch_id", 1)], "name": "idx_resume_files_company", "sparse": True},
+            {"key": [("checksum", 1)], "name": "idx_resume_files_checksum", "unique": True},
+            {"key": [("status", 1)], "name": "idx_resume_files_status"},
+            {"key": [("uploaded_at", -1)], "name": "idx_resume_files_uploaded_desc"},
+            {"key": [("parsed_data.skills", 1)], "name": "idx_resume_files_skills"},
+            {"key": [("company_branch_id", 1), ("status", 1)], "name": "idx_resume_company_status"},
+            {"key": [("uploader_id", 1), ("uploaded_at", -1)], "name": "idx_resume_uploader_recent"},
         ]
     
     class Config:

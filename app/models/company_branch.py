@@ -29,9 +29,13 @@ class CompanyBranch(Document):
     class Settings:
         name = "company_branches"
         indexes = [
-            IndexModel([("company_id", 1)], name="idx_company_branches_company_id"),
-            IndexModel([("branch_name", 1)], name="idx_company_branches_branch_name"),
-            IndexModel([("is_active", 1)], name="idx_company_branches_is_active"),
+            {"key": [("company_id", 1)], "name": "idx_company_branches_company_id"},
+            {"key": [("branch_name", 1)], "name": "idx_company_branches_branch_name"},
+            {"key": [("is_active", 1)], "name": "idx_company_branches_is_active"},
+            {"key": [("city", 1)], "name": "idx_company_branches_city", "sparse": True},
+            {"key": [("country", 1)], "name": "idx_company_branches_country", "sparse": True},
+            {"key": [("company_id", 1), ("is_active", 1)], "name": "idx_company_branches_company_active"},
+            {"key": [("city", 1), ("country", 1)], "name": "idx_company_branches_location", "sparse": True},
         ]
     class Config:
         arbitrary_types_allowed = True

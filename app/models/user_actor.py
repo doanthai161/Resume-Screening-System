@@ -17,8 +17,9 @@ class UserActor(Document):
     class Settings:
         name = "user_actors"
         indexes = [
-            IndexModel([("user_id", 1)], name="idx_user_actors_user_id"),
-            IndexModel([("actor_id", 1)], name="idx_user_actors_actor_id"),
+            {"key": [("user_id", 1)], "name": "idx_user_actors_user_id"},
+            {"key": [("actor_id", 1)], "name": "idx_user_actors_actor_id"},
+            {"key": [("user_id", 1), ("actor_id", 1)], "name": "idx_user_actors_user_actor", "unique": True},
         ]
 
     class Config:

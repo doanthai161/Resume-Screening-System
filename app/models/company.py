@@ -25,9 +25,11 @@ class Company(Document):
     class Settings:
         name = "companies"
         indexes = [
-            IndexModel([("user_id", 1)], name="idx_companies_user_id"),
-            IndexModel([("company_code", 1)], name="idx_companies_company_code", unique=True),
-            IndexModel([("email", 1)], name="idx_companies_email"),
+            {"key": [("user_id", 1)], "name": "idx_companies_user_id"},
+            {"key": [("company_code", 1)], "name": "idx_companies_company_code", "unique": True},
+            {"key": [("email", 1)], "name": "idx_companies_email"},
+            {"key": [("is_active", 1)], "name": "idx_companies_active"},
+            {"key": [("name", 1)], "name": "idx_companies_name"},
         ]
 
     class Config:

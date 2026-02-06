@@ -13,7 +13,9 @@ class ActorPermission(Document):
     class Settings:
         name = "actor_permissions"
         indexes = [
-            IndexModel([("actor_id",1), ("permission_id", 1)], name = "idx_actor_permission")
+            {"key": [("actor_id", 1), ("permission_id", 1)], "name": "idx_actor_permission", "unique": True},
+            {"key": [("actor_id", 1)], "name": "idx_actor_permissions_actor"},
+            {"key": [("permission_id", 1)], "name": "idx_actor_permissions_permission"},
         ]
 
     class Config:

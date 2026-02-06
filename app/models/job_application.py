@@ -8,7 +8,6 @@ from typing import Optional, List, Dict, Any
 
 
 class JobApplication(Document):
-    """Quản lý pipeline ứng viên"""
     resume_file_id: ObjectId = Field(..., description="ID of the resume file")
     job_requirement_id: ObjectId = Field(..., description="ID of the job requirement")
     applicant_id: Optional[ObjectId] = Field(None, description="ID of the applicant (if registered)")
@@ -24,14 +23,13 @@ class JobApplication(Document):
     class Settings:
         name = "job_applications"
         indexes = [
-            IndexModel(
-                [("resume_file_id", 1), ("job_requirement_id", 1)],
-                name="idx_applications_resume_job"
-            ),
-            IndexModel([("job_requirement_id", 1)], name="idx_applications_job"),
-            IndexModel([("applicant_id", 1)], name="idx_applications_applicant", sparse=True),
-            IndexModel([("current_stage", 1)], name="idx_applications_stage"),
-            IndexModel([("created_at", -1)], name="idx_applications_created_desc"),
+            {"key": [("resume_file_id", 1), ("job_requirement_id", 1)], "name": "idx_applications_resume_job"},
+            {"key": [("job_requirement_id", 1)], "name": "idx_applications_job"},
+            {"key": [("applicant_id", 1)], "name": "idx_applications_applicant", "sparse": True},
+            {"key": [("current_stage", 1)], "name": "idx_applications_stage"},
+            {"key": [("created_at", -1)], "name": "idx_applications_created_desc"},
+            {"key": [("job_requirement_id", 1), ("current_stage", 1)], "name": "idx_applications_job_stage"},
+            {"key": [("applicant_id", 1), ("created_at", -1)], "name": "idx_applications_applicant_recent"},
         ]
     
     class Config:

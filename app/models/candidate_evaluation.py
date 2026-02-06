@@ -17,8 +17,9 @@ class CandidateEvaluation(Document):
     class Settings:
         name = "candidate_evaluations"
         indexes = [
-            IndexModel([("user_id", 1)], name="idx_candidate_evaluations_user_id"),
-            IndexModel([("job_posting_id", 1)], name="idx_candidate_evaluations_job_posting_id"),
+            {"key": [("user_id", 1)], "name": "idx_candidate_evaluations_user_id"},
+            {"key": [("job_posting_id", 1)], "name": "idx_candidate_evaluations_job_posting_id"},
+            {"key": [("user_id", 1), ("job_posting_id", 1)], "name": "idx_candidate_user_job", "unique": True},
         ]
     class Config:
         arbitrary_types_allowed = True

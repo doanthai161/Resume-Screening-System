@@ -26,13 +26,15 @@ class UserCompany(Document):
     class Settings:
         name = "user_companies"
         indexes = [
-            IndexModel([("user_id", 1)], name="idx_user_companies_user_id"),
-            IndexModel([("company_branch_id", 1)], name="idx_user_companies_company_branch_id"),
-            IndexModel([("assigned_by", 1)], name="idx_user_companies_assigned_by"),
-            IndexModel([("unassigned_by", 1)], name="idx_user_companies_unassigned_by"),
-            IndexModel([("start_date", 1)], name="idx_user_companies_start_date"),
-            IndexModel([("end_date", 1)], name="idx_user_companies_end_date"),
-            IndexModel([("is_active", 1)], name="idx_user_companies_is_active"),
+            {"key": [("user_id", 1)], "name": "idx_user_companies_user_id"},
+            {"key": [("company_branch_id", 1)], "name": "idx_user_companies_company_branch_id"},
+            {"key": [("assigned_by", 1)], "name": "idx_user_companies_assigned_by"},
+            {"key": [("unassigned_by", 1)], "name": "idx_user_companies_unassigned_by", "sparse": True},
+            {"key": [("start_date", 1)], "name": "idx_user_companies_start_date", "sparse": True},
+            {"key": [("end_date", 1)], "name": "idx_user_companies_end_date", "sparse": True},
+            {"key": [("is_active", 1)], "name": "idx_user_companies_is_active"},
+            {"key": [("user_id", 1), ("is_active", 1)], "name": "idx_user_companies_user_active"},
+            {"key": [("company_branch_id", 1), ("is_active", 1)], "name": "idx_user_companies_branch_active"},
         ]
 
     class Config:

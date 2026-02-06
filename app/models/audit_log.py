@@ -110,48 +110,36 @@ class AuditSeverity(str, Enum):
 
 
 class AuditLog(Document):
-    """Audit log entry for tracking system activities"""
-    
-    # Event information
     event_type: AuditEventType = Field(..., description="Type of audit event")
     event_name: str = Field(..., description="Human-readable event name")
     description: Optional[str] = Field(None, description="Detailed description")
     severity: AuditSeverity = Field(AuditSeverity.LOW, description="Event severity")
     
-    # User information
     user_id: Optional[ObjectId] = Field(None, description="ID of user who performed action")
     user_email: Optional[str] = Field(None, description="Email of user")
     user_ip: Optional[str] = Field(None, description="IP address of user")
     user_agent: Optional[str] = Field(None, description="User agent string")
     session_id: Optional[str] = Field(None, description="Session identifier")
     
-    # Resource information
     resource_type: Optional[str] = Field(None, description="Type of resource affected")
     resource_id: Optional[ObjectId] = Field(None, description="ID of resource affected")
     resource_name: Optional[str] = Field(None, description="Name of resource")
     
-    # Action details
     action: str = Field(..., description="Action performed")
     method: Optional[str] = Field(None, description="HTTP method if applicable")
     endpoint: Optional[str] = Field(None, description="API endpoint if applicable")
     request_id: Optional[str] = Field(None, description="Request identifier")
     
-    # Changes data
     old_values: Dict[str, Any] = Field(default_factory=dict, description="Values before change")
     new_values: Dict[str, Any] = Field(default_factory=dict, description="Values after change")
     changed_fields: List[str] = Field(default_factory=list, description="Fields that changed")
     
-    # Status
     success: bool = Field(True, description="Whether the action was successful")
     error_message: Optional[str] = Field(None, description="Error message if failed")
     error_code: Optional[str] = Field(None, description="Error code if failed")
     response_status: Optional[int] = Field(None, description="HTTP response status")
-    
-    # Metadata
     metadata: Dict[str, Any] = Field(default_factory=dict, description="Additional metadata")
     tags: List[str] = Field(default_factory=list, description="Tags for categorization")
-    
-    # Timestamps
     timestamp: datetime = Field(default_factory=lambda: now_vn(), description="When event occurred")
     duration_ms: Optional[float] = Field(None, description="Duration in milliseconds")
     created_at: datetime = Field(default_factory=lambda: now_vn(), description="When log was created")
@@ -159,36 +147,19 @@ class AuditLog(Document):
     class Settings:
         name = "audit_logs"
         indexes = [
-            # Performance indexes
-            IndexModel([("timestamp", DESCENDING)], name="idx_audit_timestamp_desc"),
-            IndexModel([("event_type", ASCENDING)], name="idx_audit_event_type"),
-            IndexModel([("user_id", ASCENDING)], name="idx_audit_user_id"),
-            IndexModel([("user_email", ASCENDING)], name="idx_audit_user_email"),
-            IndexModel([("resource_type", ASCENDING)], name="idx_audit_resource_type"),
-            IndexModel([("resource_id", ASCENDING)], name="idx_audit_resource_id"),
-            IndexModel([("severity", ASCENDING)], name="idx_audit_severity"),
-            IndexModel([("success", ASCENDING)], name="idx_audit_success"),
-            
-            # Compound indexes for common queries
-            IndexModel(
-                [("user_id", ASCENDING), ("timestamp", DESCENDING)],
-                name="idx_audit_user_timestamp"
-            ),
-            IndexModel(
-                [("event_type", ASCENDING), ("timestamp", DESCENDING)],
-                name="idx_audit_event_timestamp"
-            ),
-            IndexModel(
-                [("resource_type", ASCENDING), ("resource_id", ASCENDING)],
-                name="idx_audit_resource"
-            ),
-            IndexModel(
-                [("timestamp", DESCENDING), ("severity", ASCENDING)],
-                name="idx_audit_timestamp_severity"
-            ),
-            
-            # TTL index for automatic cleanup (retain logs for 1 year)
-            IndexModel([("timestamp", ASCENDING)], expireAfterSeconds=31536000, name="idx_audit_ttl"),
+            {"key": [("timestamp", -1)], "name": "idx_audit_timestamp_desc"},
+            {"key": [("event_type", 1)], "name": "idx_audit_event_type"},
+            {"key": [("user_id", 1)], "name": "idx_audit_user_id"},
+            {"key": [("user_email", 1)], "name": "idx_audit_user_email"},
+            {"key": [("resource_type", 1)], "name": "idx_audit_resource_type"},
+            {"key": [("resource_id", 1)], "name": "idx_audit_resource_id"},
+            {"key": [("severity", 1)], "name": "idx_audit_severity"},
+            {"key": [("success", 1)], "name": "idx_audit_success"},
+            {"key": [("user_id", 1), ("timestamp", -1)], "name": "idx_audit_user_timestamp"},
+            {"key": [("event_type", 1), ("timestamp", -1)], "name": "idx_audit_event_timestamp"},
+            {"key": [("resource_type", 1), ("resource_id", 1)], "name": "idx_audit_resource"},
+            {"key": [("timestamp", -1), ("severity", 1)], "name": "idx_audit_timestamp_severity"},
+            {"key": [("timestamp", 1)], "expireAfterSeconds": 31536000, "name": "idx_audit_ttl"},
         ]
     class Config:
         arbitrary_types_allowed = True

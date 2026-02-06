@@ -16,7 +16,8 @@ class Permission(Document):
     class Settings:
         name = "permissions"
         indexes = [
-            IndexModel([("name", 1)], name="idx_permissions_name", unique=True),
+            {"key": [("name", 1)], "name": "idx_permissions_name", "unique": True},
+            {"key": [("is_active", 1)], "name": "idx_permissions_active"},
         ]
     class Config:
         arbitrary_types_allowed = True

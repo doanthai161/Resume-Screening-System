@@ -1,6 +1,5 @@
 from beanie import Document
 from pydantic import Field
-from pymongo import IndexModel
 from typing import Optional
 from datetime import datetime
 from app.utils.time import now_vn
@@ -15,6 +14,7 @@ class Actor(Document):
     class Settings:
         name = "actors"
         indexes = [
-            IndexModel([("name", 1)], name="idx_actors_name"),
-            IndexModel([("created_at", -1)], name="idx_actors_created_at_desc"),
+            {"key": [("name", 1)], "name": "idx_actors_name"},
+            {"key": [("created_at", -1)], "name": "idx_actors_created_at_desc"},
+            {"key": [("is_active", 1)], "name": "idx_actors_active"},
         ]
