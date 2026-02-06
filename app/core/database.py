@@ -1,5 +1,5 @@
 import motor.motor_asyncio
-from beanie import init_beanie
+from beanie import init_beanie, Document
 from app.core.config import settings
 
 from app.models.job_requirement import JobRequirement
@@ -22,6 +22,7 @@ from pymongo.errors import DuplicateKeyError
 import os
 import datetime
 import logging
+from typing import Type, List
 
 logger = logging.getLogger(__name__)
 INIT_FILE_PATH = ".initdb"
@@ -63,7 +64,6 @@ MODEL_NAMES = {
 }
 
 async def _ensure_default_permissions() -> None:
-    """Tạo các permissions mặc định cho tất cả models"""
     default_actions = ("view", "create", "edit", "delete", "list")
 
     existing_perms_cursor = Permission.find_all()
@@ -72,7 +72,6 @@ async def _ensure_default_permissions() -> None:
     perms_to_create = []
 
     for model_name, model_class in MODEL_NAMES.items():
-        # Lấy collection name từ Settings hoặc dùng model name
         model_settings = getattr(model_class, "Settings", None)
         if model_settings and hasattr(model_settings, "name"):
             collection_name = model_settings.name
@@ -92,7 +91,6 @@ async def _ensure_default_permissions() -> None:
                 )
                 existing_perms_set.add(perm_name)
     
-    # Thêm permissions đặc biệt cho Resume Screening
     special_permissions = [
         ("resume_files:upload", "Permission to upload resume files"),
         ("resume_files:parse", "Permission to parse resume files"),
@@ -126,8 +124,6 @@ async def _ensure_default_permissions() -> None:
 
 
 async def _ensure_default_actors() -> None:
-    """Tạo các actors mặc định và gán permissions"""
-    # 1. Admin Actor
     admin_role_name = settings.ADMIN_ROLE_NAME
     admin_role = await Actor.find_one(Actor.name == admin_role_name)
 
@@ -146,17 +142,14 @@ async def _ensure_default_actors() -> None:
             admin_role = await Actor.find_one(Actor.name == admin_role_name)
 
     if admin_role:
-        # Lấy tất cả permissions
         all_permissions = await Permission.find_all().to_list()
         target_admin_perm_ids = {perm.id for perm in all_permissions}
             
-        # Lấy permissions hiện tại của admin
         current_admin_links = await ActorPermission.find(
             ActorPermission.actor_id == admin_role.id
         ).to_list()
         current_admin_perm_ids = {link.permission_id for link in current_admin_links}
 
-        # Tìm permissions thiếu
         missing_admin_perm_ids = target_admin_perm_ids - current_admin_perm_ids
             
         if missing_admin_perm_ids:
@@ -169,7 +162,6 @@ async def _ensure_default_actors() -> None:
         else:
             logger.info(f"Actor '{admin_role_name}' already has all permissions.")
 
-    # 2. Recruiter Actor
     recruiter_role_name = settings.RECRUITER_ROLE_NAME
     recruiter_role = await Actor.find_one(Actor.name == recruiter_role_name)
 
@@ -187,7 +179,6 @@ async def _ensure_default_actors() -> None:
             recruiter_role = await Actor.find_one(Actor.name == recruiter_role_name)
     
     if recruiter_role:
-        # Define recruiter permissions pattern
         recruiter_permission_patterns = [
             r"^users:view$",
             r"^users:list$",
@@ -202,7 +193,6 @@ async def _ensure_default_actors() -> None:
             r"^jobs:.*$",              # All job-related permissions
         ]
         
-        # Get permissions matching patterns
         recruiter_permissions = []
         all_permissions = await Permission.find_all().to_list()
         
@@ -215,13 +205,11 @@ async def _ensure_default_actors() -> None:
         
         target_recruiter_perm_ids = {perm.id for perm in recruiter_permissions}
         
-        # Get current recruiter permissions
         current_recruiter_links = await ActorPermission.find(
             ActorPermission.actor_id == recruiter_role.id
         ).to_list()
         current_recruiter_perm_ids = {link.permission_id for link in current_recruiter_links}
 
-        # Find missing permissions
         missing_recruiter_perm_ids = target_recruiter_perm_ids - current_recruiter_perm_ids
 
         if missing_recruiter_perm_ids:
@@ -234,7 +222,6 @@ async def _ensure_default_actors() -> None:
         else:
             logger.info(f"Actor '{recruiter_role_name}' already has all recruiter permissions.")
 
-    # 3. Candidate Actor
     candidate_role_name = settings.CANDIDATE_ROLE_NAME
     candidate_role = await Actor.find_one(Actor.name == candidate_role_name)
 
@@ -252,10 +239,9 @@ async def _ensure_default_actors() -> None:
             candidate_role = await Actor.find_one(Actor.name == candidate_role_name)
     
     if candidate_role:
-        # Candidate permissions (limited)
         candidate_permission_patterns = [
             r"^users:view$",
-            r"^users:edit$",  # Can edit own profile
+            r"^users:edit$",
             r"^job_requirements:view$",
             r"^job_requirements:list$",
             r"^resume_files:upload$",
@@ -266,7 +252,6 @@ async def _ensure_default_actors() -> None:
             r"^candidate_evaluations:view$",
         ]
         
-        # Get permissions matching patterns
         candidate_permissions = []
         all_permissions = await Permission.find_all().to_list()
         
@@ -279,13 +264,11 @@ async def _ensure_default_actors() -> None:
         
         target_candidate_perm_ids = {perm.id for perm in candidate_permissions}
         
-        # Get current candidate permissions
         current_candidate_links = await ActorPermission.find(
             ActorPermission.actor_id == candidate_role.id
         ).to_list()
         current_candidate_perm_ids = {link.permission_id for link in current_candidate_links}
 
-        # Find missing permissions
         missing_candidate_perm_ids = target_candidate_perm_ids - current_candidate_perm_ids
 
         if missing_candidate_perm_ids:
@@ -299,9 +282,7 @@ async def _ensure_default_actors() -> None:
             logger.info(f"Actor '{candidate_role_name}' already has all candidate permissions.")
 
 async def _ensure_default_ai_models() -> None:
-    """Tạo các AI models mặc định nếu cần"""
     try:
-        # Kiểm tra xem đã có AI models chưa
         existing_models = await AIModel.find_all().to_list()
         
         if not existing_models:
@@ -321,7 +302,7 @@ async def _ensure_default_ai_models() -> None:
                         "supported_formats": ["pdf", "docx", "doc"],
                         "extraction_fields": ["personal_info", "skills", "experience", "education"]
                     },
-                    created_by=None,  # System
+                    created_by=None,
                 ),
                 AIModel(
                     name="skill-matcher-default",
@@ -365,11 +346,9 @@ async def _ensure_default_ai_models() -> None:
         logger.error(f"Error creating default AI models: {e}")
 
 async def _create_first_superuser() -> None:
-    """Tạo super user đầu tiên nếu chưa có"""
     if not settings.CREATE_FIRST_SUPERUSER:
         return
     
-    # Kiểm tra xem đã có user nào chưa
     existing_users = await User.find_all().limit(1).to_list()
     if existing_users:
         logger.info("Users already exist, skipping first superuser creation.")
@@ -378,7 +357,6 @@ async def _create_first_superuser() -> None:
     try:
         from app.core.security import get_password_hash
         
-        # Tạo superuser
         superuser = User(
             email=settings.FIRST_SUPERUSER_EMAIL,
             full_name=settings.FIRST_SUPERUSER_FULL_NAME,
@@ -388,10 +366,8 @@ async def _create_first_superuser() -> None:
         await superuser.insert()
         logger.info(f"Created first superuser: {settings.FIRST_SUPERUSER_EMAIL}")
         
-        # Tìm admin actor
         admin_actor = await Actor.find_one(Actor.name == settings.ADMIN_ROLE_NAME)
         if admin_actor:
-            # Gán admin role cho superuser
             user_actor = UserActor(
                 user_id=superuser.id,
                 actor_id=admin_actor.id,
@@ -406,77 +382,84 @@ async def _create_first_superuser() -> None:
         logger.error(f"Error creating first superuser: {e}")
 
 async def init_db():
-    client = motor.motor_asyncio.AsyncIOMotorClient(
-        settings.MONGODB_URL,
-        maxPoolSize=settings.MONGODB_MAX_POOL_SIZE,
-        minPoolSize=settings.MONGODB_MIN_POOL_SIZE,
-        serverSelectionTimeoutMS=settings.MONGODB_SERVER_SELECTION_TIMEOUT
-    )
-    
-    # Lấy database
-    database = client[settings.MONGODB_DB_NAME]
-    
-    # Khởi tạo Beanie
-    await init_beanie(
-        database=database,
-        document_models=DOCUMENT_MODELS,
-    )
-    
-    logger.info(f'Connection to MongoDB established: {settings.MONGODB_DB_NAME}')
-    logger.info(f'Beanie initialized with {len(DOCUMENT_MODELS)} models')
-
-    # Kiểm tra và seed data nếu cần
-    if not os.path.exists(INIT_FILE_PATH):
-        logger.info(f'File {INIT_FILE_PATH} not found. Starting default data initialization.')
+    try:
+        logger.info(f"Connecting to MongoDB...")
         
-        try:
-            # Tạo các permissions mặc định
-            await _ensure_default_permissions()
+        client = motor.motor_asyncio.AsyncIOMotorClient(
+            settings.MONGODB_URL,
+            maxPoolSize=settings.MONGODB_MAX_POOL_SIZE,
+            minPoolSize=settings.MONGODB_MIN_POOL_SIZE,
+            serverSelectionTimeoutMS=settings.MONGODB_SERVER_SELECTION_TIMEOUT
+        )
+        
+        await client.admin.command('ping')
+        logger.info("✓ MongoDB connection successful")
+        
+        database = client[settings.MONGODB_DB_NAME]
+        
+        await init_beanie(
+            database=database,
+            document_models=DOCUMENT_MODELS,
+        )
+        
+        logger.info(f'✓ Beanie initialized with {len(DOCUMENT_MODELS)} models in database: {settings.MONGODB_DB_NAME}')
+
+        if not os.path.exists(INIT_FILE_PATH):
+            logger.info(f'File {INIT_FILE_PATH} not found. Starting default data initialization.')
             
-            # Tạo các actors mặc định và gán permissions
-            await _ensure_default_actors()
-            
-            # Tạo AI models mặc định
-            await _ensure_default_ai_models()
-            
-            # Tạo superuser đầu tiên
-            await _create_first_superuser()
-            
-            # Tạo file init để đánh dấu đã seed data
-            with open(INIT_FILE_PATH, 'w', encoding='utf-8') as f:
-                f.write(f"Default data initialized on: {datetime.datetime.now(datetime.UTC)}")
+            try:
+                await _ensure_default_permissions()
+                await _ensure_default_actors()
+                await _ensure_default_ai_models()
+                await _create_first_superuser()
+                await create_indexes()
                 
-            logger.info(f'Created file {INIT_FILE_PATH}. Will not reinitialize default data on next startup.')
-            logger.info('Default data initialization completed.')
-            
-        except IOError as e:
-            logger.error(f'Cannot create {INIT_FILE_PATH}. Data may be reinitialized on next startup. Error: {e}')
-        except Exception as e:
-            logger.error(f'Error during data initialization: {e}')
-            raise
-    else:
-        logger.info(f'File {INIT_FILE_PATH} found. Skipping default data initialization.')
+                with open(INIT_FILE_PATH, 'w', encoding='utf-8') as f:
+                    f.write(f"Default data initialized on: {datetime.datetime.now(datetime.UTC)}")
+                    
+                logger.info(f'Created file {INIT_FILE_PATH}. Will not reinitialize default data on next startup.')
+                logger.info('Default data initialization completed.')
+                
+            except IOError as e:
+                logger.error(f'Cannot create {INIT_FILE_PATH}. Data may be reinitialized on next startup. Error: {e}')
+            except Exception as e:
+                logger.error(f'Error during data initialization: {e}')
+                raise
+        else:
+            logger.info(f'File {INIT_FILE_PATH} found. Skipping default data initialization.')
+        
+        return True
+        
+    except Exception as e:
+        logger.error(f"✗ Failed to initialize database: {e}")
+        return False
 
 async def close_db():
-    """Đóng database connection"""
-    # Motor client tự động quản lý connections
     logger.info("Database connections will be closed automatically.")
 
 async def create_indexes():
-    """Tạo indexes cho tất cả collections"""
     logger.info("Creating indexes for all collections...")
+    
+    created_count = 0
+    error_count = 0
     
     for model in DOCUMENT_MODELS:
         try:
-            # Beanie tự động tạo indexes từ class Settings
-            await model.get_motor_collection().create_indexes(
-                model.Settings.indexes if hasattr(model.Settings, 'indexes') else []
-            )
-            logger.debug(f"Created indexes for {model.__name__}")
+            if hasattr(model, 'Settings') and hasattr(model.Settings, 'indexes'):
+                indexes = model.Settings.indexes
+                if indexes and len(indexes) > 0:
+                    logger.info(f"✓ Indexes defined for {model.__name__} ({len(indexes)} indexes)")
+                    created_count += 1
+                else:
+                    logger.debug(f"No indexes defined for {model.__name__}")
+            else:
+                logger.debug(f"No Settings class or indexes attribute for {model.__name__}")
+                
         except Exception as e:
-            logger.error(f"Error creating indexes for {model.__name__}: {e}")
+            logger.error(f"Error checking indexes for {model.__name__}: {e}")
+            error_count += 1
     
-    logger.info("Index creation completed.")
+    logger.info(f"Index check completed: {created_count} models have indexes, {error_count} errors")
 
 async def check_connection() -> bool:
     try:
@@ -485,10 +468,67 @@ async def check_connection() -> bool:
             serverSelectionTimeoutMS=5000
         )
         await client.admin.command('ping')
+        logger.info("MongoDB connection successful")
         return True
     except Exception as e:
-        logger.error(f"Database connection check failed: {e}")
+        logger.error(f"MongoDB connection check failed: {e}")
         return False
     finally:
         if 'client' in locals():
             client.close()
+
+async def get_database_info() -> dict:
+    try:
+        client = motor.motor_asyncio.AsyncIOMotorClient(settings.MONGODB_URL)
+        db = client[settings.MONGODB_DB_NAME]
+        
+        db_stats = await db.command("dbstats")
+        
+        collections = await db.list_collection_names()
+        index_info = {}
+        for collection_name in collections:
+            try:
+                collection = db[collection_name]
+                indexes = await collection.index_information()
+                index_info[collection_name] = {
+                    "count": len(indexes),
+                    "indexes": list(indexes.keys())
+                }
+            except Exception as e:
+                logger.warning(f"Cannot get indexes for {collection_name}: {e}")
+        
+        client.close()
+        
+        return {
+            "database_name": settings.MONGODB_DB_NAME,
+            "collections": collections,
+            "collection_count": len(collections),
+            "database_size": db_stats.get("dataSize", 0),
+            "index_size": db_stats.get("indexSize", 0),
+            "total_size": db_stats.get("totalSize", 0),
+            "index_info": index_info,
+            "status": "connected"
+        }
+    except Exception as e:
+        logger.error(f"Error getting database info: {e}")
+        return {
+            "database_name": settings.MONGODB_DB_NAME,
+            "status": "error",
+            "error": str(e)
+        }
+
+async def cleanup_expired_data():
+    try:
+        from datetime import datetime, timezone
+        
+        expired_otp_count = await EmailOTP.find({
+            "expires_at": {"$lt": datetime.now(timezone.utc)}
+        }).delete()
+        
+        if expired_otp_count > 0:
+            logger.info(f"Cleaned up {expired_otp_count} expired OTPs")
+        
+        return expired_otp_count
+    except Exception as e:
+        logger.error(f"Error cleaning up expired data: {e}")
+        return 0

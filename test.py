@@ -1,56 +1,201 @@
-# test_config_final.py
+# app/debug/debug_indexes_fixed.py
+import asyncio
 import sys
 import os
-sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
 
-print("=" * 60)
-print("Testing Final Config File")
-print("=" * 60)
+from pymongo import IndexModel
+from app.models.job_requirement import JobRequirement
+from app.models.user import User
+from app.models.company import Company
+from app.models.user_company import UserCompany
+from app.models.actor_permission import ActorPermission
+from app.models.permission import Permission
+from app.models.actor import Actor
+from app.models.user_actor import UserActor
+from app.models.company_branch import CompanyBranch
+from app.models.candidate_evaluation import CandidateEvaluation
+from app.models.email_otp import EmailOTP
+from app.models.resume_file import ResumeFile, ParsedResumeData
+from app.models.screening_result import ScreeningResult
+from app.models.ai_model import AIModel
+from app.models.job_application import JobApplication
 
-try:
-    from app.core.config import settings
-    print("✅ Config loaded successfully!")
+MODELS = [
+    User,
+    Company,
+    UserCompany,
+    ActorPermission,
+    Permission,
+    Actor,
+    UserActor,
+    CompanyBranch,
+    JobRequirement,
+    CandidateEvaluation,
+    EmailOTP,
+    ResumeFile,
+    ScreeningResult,
+    AIModel,
+    JobApplication,
+]
+
+def validate_index_spec(spec):
+    """Validate a single index specification"""
+    if isinstance(spec, dict):
+        if "key" not in spec:
+            print(f"  ❌ Missing 'key' field in index: {spec}")
+            return False
+        
+        keys = spec["key"]
+        if not isinstance(keys, list):
+            print(f"  ❌ 'key' must be a list, got {type(keys)}: {keys}")
+            return False
+        
+        for key_spec in keys:
+            if not isinstance(key_spec, (list, tuple)):
+                print(f"  ❌ Key spec must be list/tuple, got {type(key_spec)}: {key_spec}")
+                return False
+            
+            if len(key_spec) != 2:
+                print(f"  ❌ Key spec must have length 2, got {len(key_spec)}: {key_spec}")
+                return False
+            
+            field, direction = key_spec
+            valid_directions = [1, -1, "2d", "2dsphere", "text", "hashed", "geoHaystack"]
+            if direction not in valid_directions:
+                print(f"  ❌ Invalid direction '{direction}' for field '{field}'. Must be one of: {valid_directions}")
+                return False
+        
+        return True
     
-    print(f"\n📋 Basic Info:")
-    print(f"  App: {settings.APP_NAME} v{settings.APP_VERSION}")
-    print(f"  Environment: {settings.ENVIRONMENT}")
-    print(f"  Debug: {settings.DEBUG}")
+    elif isinstance(spec, IndexModel):
+        # IndexModel object - check its document property
+        try:
+            doc = spec.document
+            if "key" not in doc:
+                print(f"  ❌ IndexModel missing 'key' field: {spec}")
+                return False
+            
+            keys = doc["key"]
+            if not isinstance(keys, list):
+                print(f"  ❌ IndexModel 'key' must be a list, got {type(keys)}: {keys}")
+                return False
+            
+            for key_spec in keys:
+                if not isinstance(key_spec, (list, tuple)):
+                    print(f"  ❌ IndexModel key spec must be list/tuple, got {type(key_spec)}: {key_spec}")
+                    return False
+                
+                if len(key_spec) != 2:
+                    print(f"  ❌ IndexModel key spec must have length 2, got {len(key_spec)}: {key_spec}")
+                    return False
+                
+                field, direction = key_spec
+                valid_directions = [1, -1, "2d", "2dsphere", "text", "hashed", "geoHaystack"]
+                if direction not in valid_directions:
+                    print(f"  ❌ IndexModel invalid direction '{direction}' for field '{field}'")
+                    return False
+            
+            return True
+        except Exception as e:
+            print(f"  ❌ Error inspecting IndexModel: {e}")
+            return False
     
-    print(f"\n🌐 Network:")
-    print(f"  Host: {settings.HOST}:{settings.PORT}")
-    print(f"  CORS Origins: {settings.cors_origins_list}")
+    else:
+        print(f"  ❌ Index spec must be dict or IndexModel, got {type(spec)}: {spec}")
+        return False
+
+def check_all_indexes():
+    """Check all models for invalid indexes"""
+    print("🔍 Checking all model indexes...\n")
     
-    print(f"\n🗄️ Database:")
-    print(f"  MongoDB: {settings.MONGO_URI}")
-    print(f"  Redis: {settings.REDIS_URL}")
+    problematic_models = []
     
-    print(f"\n📁 File Upload:")
-    print(f"  Max Resume Size: {settings.MAX_RESUME_SIZE / 1024 / 1024:.1f}MB")
-    print(f"  Allowed Extensions: {settings.allowed_resume_extensions_list}")
-    print(f"  Upload Path: {settings.upload_path}")
+    for model in MODELS:
+        print(f"Model: {model.__name__}")
+        
+        if not hasattr(model, 'Settings'):
+            print("  ⚠️  No Settings class")
+            print()
+            continue
+        
+        settings = model.Settings
+        
+        if not hasattr(settings, 'indexes'):
+            print("  ⚠️  No indexes attribute")
+            print()
+            continue
+        
+        indexes = settings.indexes
+        if not isinstance(indexes, list):
+            print(f"  ❌ 'indexes' must be a list, got {type(indexes)}")
+            problematic_models.append(model.__name__)
+            print()
+            continue
+        
+        print(f"  📊 Has {len(indexes)} index(es)")
+        
+        all_valid = True
+        for i, idx in enumerate(indexes):
+            print(f"  Index {i+1}: ", end="")
+            if isinstance(idx, IndexModel):
+                print(f"IndexModel object")
+            else:
+                print(f"{type(idx).__name__}")
+            
+            if validate_index_spec(idx):
+                print(f"    ✅ Valid")
+                if isinstance(idx, dict) and "key" in idx:
+                    print(f"      Key: {idx['key']}")
+            else:
+                print(f"    ❌ Invalid")
+                all_valid = False
+        
+        if not all_valid:
+            problematic_models.append(model.__name__)
+        
+        print()
     
-    print(f"\n🔐 Security:")
-    print(f"  JWT Algorithm: {settings.ALGORITHM}")
-    print(f"  Token Expiry: {settings.ACCESS_TOKEN_EXPIRE_MINUTES} min")
+    if problematic_models:
+        print(f"❌ Problematic models: {problematic_models}")
+        
+        # Check EmailOTP specifically since it works
+        print("\n🔍 EmailOTP (working model) indexes for reference:")
+        for i, idx in enumerate(EmailOTP.Settings.indexes):
+            print(f"  Index {i+1}: {idx}")
+        
+        return False
+    else:
+        print("✅ All models have valid indexes!")
+        return True
+
+def convert_indexmodel_to_dict():
+    """Helper to convert IndexModel to dict for debugging"""
+    print("\n🔧 Converting IndexModel to dict example:")
     
-    print(f"\n🤖 AI Services:")
-    print(f"  OpenAI Available: {settings.openai_available}")
-    print(f"  Gemini Available: {settings.gemini_available}")
-    print(f"  Azure OpenAI Available: {settings.azure_openai_available}")
+    # Example IndexModel
+    idx = IndexModel([("email", 1)], unique=True, name="email_idx")
+    print(f"Original IndexModel: {idx}")
+    print(f"IndexModel.document: {idx.document}")
     
-    print(f"\n📧 Email:")
-    print(f"  Email Enabled: {settings.email_enabled}")
-    print(f"  Sender: {settings.BREVO_SENDER_EMAIL}")
-    
-    print(f"\n⚡ Rate Limiting:")
-    print(f"  Enabled: {settings.RATE_LIMIT_ENABLED}")
-    print(f"  Default: {settings.RATE_LIMIT_DEFAULT}")
-    print(f"  Upload: {settings.RATE_LIMIT_UPLOAD}")
-    
-    print("\n" + "=" * 60)
-    print("✅ All tests passed!")
-    
-except Exception as e:
-    print(f"❌ Error: {e}")
-    import traceback
-    traceback.print_exc()
+    # Convert to dict
+    idx_dict = {
+        'key': idx.document['key'],
+        'name': idx.document.get('name', ''),
+        'unique': idx.document.get('unique', False)
+    }
+    print(f"Converted dict: {idx_dict}")
+
+if __name__ == "__main__":
+    if not check_all_indexes():
+        convert_indexmodel_to_dict()
+        
+        print("\n🎯 Solution:")
+        print("1. Models using IndexModel objects are actually VALID for Beanie")
+        print("2. The issue might be with a specific model that has invalid index format")
+        print("3. Check if any model has mixed format (some dict, some IndexModel)")
+        print("4. Try using all dict format or all IndexModel format for consistency")
+        
+        sys.exit(1)
+    else:
+        sys.exit(0)

@@ -1,4 +1,4 @@
-from fastapi import FastAPI, Request, Response, HTTPException
+from fastapi import FastAPI, Request, Response, HTTPException, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.exceptions import RequestValidationError
@@ -34,7 +34,7 @@ try:
         logging.StreamHandler()
     ]
 except (PermissionError, OSError) as e:
-    print(f"⚠️ Warning: Cannot write to log file. Using console only. Error: {e}")
+    print(f"Warning: Cannot write to log file. Using console only. Error: {e}")
     handlers = [logging.StreamHandler()]
 
 logging.basicConfig(
@@ -58,25 +58,20 @@ async def lifespan(app: FastAPI):
     startup_tasks = []
     
     try:
-        # Initialize database
         startup_tasks.append("database")
         await init_db()
         logger.info(" MongoDB connected successfully")
         
-        # Create indexes
         await create_indexes()
         logger.info(" Database indexes created/verified")
         
-        # Initialize Redis
         startup_tasks.append("redis")
         try:
             await init_redis()
         except Exception as e:
-            logger.warning(f"⚠️ Redis initialization failed: {e}")
-            logger.warning("⚠️ Application running without Redis (rate limiting, caching disabled)")
+            logger.warning(f"Redis initialization failed: {e}")
+            logger.warning("Application running without Redis (rate limiting, caching disabled)")
         
-        
-        # Create upload directories (config validator đã tự động tạo)
         startup_tasks.append("directories")
         logger.info(f" Upload directories ready at {settings.upload_path}")
         
@@ -100,17 +95,15 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.error(f" Startup failed during {startup_tasks[-1] if startup_tasks else 'unknown'}: {str(e)}")
         logger.error(" Application failed to start")
-        # Có thể thêm metrics/logging ở đây
+
         raise
     
     finally:
-        # Shutdown
         logger.info(" Shutting down application...")
         
         shutdown_tasks = []
         
         try:
-            # Close database connections
             shutdown_tasks.append("database")
             await close_db()
             logger.info(" Database connections closed")
@@ -118,15 +111,12 @@ async def lifespan(app: FastAPI):
             logger.error(f" Error closing database: {e}")
         
         try:
-            # Close Redis connections
             shutdown_tasks.append("redis")
             await close_redis()
             logger.info(" Redis connections closed")
         except Exception as e:
             logger.error(f" Error closing Redis: {e}")
         
-
-        # Cleanup temporary files
         try:
             shutdown_tasks.append("temp files")
             await cleanup_temp_files()
@@ -137,7 +127,6 @@ async def lifespan(app: FastAPI):
         logger.info(f" Clean shutdown completed: {', '.join(shutdown_tasks)}")
 
 async def cleanup_temp_files():
-    """Clean up temporary files on shutdown"""
     import shutil
     import os
     from datetime import datetime, timedelta
@@ -159,7 +148,6 @@ async def cleanup_temp_files():
         if deleted_files > 0:
             logger.info(f"Deleted {deleted_files} temporary files")
 
-# Create FastAPI app with enhanced metadata
 app = FastAPI(
     title=settings.APP_NAME,
     version=settings.APP_VERSION,
@@ -220,11 +208,9 @@ app = FastAPI(
     ]
 )
 
-# Add rate limiter to app state
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
-# Configure CORS
 if settings.CORS_ORIGINS:
     app.add_middleware(
         CORSMiddleware,
@@ -236,10 +222,8 @@ if settings.CORS_ORIGINS:
         max_age=settings.CORS_MAX_AGE,
     )
 
-# Add compression middleware
 app.add_middleware(GZipMiddleware, minimum_size=1000)
 
-# Add custom middlewares
 if settings.is_production:
     app.add_middleware(RequestLoggingMiddleware)
     app.add_middleware(ResponseTimeMiddleware)
@@ -247,12 +231,8 @@ if settings.is_production:
 # Add audit log middleware
 # app.add_middleware(AuditLogMiddleware)
 
-# Custom exception handlers
 @app.exception_handler(RequestValidationError)
 async def validation_exception_handler(request: Request, exc: RequestValidationError):
-    """
-    Custom handler for validation errors
-    """
     logger.warning(f"Validation error: {exc.errors()}")
     return JSONResponse(
         status_code=422,
@@ -268,7 +248,6 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
 
 @app.exception_handler(HTTPException)
 async def http_exception_handler(request: Request, exc: HTTPException):
-    """Custom HTTP exception handler"""
     logger.warning(f"HTTP exception: {exc.detail} (status: {exc.status_code})")
     return JSONResponse(
         status_code=exc.status_code,
@@ -285,9 +264,6 @@ async def http_exception_handler(request: Request, exc: HTTPException):
 
 @app.exception_handler(Exception)
 async def generic_exception_handler(request: Request, exc: Exception):
-    """
-    Generic exception handler
-    """
     # Log the full exception with traceback
     logger.error(f"Unhandled exception on {request.method} {request.url.path}", 
                 exc_info=True)
@@ -308,14 +284,12 @@ async def generic_exception_handler(request: Request, exc: Exception):
 
 app.include_router(
     api_router,
-    prefix=settings.API_V1_STR
+    prefix=settings.API_V1_STR,
+    tags= "/app"
 )
 
 @app.get("/", tags=["Health"], include_in_schema=False)
 async def root():
-    """
-    Root endpoint - API information
-    """
     return {
         "app": settings.APP_NAME,
         "version": settings.APP_VERSION,
@@ -329,9 +303,6 @@ async def root():
 @app.get("/health", tags=["Health"])
 @limiter.limit("30/minute")
 async def health_check(request: Request):
-    """
-    Health check endpoint with basic rate limiting
-    """
     from app.core.database import check_connection as check_db
     from app.core.redis import get_redis
     
@@ -529,11 +500,13 @@ async def get_metrics(request: Request):
             }
         }
 
+from app.core.security import get_current_user
 @app.get("/metrics/prometheus", tags=["Monitoring"], include_in_schema=False)
-async def get_prometheus_metrics():
-    """
-    Prometheus metrics endpoint
-    """
+async def get_prometheus_metrics(
+    # current_user: dict = Depends(get_current_user)
+):
+    # if not current_user.get("is_admin"):
+    #     raise HTTPException(status_code=403)
     try:
         import psutil
         

@@ -1,7 +1,7 @@
-import redis
-from redis.asyncio import Redis
-from app.core.config import settings
 import logging
+from redis.asyncio import Redis
+from redis.asyncio.connection import ConnectionPool
+from app.core.config import settings
 
 logger = logging.getLogger(__name__)
 
@@ -11,7 +11,7 @@ async def init_redis():
     global redis_client
     
     try:
-        redis_client = redis.from_url(
+        redis_client = Redis.from_url(
             str(settings.REDIS_URL),
             encoding="utf-8",
             decode_responses=True,
@@ -25,24 +25,24 @@ async def init_redis():
         import asyncio
         try:
             await asyncio.wait_for(redis_client.ping(), timeout=2.0)
-            logger.info(f" Redis connected successfully to {settings.REDIS_URL}")
+            logger.info(f"Redis connected successfully to {settings.REDIS_URL}")
         except asyncio.TimeoutError:
-            logger.warning(" Redis connection timeout - Redis may not be running")
+            logger.warning("Redis connection timeout - Redis may not be running")
             redis_client = None
         except Exception as e:
-            logger.warning(f" Redis not available: {e}")
+            logger.warning(f"Redis not available: {e}")
             redis_client = None
             
     except Exception as e:
-        logger.warning(f" Failed to initialize Redis: {e}")
+        logger.warning(f"Failed to initialize Redis: {e}")
         redis_client = None
 
 async def close_redis():
     global redis_client
     if redis_client:
-        await redis_client.close()
+        await redis_client.aclose()
         redis_client = None
-        logger.info(" Redis connection closed")
+        logger.info("Redis connection closed")
 
 def get_redis() -> Redis | None:
     return redis_client
