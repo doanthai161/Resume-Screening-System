@@ -1,9 +1,10 @@
-from typing import Optional
+from typing import Optional, Dict, List
 from pydantic import BaseModel, EmailStr, field_validator, model_validator
 from fastapi import HTTPException
 from app.dependencies.error_code import ErrorCode
 from app.schemas.actor import ActorResponse
 from datetime import datetime
+from enum import Enum
 
 
 class LoginRequest(BaseModel):
@@ -52,6 +53,8 @@ class UserListRespponse(BaseModel):
 
 class RegisterRequest(BaseModel):
     email: EmailStr
+    phone_number: str
+    address: Optional[str]
     password: str
     full_name: str | None = None
 
@@ -63,6 +66,10 @@ class RegisterRequest(BaseModel):
         if len(v) < 8:
             raise ValueError("Password must be at least 8 characters")
         return v
+
+class VerifyOTPRegisterRequest(BaseModel):
+    email: EmailStr
+    otp: str
 
 class AccessToken(BaseModel):
     access_token: str
@@ -89,3 +96,59 @@ class UserFilter(BaseModel):
     created_at_to: Optional[datetime] = None
     updated_at_from: Optional[datetime] = None
     updated_at_to: Optional[datetime] = None
+
+class UserRole(str, Enum):
+    USER = "user"
+    ADMIN = "admin"
+    MANAGER = "manager"
+
+class UserBulkUpdate(BaseModel):
+    user_ids: List[str]
+    update_data: UserUpdate
+
+class UserBulkDeactivate(BaseModel):
+    user_ids: List[str]
+
+class UserChangePassword(BaseModel):
+    current_password: str
+    new_password: str
+
+    @field_validator('new_password')
+    def validate_new_password(cls, v):
+        if len(v) < 8:
+            raise ValueError('Password must be at least 8 characters long')
+        return v
+
+class UserResetPasswordRequest(BaseModel):
+    email: EmailStr
+
+class UserResetPasswordConfirm(BaseModel):
+    token: str
+    new_password: str
+
+class UserStatisticsResponse(BaseModel):
+    total_users: int
+    active_users: int
+    verified_users: int
+    superusers: int
+    recent_signups_7d: int
+    inactive_users: int
+    unverified_users: int
+    user_roles: Dict[str, int]
+    calculated_at: str
+
+class UserActivityStatsResponse(BaseModel):
+    user_id: str
+    email: str
+    username: Optional[str]
+    full_name: Optional[str]
+    is_active: bool
+    is_verified: bool
+    is_superuser: bool
+    account_created: Optional[str]
+    account_age_days: int
+    last_login: Optional[str]
+    last_activity: str
+    email_verified_at: Optional[str]
+    phone_verified: bool
+    calculated_at: str

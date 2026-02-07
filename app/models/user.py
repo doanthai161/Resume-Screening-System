@@ -23,6 +23,7 @@ class User(Document):
         indexes = [
             {"key": [("email", 1)], "name": "idx_users_email", "unique": True},
             {"key": [("full_name", 1)], "name": "idx_users_full_name"},
+            {"key": [("phone_number", 1)], "name": "idx_users_phone", "unique": True, "sparse": True},
         ]
 
     class Config:

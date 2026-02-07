@@ -165,16 +165,15 @@ def password_strength_check(password: str) -> Dict[str, Any]:
     if len(password) > settings.PASSWORD_MAX_LENGTH:
         issues.append(f"Password must be at most {settings.PASSWORD_MAX_LENGTH} characters")
     
-    # Add more checks as needed
     import re
     if not re.search(r"[A-Z]", password):
         issues.append("Password must contain at least one uppercase letter")
     if not re.search(r"[a-z]", password):
         issues.append("Password must contain at least one lowercase letter")
-    if not re.search(r"\d", password):
-        issues.append("Password must contain at least one digit")
-    if not re.search(r"[!@#$%^&*(),.?\":{}|<>]", password):
-        issues.append("Password must contain at least one special character")
+    # if not re.search(r"\d", password):
+    #     issues.append("Password must contain at least one digit")
+    # if not re.search(r"[!@#$%^&*(),.?\":{}|<>]", password):
+    #     issues.append("Password must contain at least one special character")
     
     return {
         "is_valid": len(issues) == 0,
@@ -238,10 +237,7 @@ async def blacklist_token_by_jti(jti: str, expires_in: Optional[int] = None, red
     except Exception as e:
         logger.error(f"Error blacklisting token JTI: {e}")
 
-# ==================== AUTHENTICATION DEPENDENCIES ====================
-class CurrentUser:
-    """Current authenticated user with roles and permissions"""
-    
+class CurrentUser:    
     def __init__(
         self, 
         user: User, 
@@ -262,6 +258,10 @@ class CurrentUser:
         return getattr(self.user, item)
     
     @property
+    def email(self) -> str:
+        return self.user.email
+
+    @property
     def user_id(self) -> Optional[str]:
         """Get user ID as string"""
         return str(self.user.id) if self.user.id else None
@@ -280,6 +280,10 @@ class CurrentUser:
     def is_candidate(self) -> bool:
         """Check if user has candidate role"""
         return settings.CANDIDATE_ROLE_NAME in self._actor_names
+    
+    @property
+    def is_superuser(self) -> bool:
+        return self.user.is_superuser if hasattr(self.user, 'is_superuser') else False
     
     def has_permission(self, permission: str) -> bool:
         """Check if user has specific permission"""
@@ -304,6 +308,7 @@ class CurrentUser:
             "email": self.user.email,
             "full_name": self.user.full_name,
             "is_active": self.user.is_active,
+            "is_superuser": self.is_superuser,
             "roles": list(self._actor_names),
             "permissions": list(self._permission_names),
             "scopes": list(self._scopes),

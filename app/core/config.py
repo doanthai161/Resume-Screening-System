@@ -35,6 +35,11 @@ class Settings(BaseSettings):
     @property
     def MONGODB_URL(self) -> str:
         return f"{self.MONGODB_URI}/{self.MONGODB_DB_NAME}"
+
+    PASSWORD_MIN_LENGTH: int = Field(default=6, description="pw minimum size")
+    PASSWORD_MAX_LENGTH: int = Field(default=40, description="pw maximum size")
+    OTP_EXPIRY_MINUTES: int= Field(default=30, description="OTP expiry")
+    API_KEY_HEADER:str
     
     REDIS_URL: str = Field(default="redis://localhost:6379/0", description="Redis connection URL")
     REDIS_MAX_CONNECTIONS: int = Field(default=10, description="Maximum Redis connections in pool")

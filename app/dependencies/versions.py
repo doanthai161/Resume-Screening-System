@@ -7,12 +7,14 @@ from app.api import (
     companies,
     company_branches,
     user_actor,
-    user_company
+    user_company,
+    register
 )
 
 
 api_router = APIRouter()
 
+api_router.include_router(register.router, prefix="/register", tags=["Register"])
 api_router.include_router(users.router, prefix="/users", tags=["Users"])
 api_router.include_router(actors.router, prefix="/actors", tags=["Actors"])
 api_router.include_router(permissions.router, prefix="/permissions", tags=["Permissions"])
