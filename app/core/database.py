@@ -421,7 +421,7 @@ async def init_db():
                 await _ensure_default_actors()
                 await _ensure_default_ai_models()
                 await _create_first_superuser()
-                await create_indexes()
+                # await create_indexes()
                 
                 with open(INIT_FILE_PATH, 'w', encoding='utf-8') as f:
                     f.write(f"Default data initialized on: {datetime.datetime.now(datetime.UTC)}")
@@ -446,48 +446,48 @@ async def init_db():
 async def close_db():
     logger.info("Database connections will be closed automatically.")
 
-async def create_indexes():
-    from motor.motor_asyncio import AsyncIOMotorClient
-    from app.core.config import settings
+# async def create_indexes():
+#     from motor.motor_asyncio import AsyncIOMotorClient
+#     from app.core.config import settings
     
-    logger.info("Creating/verifying database indexes...")
+#     logger.info("Creating/verifying database indexes...")
     
-    client = None
-    try:
-        client = AsyncIOMotorClient(settings.MONGODB_URI)
-        db = client[settings.MONGODB_DB_NAME]
+#     client = None
+#     try:
+#         client = AsyncIOMotorClient(settings.MONGODB_URI)
+#         db = client[settings.MONGODB_DB_NAME]
         
-        await db.users.create_index([("email", 1)], unique=True, name="idx_users_email")
-        await db.users.create_index([("full_name", 1)], name="idx_users_full_name")
-        await db.users.create_index([("phone_number", 1)], unique=True, sparse=True, name="idx_users_phone")
+#         await db.users.create_index([("email", 1)], unique=True, name="idx_users_email")
+#         await db.users.create_index([("full_name", 1)], name="idx_users_full_name")
+#         await db.users.create_index([("phone_number", 1)], unique=True, sparse=True, name="idx_users_phone")
         
-        await db.companies.create_index([("user_id", 1)], name="idx_companies_user_id")
-        await db.companies.create_index([("company_code", 1)], unique=True, name="idx_companies_company_code")
-        await db.companies.create_index([("email", 1)], name="idx_companies_email")
-        await db.companies.create_index([("is_active", 1)], name="idx_companies_active")
-        await db.companies.create_index([("name", 1)], name="idx_companies_name")
+#         await db.companies.create_index([("user_id", 1)], name="idx_companies_user_id")
+#         await db.companies.create_index([("company_code", 1)], unique=True, name="idx_companies_company_code")
+#         await db.companies.create_index([("email", 1)], name="idx_companies_email")
+#         await db.companies.create_index([("is_active", 1)], name="idx_companies_active")
+#         await db.companies.create_index([("name", 1)], name="idx_companies_name")
         
-        await db.permissions.create_index([("name", 1)], unique=True, name="idx_permissions_name")
-        await db.permissions.create_index([("is_active", 1)], name="idx_permissions_active")
+#         await db.permissions.create_index([("name", 1)], unique=True, name="idx_permissions_name")
+#         await db.permissions.create_index([("is_active", 1)], name="idx_permissions_active")
         
-        await db.actors.create_index([("name", 1)], name="idx_actors_name")
-        await db.actors.create_index([("created_at", -1)], name="idx_actors_created_at_desc")
-        await db.actors.create_index([("is_active", 1)], name="idx_actors_active")
+#         await db.actors.create_index([("name", 1)], name="idx_actors_name")
+#         await db.actors.create_index([("created_at", -1)], name="idx_actors_created_at_desc")
+#         await db.actors.create_index([("is_active", 1)], name="idx_actors_active")
         
-        await db.email_otps.create_index([("expires_at", 1)], expireAfterSeconds=0, name="ttl_index")
-        await db.email_otps.create_index([("email", 1), ("otp_type", 1)], name="email_otp_type_idx")
-        await db.email_otps.create_index([("email", 1), ("otp_type", 1), ("is_used", 1), ("expires_at", 1)], 
-                                         name="active_otp_idx")
-        await db.email_otps.create_index([("is_used", 1)], name="idx_otp_is_used")
+#         await db.email_otps.create_index([("expires_at", 1)], expireAfterSeconds=0, name="ttl_index")
+#         await db.email_otps.create_index([("email", 1), ("otp_type", 1)], name="email_otp_type_idx")
+#         await db.email_otps.create_index([("email", 1), ("otp_type", 1), ("is_used", 1), ("expires_at", 1)], 
+#                                          name="active_otp_idx")
+#         await db.email_otps.create_index([("is_used", 1)], name="idx_otp_is_used")
         
-        logger.info("All indexes created successfully")
+#         logger.info("All indexes created successfully")
         
-    except Exception as e:
-        logger.error(f"Error creating indexes: {e}")
-        raise
-    finally:
-        if client:
-            client.close()
+#     except Exception as e:
+#         logger.error(f"Error creating indexes: {e}")
+#         raise
+#     finally:
+#         if client:
+#             client.close()
 
 async def check_connection() -> bool:
     try:

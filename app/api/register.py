@@ -37,6 +37,7 @@ from app.models.user_actor import UserActor
 from app.core.config import settings
 from bson import ObjectId
 from app.repositories.user_repository import UserRepository
+from app.middleware.audit_log import log_security_event, log_audit_action
 
 router = APIRouter()
 
@@ -90,12 +91,12 @@ async def register(
         
         user = await UserRepository.create_user(user_data)
         
-        default_actor = await Actor.find_one(Actor.name == settings.DEFAULT_ROLE_NAME)
+        default_actor = await Actor.find_one(Actor.name == settings.CANDIDATE_ROLE_NAME)
         if not default_actor:
-            logger.error(f"Default actor '{settings.DEFAULT_ROLE_NAME}' not found.")
+            logger.error(f"Default actor '{settings.CANDIDATE_ROLE_NAME}' not found.")
             background_tasks.add_task(
                 logger.error, 
-                f"Default actor '{settings.DEFAULT_ROLE_NAME}' not found. User {data.email} registered without role assignment."
+                f"Default actor '{settings.CANDIDATE_ROLE_NAME}' not found. User {data.email} registered without role assignment."
             )
         else:
             try:
@@ -108,7 +109,7 @@ async def register(
                 await user_actor.insert()
                 background_tasks.add_task(
                     logger.info, 
-                    f"Assigned default actor '{settings.DEFAULT_ROLE_NAME}' to user '{data.email}'."
+                    f"Assigned default actor '{settings.CANDIDATE_ROLE_NAME}' to user '{data.email}'."
                 )
             except Exception as e:
                 logger.error(f"Failed to assign default role to user {data.email}: {e}")
@@ -116,20 +117,16 @@ async def register(
                     logger.error, 
                     f"Failed to assign default role to user {data.email}: {e}"
                 )
-        
-        # Generate and send OTP
         otp_code = generate_otp()
         expires_at = datetime.now(timezone.utc) + timedelta(minutes=settings.OTP_EXPIRY_MINUTES)
         
-        # Check if OTP already exists for this email
-        existing_otp = await EmailOTP.find_one(
-            EmailOTP.email == data.email,
-            EmailOTP.otp_type == "registration",
-            EmailOTP.is_used == False
-        )
+        existing_otp = await EmailOTP.find_one({
+            "email": data.email,
+            "otp_type": "registration",
+            "is_used": False
+        })
         
         if existing_otp:
-            # Update existing OTP
             existing_otp.otp_code = otp_code
             existing_otp.expires_at = expires_at
             existing_otp.attempts = 0
@@ -137,7 +134,6 @@ async def register(
             existing_otp.updated_at = now_vn()
             await existing_otp.save()
         else:
-            # Create new OTP
             email_otp = EmailOTP(
                 email=data.email,
                 otp_code=otp_code,
@@ -148,7 +144,6 @@ async def register(
             )
             await email_otp.insert()
         
-        # Send OTP email in background
         background_tasks.add_task(
             send_otp_email,
             email=data.email,
@@ -157,25 +152,26 @@ async def register(
             full_name=data.full_name
         )
         
-        # Log registration event
         background_tasks.add_task(
             logger.info,
             f"User registered: {data.email}. OTP sent."
         )
         
-        # Log security event
         background_tasks.add_task(
             log_security_event,
             event_type="user_registered",
+            description=f"User registered via email",
             user_id=str(user.id),
-            email=data.email,
             ip_address=request.client.host if request.client else None,
-            user_agent=request.headers.get("user-agent"),
-            details={"registration_method": "email", "has_phone": bool(data.phone_number)},
-            success=True
+            severity="info",
+            metadata={
+                "email": data.email,
+                "registration_method": "email",
+                "has_phone": bool(data.phone_number),
+                "user_agent": request.headers.get("user-agent")
+            }
         )
         
-        # Return user response without sensitive data
         return UserResponse(
             id=str(user.id),
             email=user.email,
@@ -210,16 +206,13 @@ async def verify_otp(
     request: Request,
     background_tasks: BackgroundTasks
 ):
-    """
-    Verify OTP for user registration
-    """
     try:
-        # Find OTP record
-        otp_record = await EmailOTP.find_one(
-            EmailOTP.email == data.email,
-            EmailOTP.otp_type == "registration",
-            EmailOTP.is_used == False
-        )
+        otp_record = await EmailOTP.find_one({
+            "email": data.email,
+            "otp_type": "registration",
+            "is_used": False
+        })
+        
         
         if not otp_record:
             raise HTTPException(
@@ -227,30 +220,25 @@ async def verify_otp(
                 detail=ErrorCode.OTP_NOT_FOUND,
             )
         
-        # Check if OTP is already used
         if otp_record.is_used:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=ErrorCode.OTP_ALREADY_USED,
             )
         
-        # Check if OTP is expired
         if otp_record.is_expired:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=ErrorCode.OTP_EXPIRED,
             )
         
-        # Check if max attempts exceeded
         if not otp_record.can_attempt:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=ErrorCode.OTP_MAX_ATTEMPTS,
             )
         
-        # Verify OTP code
         if otp_record.otp_code != data.otp:
-            # Increment attempt counter
             otp_record.increment_attempt()
             await otp_record.save()
             
@@ -264,11 +252,9 @@ async def verify_otp(
                 }
             )
         
-        # OTP is valid - mark as used
         otp_record.mark_as_used()
         await otp_record.save()
         
-        # Find and activate user
         user = await UserRepository.get_user_by_email(data.email)
         if not user:
             raise HTTPException(
@@ -276,7 +262,6 @@ async def verify_otp(
                 detail=ErrorCode.USER_NOT_FOUND,
             )
         
-        # Verify and activate user using repository
         success = await UserRepository.verify_user(str(user.id))
         if not success:
             raise HTTPException(
@@ -284,7 +269,6 @@ async def verify_otp(
                 detail="Failed to verify user"
             )
         
-        # Create access token for immediate login
         token_pair = create_access_token({
             "sub": user.email,
             "email": user.email,
@@ -292,7 +276,6 @@ async def verify_otp(
             "scopes": [],
         })
         
-        # Log security event
         background_tasks.add_task(
             log_security_event,
             event_type="email_verified",
@@ -342,11 +325,7 @@ async def resend_otp(
     request: Request,
     background_tasks: BackgroundTasks
 ):
-    """
-    Resend OTP for registration
-    """
     try:
-        # Check if user exists and is not verified
         user = await UserRepository.get_user_by_email(data.email)
         if not user:
             raise HTTPException(

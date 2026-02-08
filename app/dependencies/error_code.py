@@ -3,8 +3,6 @@ from typing import Dict, Any
 from datetime import datetime, timezone
 
 class ErrorCode(str, Enum):
-    """Standardized error codes for the application"""
-    
     INVALID_CREDENTIALS = "AUTH_1001"
     TOKEN_EXPIRED = "AUTH_1002"
     TOKEN_INVALID = "AUTH_1003"
@@ -47,6 +45,9 @@ class ErrorCode(str, Enum):
     OTP_EXPIRED = "EMAIL_1704"
     INVALID_TOKEN_TYPE = "INVALID_TOKEN_TYPE"
     PHONE_ALREADY_REGISTERED= "PHONE_ALREADY_REGISTERED"
+    OTP_NOT_FOUND="OTP_NOT_FOUND"
+    OTP_ALREADY_USED="OTP_ALREADY_USED"
+    OTP_MAX_ATTEMPTS="OTP_MAX_ATTEMPTS"
 
 ERROR_DETAILS: Dict[ErrorCode, Dict[str, Any]] = {
     ErrorCode.INVALID_CREDENTIALS: {

@@ -49,6 +49,7 @@ class UserResponse(BaseModel):
     full_name: Optional[str]
     phone_number: Optional[str]
     address: Optional[str]
+    message:Optional[str]
 
 class UserListRespponse(BaseModel):
     users: list[UserResponse]

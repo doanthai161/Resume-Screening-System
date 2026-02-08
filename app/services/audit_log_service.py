@@ -57,38 +57,82 @@ class AuditLogService:
         success: bool = True,
         error_message: Optional[str] = None
     ):
-        """Log security-related events"""
+        severity_map = {
+            AuditEventType.USER_LOGIN_FAILED: AuditSeverity.HIGH,
+            AuditEventType.ACCESS_DENIED: AuditSeverity.HIGH,
+            
+            AuditEventType.USER_PASSWORD_CHANGE: AuditSeverity.MEDIUM,
+            AuditEventType.USER_PASSWORD_RESET: AuditSeverity.MEDIUM,
+            AuditEventType.USER_TWO_FACTOR_ENABLE: AuditSeverity.MEDIUM,
+            AuditEventType.USER_TWO_FACTOR_DISABLE: AuditSeverity.MEDIUM,
+            AuditEventType.PERMISSION_GRANTED: AuditSeverity.MEDIUM,
+            AuditEventType.PERMISSION_REVOKED: AuditSeverity.MEDIUM,
+            AuditEventType.ROLE_ASSIGNED: AuditSeverity.MEDIUM,
+            AuditEventType.ROLE_REMOVED: AuditSeverity.MEDIUM,
+            
+            AuditEventType.USER_LOGIN: AuditSeverity.LOW,
+            AuditEventType.USER_LOGOUT: AuditSeverity.LOW,
+            AuditEventType.USER_REGISTER: AuditSeverity.LOW,
+            AuditEventType.USER_EMAIL_VERIFY: AuditSeverity.LOW,
+        }
+        
+        if not success:
+            severity = AuditSeverity.HIGH
+        else:
+            severity = severity_map.get(event_type, AuditSeverity.LOW)
+        
+        descriptions = {
+            AuditEventType.USER_REGISTER: f"User registration: {user_email or 'Unknown user'}",
+            AuditEventType.USER_LOGIN: f"User login: {user_email or 'Unknown user'}",
+            AuditEventType.USER_LOGIN_FAILED: f"Failed login attempt for: {user_email or 'Unknown user'}",
+            AuditEventType.USER_EMAIL_VERIFY: f"Email verification: {user_email or 'Unknown user'}",
+            AuditEventType.USER_PASSWORD_RESET: f"Password reset requested: {user_email or 'Unknown user'}",
+        }
+        
+        description = descriptions.get(
+            event_type, 
+            f"Security event: {event_type.value}"
+        )
+        
         log_data = AuditLogCreate(
             event_type=event_type,
             event_name=event_type.value.replace(".", " ").title(),
-            description=f"Security event: {event_type.value}",
-            severity=AuditSeverity.HIGH if not success else AuditSeverity.MEDIUM,
+            description=description,
+            severity=severity,
             user_id=user_id,
             user_email=user_email,
             user_ip=user_ip,
             user_agent=user_agent,
-            action="security",
+            resource_type="security",
+            action="security_event",
             success=success,
             error_message=error_message,
-            metadata=details or {},
+            metadata={
+                "security_details": details or {},
+                "event_category": "security",
+                "ip_address": user_ip,
+                "user_agent": user_agent,
+                **(details or {})
+            },
             tags=["security"]
         )
         
-        await AuditLogService.create_log(log_data)
+        try:
+            await AuditLogService.create_log(log_data)
+        except Exception as e:
+            import logging
+            logging.error(f"Failed to create security audit log: {e}")
     
     @staticmethod
     async def search_logs(query: AuditLogQuery) -> AuditLogListResponse:
-        """Search audit logs with pagination"""
         from pymongo import DESCENDING, ASCENDING
         
         filters = {}
-        
-        # Convert string IDs to ObjectId for query
         if query.user_id:
             try:
                 filters["user_id"] = ObjectId(query.user_id)
             except:
-                pass  # Invalid ObjectId format
+                pass
         
         if query.resource_id:
             try:

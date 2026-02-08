@@ -7,16 +7,15 @@ from app.utils.time import now_vn
 
 
 class EmailOTP(Document):
-    email: Indexed(str, unique=True) = Field(..., description="Email address")
-    otp_code: str = Field(..., max_length=6, min_length=6, description="OTP code")
-    otp_type: str = Field(..., description="Type of OTP (e.g., 'registration', 'password_reset')")
-    expires_at: Indexed(datetime) = Field(..., description="Expiration timestamp")
-    attempts: int = Field(default=0, description="Number of attempts made")
-    max_attempts: int = Field(default=3, description="Maximum allowed attempts")
-    is_used: bool = Field(default=False, description="Whether OTP has been used")
+    email: str = Field(..., description="Email address")
+    otp_code: str = Field(..., max_length=6, min_length=6)
+    otp_type: str = Field(...)
+    expires_at: datetime = Field(...)
+    attempts: int = 0
+    max_attempts: int = 3
+    is_used: bool = False
     created_at: datetime = Field(default_factory=now_vn)
     updated_at: datetime = Field(default_factory=now_vn)
-
     class Settings:
         name = "email_otps"
         indexes = [

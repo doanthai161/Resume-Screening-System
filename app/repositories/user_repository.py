@@ -87,74 +87,53 @@ class UserRepository:
     @staticmethod
     @monitor_db_operation("user_create")
     async def create_user(user_data: Union[UserCreate, dict]) -> User:
-        client = None
-        try:
-            client = UserRepository._get_db_client()
-            db = client[settings.MONGODB_DB_NAME]
-            
-            if isinstance(user_data, UserCreate):
-                data_dict = user_data.model_dump(exclude={"password"})
-                email = user_data.email
-                phone_number = user_data.phone_number
-                password = user_data.password
-            else:
-                data_dict = user_data.copy()
-                email = data_dict.get("email")
-                phone_number = data_dict.get("phone_number")
-                password = data_dict.get("password")
-                data_dict.pop("password", None)
-            
-            if not email:
-                raise ValueError("Email is required")
-            
-            existing_email = await db.users.find_one({"email": email})
-            if existing_email:
-                raise ValueError("User with this email already exists")
-            
-            if phone_number:
-                existing_phone = await db.users.find_one({"phone_number": phone_number})
-                if existing_phone:
-                    raise ValueError("User with this phone number already exists")
-            
-            if not password:
-                raise ValueError("Password is required")
-            
-            user_dict = {
-                **data_dict,
-                "email": email,
-                "hashed_password": UserRepository._hash_password(password),
-                "phone_number": phone_number,
-                "is_active": False,
-                "is_verified": False,
-                "is_superuser": False,
-                "created_at": now_vn(),
-                "updated_at": now_vn()
-            }
-            
-            user_dict = {k: v for k, v in user_dict.items() if v is not None}
-            
-            result = await db.users.insert_one(user_dict)
-            user_dict["_id"] = result.inserted_id
-            
-            user = User(**user_dict)
-            
-            await UserRepository._clear_user_list_caches()
-            logger.info(f"User created: {user.id} - {user.email}")
-            
-            return user
-            
-        except ValueError as e:
-            raise
-        except DuplicateKeyError as e:
-            logger.error(f"Duplicate key error: {e}")
-            raise ValueError("User already exists")
-        except Exception as e:
-            logger.error(f"Error creating user: {e}", exc_info=True)
-            raise
-        finally:
-            if client:
-                client.close()
-    
+        if isinstance(user_data, UserCreate):
+            email = user_data.email
+            phone_number = user_data.phone_number
+            password = user_data.password
+            data = user_data.model_dump(exclude={"password"})
+        else:
+            email = user_data.get("email")
+            phone_number = user_data.get("phone_number")
+            password = user_data.get("password")
+            data = user_data.copy() 
+            data.pop("password", None)
+
+        if not email or not password:
+            raise ValueError("Email and password are required")
+
+        if await User.find_one(User.email == email):
+            raise ValueError("User with this email already exists")
+
+        if phone_number and await User.find_one(User.phone_number == phone_number):
+            raise ValueError("User with this phone number already exists")
+
+
+        data.pop("email", None)
+        data.pop("phone_number", None)
+        data.pop("is_active", None)
+        data.pop("is_verified", None)
+        data.pop("is_superuser", None)
+        data.pop("created_at", None)
+        data.pop("updated_at", None)
+        user = User(
+            **data,
+            email=email,
+            phone_number=phone_number,
+            hashed_password=UserRepository._hash_password(password),
+            is_active=False,
+            is_verified=False,
+            is_superuser=False,
+            created_at=now_vn(),
+            updated_at=now_vn(),
+        )
+
+        await user.insert()
+        await UserRepository._clear_user_list_caches()
+
+        logger.info(f"User created: {user.id} - {user.email}")
+        return user
+        
     @staticmethod
     @monitor_db_operation("user_get")
     @monitor_cache_operation("user_get")
@@ -187,40 +166,21 @@ class UserRepository:
     @monitor_cache_operation("user_get_by_email")
     async def get_user_by_email(email: str) -> Optional[User]:
         cache_key = UserRepository._get_user_email_cache_key(email)
-        cached_data = await UserRepository._get_from_cache(cache_key)
-        
-        if cached_data:
-            logger.debug(f"Cache hit for user email: {email}")
-            user = User.model_validate(cached_data)
-            setattr(user, '_from_cache', True)
+        cached = await UserRepository._get_from_cache(cache_key)
+
+        if cached:
+            user = User.model_validate(cached)
+            setattr(user, "_from_cache", True)
             return user
-        
-        try:
-            db = get_database_info()
-            user_data = await db.users.find_one({"email": email})
-            if user_data:
-                user = User(**user_data)
-                
-                id_cache_key = UserRepository._get_user_cache_key(str(user.id))
-                await UserRepository._set_cache(
-                    id_cache_key,
-                    user.dict(exclude={"hashed_password"}),
-                    UserRepository.USER_CACHE_TTL
-                )
-                
-                await UserRepository._set_cache(
-                    cache_key,
-                    user.dict(exclude={"hashed_password"}),
-                    UserRepository.USER_CACHE_TTL
-                )
-                logger.debug(f"Cache set for user email: {email}")
-                
-                return user
+
+        user = await User.find_one(User.email == email)
+        if not user:
             return None
-            
-        except Exception as e:
-            logger.error(f"Error getting user by email {email}: {e}")
-            return None
+
+        data = user.model_dump(exclude={"hashed_password"})
+        await UserRepository._set_cache(cache_key, data, UserRepository.USER_CACHE_TTL)
+
+        return user
     
     @staticmethod
     @monitor_db_operation("user_get_by_username")

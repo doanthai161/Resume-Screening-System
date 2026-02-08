@@ -14,7 +14,7 @@ import sys
 from pathlib import Path
 
 from app.core.config import settings
-from app.core.database import init_db, close_db, create_indexes
+from app.core.database import init_db, close_db
 from app.core.redis import init_redis, close_redis
 from app.dependencies.versions import api_router
 from app.middleware.request_logging import RequestLoggingMiddleware
@@ -62,8 +62,8 @@ async def lifespan(app: FastAPI):
         await init_db()
         logger.info(" MongoDB connected successfully")
         
-        await create_indexes()
-        logger.info(" Database indexes created/verified")
+        # await create_indexes()
+        # logger.info(" Database indexes created/verified")
         
         startup_tasks.append("redis")
         try:

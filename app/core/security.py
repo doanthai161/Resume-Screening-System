@@ -1,4 +1,3 @@
-# app/core/security.py
 import os
 from datetime import datetime, timedelta, timezone
 from typing import Callable, List, Optional, Set, Dict, Any, Union
@@ -21,10 +20,8 @@ from app.core.redis import get_redis
 
 logger = logging.getLogger(__name__)
 
-# ==================== SECURITY CONFIGURATION ====================
 @lru_cache()
 def get_password_context() -> CryptContext:
-    """Get password hashing context with Argon2"""
     return CryptContext(
         schemes=["argon2"],
         argon2__time_cost=2,
@@ -35,7 +32,6 @@ def get_password_context() -> CryptContext:
 
 @lru_cache()
 def get_jwt_settings() -> Dict[str, Any]:
-    """Get JWT settings"""
     return {
         "algorithm": settings.ALGORITHM,
         "secret_key": settings.SECRET_KEY.get_secret_value() if hasattr(settings.SECRET_KEY, 'get_secret_value') else settings.SECRET_KEY,
@@ -43,7 +39,6 @@ def get_jwt_settings() -> Dict[str, Any]:
         "refresh_token_expire_days": settings.REFRESH_TOKEN_EXPIRE_DAYS,
     }
 
-# Security schemes
 security_bearer = HTTPBearer(
     scheme_name="JWT",
     description="Enter JWT token as: Bearer <token>",
@@ -56,9 +51,7 @@ oauth2_scheme = OAuth2PasswordBearer(
     auto_error=False
 )
 
-# ==================== TOKEN MANAGEMENT ====================
 class TokenPayload:
-    """Token payload structure"""
     def __init__(self, **kwargs):
         self.sub: Optional[str] = kwargs.get("sub")
         self.email: Optional[str] = kwargs.get("email")
@@ -70,7 +63,6 @@ class TokenPayload:
         self.type: Optional[str] = kwargs.get("type", "access")
 
 class TokenPair:
-    """Access and refresh token pair"""
     def __init__(self, access_token: str, refresh_token: str):
         self.access_token = access_token
         self.refresh_token = refresh_token
@@ -81,11 +73,9 @@ def create_access_token(
     expires_delta: Optional[timedelta] = None,
     token_type: str = "access"
 ) -> str:
-    """Create JWT token"""
     jwt_settings = get_jwt_settings()
     to_encode = data.copy()
     
-    # Set expiration
     if expires_delta:
         expire = datetime.now(timezone.utc) + expires_delta
     elif token_type == "refresh":
@@ -93,14 +83,12 @@ def create_access_token(
     else:
         expire = datetime.now(timezone.utc) + timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
     
-    # Add standard claims
     to_encode.update({
         "exp": expire,
         "iat": datetime.now(timezone.utc),
         "type": token_type,
     })
     
-    # Add jti (JWT ID) for token invalidation
     import uuid
     to_encode["jti"] = str(uuid.uuid4())
     
@@ -111,7 +99,6 @@ def create_access_token(
     )
 
 def create_token_pair(user: User, scopes: List[str] = None) -> TokenPair:
-    """Create access and refresh token pair"""
     data = {
         "sub": user.email,
         "email": user.email,
@@ -125,7 +112,6 @@ def create_token_pair(user: User, scopes: List[str] = None) -> TokenPair:
     return TokenPair(access_token=access_token, refresh_token=refresh_token)
 
 def decode_jwt_token(token: str) -> Optional[TokenPayload]:
-    """Decode and validate JWT token"""
     jwt_settings = get_jwt_settings()
     
     try:
@@ -142,13 +128,10 @@ def decode_jwt_token(token: str) -> Optional[TokenPayload]:
         logger.error(f"Unexpected token decode error: {e}")
         return None
 
-# ==================== PASSWORD MANAGEMENT ====================
 def get_password_hash(password: str) -> str:
-    """Hash password using Argon2"""
     return get_password_context().hash(password)
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
-    """Verify password against hash"""
     try:
         return get_password_context().verify(plain_password, hashed_password)
     except Exception as e:
@@ -156,7 +139,6 @@ def verify_password(plain_password: str, hashed_password: str) -> bool:
         return False
 
 def password_strength_check(password: str) -> Dict[str, Any]:
-    """Check password strength"""
     issues = []
     
     if len(password) < settings.PASSWORD_MIN_LENGTH:
@@ -181,15 +163,12 @@ def password_strength_check(password: str) -> Dict[str, Any]:
         "score": max(0, 100 - len(issues) * 20)  # Simple score calculation
     }
 
-# ==================== TOKEN BLACKLIST (Redis) ====================
 async def is_token_blacklisted(token: str, redis: Optional[Redis] = None) -> bool:
-    """Check if token is blacklisted using Redis"""
     try:
         if not redis:
             redis = get_redis()
         
         if not redis:
-            # Fallback to in-memory set if Redis is not available
             from app.core.security import _in_memory_blacklist
             return token in _in_memory_blacklist
         
@@ -204,13 +183,11 @@ async def blacklist_token(
     expires_in: Optional[int] = None,
     redis: Optional[Redis] = None
 ):
-    """Add token to blacklist with expiration"""
     try:
         if not redis:
             redis = get_redis()
         
         if not redis:
-            # Fallback to in-memory set
             from app.core.security import _in_memory_blacklist
             _in_memory_blacklist.add(token)
             return
@@ -224,7 +201,6 @@ async def blacklist_token(
         logger.error(f"Error blacklisting token: {e}")
 
 async def blacklist_token_by_jti(jti: str, expires_in: Optional[int] = None, redis: Optional[Redis] = None):
-    """Blacklist token by JWT ID"""
     try:
         if not redis:
             redis = get_redis()
@@ -254,7 +230,6 @@ class CurrentUser:
         self._scopes = set(token_payload.scopes if token_payload else [])
     
     def __getattr__(self, item):
-        """Delegate attribute access to user object"""
         return getattr(self.user, item)
     
     @property
@@ -263,22 +238,18 @@ class CurrentUser:
 
     @property
     def user_id(self) -> Optional[str]:
-        """Get user ID as string"""
         return str(self.user.id) if self.user.id else None
     
     @property
     def is_admin(self) -> bool:
-        """Check if user has admin role"""
         return settings.ADMIN_ROLE_NAME in self._actor_names
     
     @property
     def is_recruiter(self) -> bool:
-        """Check if user has recruiter role"""
         return settings.RECRUITER_ROLE_NAME in self._actor_names
     
     @property
     def is_candidate(self) -> bool:
-        """Check if user has candidate role"""
         return settings.CANDIDATE_ROLE_NAME in self._actor_names
     
     @property
@@ -286,23 +257,18 @@ class CurrentUser:
         return self.user.is_superuser if hasattr(self.user, 'is_superuser') else False
     
     def has_permission(self, permission: str) -> bool:
-        """Check if user has specific permission"""
         return permission in self._permission_names
     
     def has_any_permission(self, *permissions: str) -> bool:
-        """Check if user has any of the given permissions"""
         return any(perm in self._permission_names for perm in permissions)
     
     def has_all_permissions(self, *permissions: str) -> bool:
-        """Check if user has all of the given permissions"""
         return all(perm in self._permission_names for perm in permissions)
     
     def has_scope(self, scope: str) -> bool:
-        """Check if user has specific scope"""
         return scope in self._scopes
     
     def to_dict(self) -> Dict[str, Any]:
-        """Convert to dictionary for API responses"""
         return {
             "user_id": self.user_id,
             "email": self.user.email,
@@ -319,24 +285,16 @@ async def get_token_from_request(
     credentials: Optional[HTTPAuthorizationCredentials] = Depends(security_bearer),
     token: Optional[str] = Depends(oauth2_scheme)
 ) -> Optional[str]:
-    """
-    Extract token from request using multiple methods
-    Priority: Bearer token > OAuth2 token > API Key
-    """
-    # 1. Try Bearer token
     if credentials:
         return credentials.credentials
     
-    # 2. Try OAuth2 token
     if token:
         return token
     
-    # 3. Try API Key header
     api_key = request.headers.get(settings.API_KEY_HEADER)
     if api_key:
         return api_key
     
-    # 4. Try query parameter
     api_key = request.query_params.get("api_key")
     if api_key:
         return api_key
@@ -418,7 +376,6 @@ async def get_current_user(
 async def get_current_active_user(
     current_user: CurrentUser = Depends(get_current_user)
 ) -> CurrentUser:
-    """Get current active user (additional check for active status)"""
     from app.dependencies.error_code import ErrorCode
     if not current_user.user.is_active:
         raise HTTPException(
@@ -427,9 +384,7 @@ async def get_current_active_user(
         )
     return current_user
 
-# ==================== PERMISSION AND ROLE DEPENDENCIES ====================
 def require_permission(permission: str) -> Callable:
-    """Dependency to require specific permission"""
     async def permission_dependency(
         current_user: CurrentUser = Depends(get_current_active_user)
     ) -> CurrentUser:
@@ -449,7 +404,6 @@ def require_permission(permission: str) -> Callable:
     return permission_dependency
 
 def require_any_permission(*permissions: str) -> Callable:
-    """Dependency to require any of the given permissions"""
     async def any_permission_dependency(
         current_user: CurrentUser = Depends(get_current_active_user)
     ) -> CurrentUser:
@@ -469,7 +423,6 @@ def require_any_permission(*permissions: str) -> Callable:
     return any_permission_dependency
 
 def require_all_permissions(*permissions: str) -> Callable:
-    """Dependency to require all of the given permissions"""
     async def all_permission_dependency(
         current_user: CurrentUser = Depends(get_current_active_user)
     ) -> CurrentUser:
@@ -489,7 +442,6 @@ def require_all_permissions(*permissions: str) -> Callable:
     return all_permission_dependency
 
 def require_role(role_name: str) -> Callable:
-    """Dependency to require specific role"""
     async def role_dependency(
         current_user: CurrentUser = Depends(get_current_active_user)
     ) -> CurrentUser:
@@ -509,18 +461,14 @@ def require_role(role_name: str) -> Callable:
     return role_dependency
 
 def require_admin() -> Callable:
-    """Dependency to require admin role"""
     return require_role(settings.ADMIN_ROLE_NAME)
 
 def require_recruiter() -> Callable:
-    """Dependency to require recruiter role"""
     return require_role(settings.RECRUITER_ROLE_NAME)
 
 def require_candidate() -> Callable:
-    """Dependency to require candidate role"""
     return require_role(settings.CANDIDATE_ROLE_NAME)
 
-# ==================== API KEY AUTHENTICATION ====================
 async def validate_api_key(api_key: str) -> Optional[User]:
     """Validate API key and return associated user"""
     # Implement API key validation logic
@@ -532,7 +480,6 @@ async def get_current_api_user(
     request: Request,
     api_key: Optional[str] = Depends(get_token_from_request)
 ) -> Optional[User]:
-    """Get current user via API key"""
     if not api_key:
         return None
     
@@ -542,7 +489,6 @@ async def get_current_api_user(
     
     return user
 
-# ==================== RATE LIMITING HELPERS ====================
 def get_client_identifier(request: Request) -> str:
     """Get unique identifier for rate limiting"""
     # Try to get user ID if authenticated
@@ -553,7 +499,6 @@ def get_client_identifier(request: Request) -> str:
         if payload and payload.user_id:
             return f"user:{payload.user_id}"
     
-    # Fallback to IP address
     forwarded = request.headers.get("X-Forwarded-For")
     if forwarded:
         ip = forwarded.split(",")[0]
@@ -562,7 +507,6 @@ def get_client_identifier(request: Request) -> str:
     
     return f"ip:{ip}"
 
-# ==================== AUDIT LOGGING ====================
 async def log_security_event(
     event_type: str,
     user_id: Optional[str] = None,
@@ -572,27 +516,36 @@ async def log_security_event(
     details: Optional[Dict] = None,
     success: bool = True
 ):
-    """Log security event for audit trail"""
-    from app.models.audit_log import AuditLogService, AuditEventType
-    from bson import ObjectId
-    
+    """Log security event using AuditLogService"""
     try:
+        from app.services.audit_log_service import AuditLogService
+        from app.models.audit_log import AuditEventType, AuditSeverity
+        
         try:
             audit_event_type = AuditEventType(event_type)
         except ValueError:
-            audit_event_type = AuditEventType.CUSTOM_EVENT
+            if event_type == "user_registered":
+                audit_event_type = AuditEventType.USER_REGISTER
+            elif event_type == "user_login":
+                audit_event_type = AuditEventType.USER_LOGIN
+            elif event_type == "user_login_failed":
+                audit_event_type = AuditEventType.USER_LOGIN_FAILED
+            else:
+                audit_event_type = AuditEventType.CUSTOM_EVENT
         
         await AuditLogService.log_security_event(
             event_type=audit_event_type,
-            user_id=ObjectId(user_id) if user_id else None,
+            user_id=user_id,  # Already string, service will convert to ObjectId
             user_email=email,
             user_ip=ip_address,
             user_agent=user_agent,
             details=details or {},
             success=success
         )
+        
     except Exception as e:
-        logger.error(f"Failed to log security event: {e}")
+        from app.logs.logging_config import logger
+        logger.error(f"Failed to log security event: {e}", exc_info=True)
 
 # In-memory fallback for blacklist (when Redis is not available)
 _in_memory_blacklist: Set[str] = set()

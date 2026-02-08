@@ -9,6 +9,7 @@ from fastapi.responses import Response
 from pydantic import BaseModel
 from bson import ObjectId
 import inspect
+import time
 
 from app.models.audit_log import AuditLog
 from app.models.user import User
@@ -43,9 +44,6 @@ class AuditLogEntry(BaseModel):
 
 
 class AuditLogConfig:
-    """Configuration for audit logging"""
-    
-    # Action to resource type mapping
     ACTION_MAPPING = {
         "user.login": "user",
         "user.logout": "user",
@@ -94,7 +92,6 @@ class AuditLogConfig:
         "api_key.rotate": "api_key",
     }
     
-    # Sensitive fields to mask in logs
     SENSITIVE_FIELDS = {
         "password",
         "new_password",
@@ -117,7 +114,6 @@ class AuditLogConfig:
         "birth_date"
     }
     
-    # Actions that should be logged even when not authenticated
     PUBLIC_ACTIONS = {
         "user.login",
         "user.register",
@@ -126,12 +122,10 @@ class AuditLogConfig:
         "health.check"
     }
     
-    # HTTP methods that should include request body
     BODY_METHODS = {"POST", "PUT", "PATCH"}
     
     @staticmethod
     def get_resource_type(action: str) -> str:
-        """Get resource type from action"""
         return AuditLogConfig.ACTION_MAPPING.get(
             action, 
             action.split(".")[0] if "." in action else "unknown"
@@ -139,7 +133,6 @@ class AuditLogConfig:
     
     @staticmethod
     def mask_sensitive_data(data: Dict[str, Any]) -> Dict[str, Any]:
-        """Mask sensitive data in dictionary"""
         if not data:
             return data
         
@@ -194,7 +187,6 @@ def audit_log_action(
             import time
             start_time = time.time()
             
-            # Find request object in args/kwargs
             request = None
             for arg in args:
                 if isinstance(arg, Request):
@@ -207,7 +199,6 @@ def audit_log_action(
                         request = value
                         break
             
-            # Initialize audit data
             audit_data = {
                 "action": action,
                 "resource_type": AuditLogConfig.get_resource_type(action),
@@ -448,6 +439,7 @@ class AuditLogMiddleware:
     
     async def _log_request(self, request: Request, response: Response, start_time: float, exc: Optional[Exception]):
         try:
+            import time
             duration_ms = (time.time() - start_time) * 1000
             
             user_id = None
@@ -625,9 +617,6 @@ class AuditLogContext:
         return False
 
 
-import time
-
-
 async def get_audit_logs(
     action: Optional[str] = None,
     resource_type: Optional[str] = None,
@@ -703,6 +692,7 @@ async def get_user_activity_logs(
 
 async def cleanup_old_audit_logs(days_to_keep: int = 90):
     try:
+        import datetime
         cutoff_date = now_vn() - datetime.timedelta(days=days_to_keep)
         
         result = await AuditLog.find({
