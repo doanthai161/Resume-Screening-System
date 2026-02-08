@@ -70,20 +70,20 @@ async def register(
                 detail=ErrorCode.EMAIL_ALREADY_REGISTERED,
             )
         
-        # if data.phone_number:
-        #     existing_phone_user = await User.find_one(User.phone_number == data.phone_number)
-        #     if existing_phone_user:
-        #         raise HTTPException(
-        #             status_code=status.HTTP_400_BAD_REQUEST,
-        #             detail=ErrorCode.PHONE_ALREADY_REGISTERED,
-        #         )
+        if data.phone_number:
+            existing_phone_user = await User.find_one({"phone_number": data.phone_number})
+            if existing_phone_user:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=ErrorCode.PHONE_ALREADY_REGISTERED,
+                )
         
         user_data = {
             "email": data.email,
             "full_name": data.full_name,
             "password": data.password,
-            # "phone_number": data.phone_number,
-            # "address": data.address,
+            "phone_number": data.phone_number,
+            "address": data.address,
             "is_active": False,
             "is_verified": False,
         }

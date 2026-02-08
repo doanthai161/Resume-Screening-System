@@ -397,13 +397,22 @@ async def init_db():
         
         database = client[settings.MONGODB_DB_NAME]
         
-        await init_beanie(
-            database=database,
-            document_models=DOCUMENT_MODELS,
-        )
+        try:
+            await init_beanie(
+                database=database,
+                document_models=DOCUMENT_MODELS,
+            )
+            logger.info(f'Beanie initialized with {len(DOCUMENT_MODELS)} models in database: {settings.MONGODB_DB_NAME}')
+        except Exception as beanie_error:
+            logger.warning(f"Beanie initialization failed: {beanie_error}")
+            logger.warning("Continuing without Beanie - some ODM features may not work")
+            for model in DOCUMENT_MODELS:
+                try:
+                    model._database = database
+                    logger.debug(f"Assigned database to {model.__name__}")
+                except:
+                    pass
         
-        logger.info(f'✓ Beanie initialized with {len(DOCUMENT_MODELS)} models in database: {settings.MONGODB_DB_NAME}')
-
         if not os.path.exists(INIT_FILE_PATH):
             logger.info(f'File {INIT_FILE_PATH} not found. Starting default data initialization.')
             
@@ -438,28 +447,47 @@ async def close_db():
     logger.info("Database connections will be closed automatically.")
 
 async def create_indexes():
-    logger.info("Creating indexes for all collections...")
+    from motor.motor_asyncio import AsyncIOMotorClient
+    from app.core.config import settings
     
-    created_count = 0
-    error_count = 0
+    logger.info("Creating/verifying database indexes...")
     
-    for model in DOCUMENT_MODELS:
-        try:
-            if hasattr(model, 'Settings') and hasattr(model.Settings, 'indexes'):
-                indexes = model.Settings.indexes
-                if indexes and len(indexes) > 0:
-                    logger.info(f"✓ Indexes defined for {model.__name__} ({len(indexes)} indexes)")
-                    created_count += 1
-                else:
-                    logger.debug(f"No indexes defined for {model.__name__}")
-            else:
-                logger.debug(f"No Settings class or indexes attribute for {model.__name__}")
-                
-        except Exception as e:
-            logger.error(f"Error checking indexes for {model.__name__}: {e}")
-            error_count += 1
-    
-    logger.info(f"Index check completed: {created_count} models have indexes, {error_count} errors")
+    client = None
+    try:
+        client = AsyncIOMotorClient(settings.MONGODB_URI)
+        db = client[settings.MONGODB_DB_NAME]
+        
+        await db.users.create_index([("email", 1)], unique=True, name="idx_users_email")
+        await db.users.create_index([("full_name", 1)], name="idx_users_full_name")
+        await db.users.create_index([("phone_number", 1)], unique=True, sparse=True, name="idx_users_phone")
+        
+        await db.companies.create_index([("user_id", 1)], name="idx_companies_user_id")
+        await db.companies.create_index([("company_code", 1)], unique=True, name="idx_companies_company_code")
+        await db.companies.create_index([("email", 1)], name="idx_companies_email")
+        await db.companies.create_index([("is_active", 1)], name="idx_companies_active")
+        await db.companies.create_index([("name", 1)], name="idx_companies_name")
+        
+        await db.permissions.create_index([("name", 1)], unique=True, name="idx_permissions_name")
+        await db.permissions.create_index([("is_active", 1)], name="idx_permissions_active")
+        
+        await db.actors.create_index([("name", 1)], name="idx_actors_name")
+        await db.actors.create_index([("created_at", -1)], name="idx_actors_created_at_desc")
+        await db.actors.create_index([("is_active", 1)], name="idx_actors_active")
+        
+        await db.email_otps.create_index([("expires_at", 1)], expireAfterSeconds=0, name="ttl_index")
+        await db.email_otps.create_index([("email", 1), ("otp_type", 1)], name="email_otp_type_idx")
+        await db.email_otps.create_index([("email", 1), ("otp_type", 1), ("is_used", 1), ("expires_at", 1)], 
+                                         name="active_otp_idx")
+        await db.email_otps.create_index([("is_used", 1)], name="idx_otp_is_used")
+        
+        logger.info("All indexes created successfully")
+        
+    except Exception as e:
+        logger.error(f"Error creating indexes: {e}")
+        raise
+    finally:
+        if client:
+            client.close()
 
 async def check_connection() -> bool:
     try:

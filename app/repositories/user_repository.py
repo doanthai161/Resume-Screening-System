@@ -1,4 +1,4 @@
-from typing import List, Optional, Dict, Any, Tuple
+from typing import List, Optional, Dict, Any, Tuple, Union
 from datetime import datetime, timedelta
 from bson import ObjectId
 from pymongo.errors import DuplicateKeyError
@@ -15,6 +15,8 @@ from app.core.redis import get_redis, is_redis_available
 from app.core.monitoring import monitor_db_operation, monitor_cache_operation
 from app.utils.time import now_vn
 from app.core.config import settings
+from app.core.database import get_database_info
+from motor.motor_asyncio import AsyncIOMotorClient
 
 logger = logging.getLogger(__name__)
 
@@ -68,49 +70,90 @@ class UserRepository:
             )
         except Exception:
             return False
+
+    @staticmethod
+    def _get_db_client():
+        return AsyncIOMotorClient(settings.MONGODB_URI)
     
+    @staticmethod
+    def _get_db():
+        client = AsyncIOMotorClient(settings.MONGODB_URI)
+        return client[settings.MONGODB_DB_NAME]
+
     @staticmethod
     def _generate_reset_token() -> str:
         return secrets.token_urlsafe(32)
     
     @staticmethod
     @monitor_db_operation("user_create")
-    async def create_user(user_data: UserCreate) -> User:
+    async def create_user(user_data: Union[UserCreate, dict]) -> User:
+        client = None
         try:
-            existing_email = await User.find_one({"email": user_data.email})
+            client = UserRepository._get_db_client()
+            db = client[settings.MONGODB_DB_NAME]
+            
+            if isinstance(user_data, UserCreate):
+                data_dict = user_data.model_dump(exclude={"password"})
+                email = user_data.email
+                phone_number = user_data.phone_number
+                password = user_data.password
+            else:
+                data_dict = user_data.copy()
+                email = data_dict.get("email")
+                phone_number = data_dict.get("phone_number")
+                password = data_dict.get("password")
+                data_dict.pop("password", None)
+            
+            if not email:
+                raise ValueError("Email is required")
+            
+            existing_email = await db.users.find_one({"email": email})
             if existing_email:
                 raise ValueError("User with this email already exists")
             
-            if user_data.full_name:
-                existing_username = await User.find_one({"full_name": user_data.full_name})
-                if existing_username:
-                    raise ValueError("User with this username already exists")
+            if phone_number:
+                existing_phone = await db.users.find_one({"phone_number": phone_number})
+                if existing_phone:
+                    raise ValueError("User with this phone number already exists")
             
-            user_dict = user_data.model_dump(exclude={"password"})
-            user_dict["hashed_password"] = UserRepository._hash_password(user_data.password)
+            if not password:
+                raise ValueError("Password is required")
             
-            user_dict["is_active"] = True
-            user_dict["is_verified"] = False
-            user_dict["is_superuser"] = False
-            user_dict["created_at"] = now_vn()
-            user_dict["updated_at"] = now_vn()
+            user_dict = {
+                **data_dict,
+                "email": email,
+                "hashed_password": UserRepository._hash_password(password),
+                "phone_number": phone_number,
+                "is_active": False,
+                "is_verified": False,
+                "is_superuser": False,
+                "created_at": now_vn(),
+                "updated_at": now_vn()
+            }
+            
+            user_dict = {k: v for k, v in user_dict.items() if v is not None}
+            
+            result = await db.users.insert_one(user_dict)
+            user_dict["_id"] = result.inserted_id
             
             user = User(**user_dict)
-            await user.insert()
             
             await UserRepository._clear_user_list_caches()
-            
             logger.info(f"User created: {user.id} - {user.email}")
+            
             return user
             
         except ValueError as e:
             raise
         except DuplicateKeyError as e:
-            logger.error(f"Duplicate key error creating user: {e}")
-            raise ValueError("User with similar criteria already exists")
+            logger.error(f"Duplicate key error: {e}")
+            raise ValueError("User already exists")
         except Exception as e:
             logger.error(f"Error creating user: {e}", exc_info=True)
             raise
+        finally:
+            if client:
+                client.close()
     
     @staticmethod
     @monitor_db_operation("user_get")
@@ -153,8 +196,11 @@ class UserRepository:
             return user
         
         try:
-            user = await User.find_one({"email": email})
-            if user:
+            db = get_database_info()
+            user_data = await db.users.find_one({"email": email})
+            if user_data:
+                user = User(**user_data)
+                
                 id_cache_key = UserRepository._get_user_cache_key(str(user.id))
                 await UserRepository._set_cache(
                     id_cache_key,
@@ -168,7 +214,10 @@ class UserRepository:
                     UserRepository.USER_CACHE_TTL
                 )
                 logger.debug(f"Cache set for user email: {email}")
-            return user
+                
+                return user
+            return None
+            
         except Exception as e:
             logger.error(f"Error getting user by email {email}: {e}")
             return None

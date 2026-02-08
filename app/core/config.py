@@ -8,7 +8,6 @@ import secrets
 
 
 class Settings(BaseSettings):
-    # ==================== APPLICATION ====================
     APP_NAME: str = "Resume Screening System"
     APP_VERSION: str = "1.0.0"
     API_V1_STR: str = "/api/v1"
@@ -16,15 +15,12 @@ class Settings(BaseSettings):
     ENVIRONMENT: str = "development"
     HOST: str = "0.0.0.0"
     PORT: int = 8000
-    
-    # Server workers and reload
+
     WORKERS: int = Field(default=1, description="Number of worker processes")
     RELOAD: bool = Field(default=True, description="Enable auto-reload in development")
     
-    # Project root
     PROJECT_ROOT: Path = Field(default=Path(__file__).parent.parent.parent, description="Project root directory")
     
-    # ==================== DATABASE ====================
     MONGODB_URI: str = Field(default="mongodb://localhost:27017", description="MongoDB connection URI")
     MONGODB_DB_NAME: str = Field(default="resume_screening", description="MongoDB database name")
     MONGODB_SERVER_SELECTION_TIMEOUT: int = Field(default=5000, description="MongoDB server selection timeout in ms")
@@ -34,7 +30,22 @@ class Settings(BaseSettings):
     @computed_field
     @property
     def MONGODB_URL(self) -> str:
-        return f"{self.MONGODB_URI}/{self.MONGODB_DB_NAME}"
+        uri = self.MONGODB_URI
+        db_name = self.MONGODB_DB_NAME
+        if uri.endswith(f"/{db_name}") or f"/{db_name}?" in uri:
+            return uri
+        
+        from urllib.parse import urlparse
+        parsed = urlparse(uri)
+        
+        if parsed.path and parsed.path != '/':
+            return uri
+        else:
+            if '?' in uri:
+                base, query = uri.split('?', 1)
+                return f"{base}/{db_name}?{query}"
+            else:
+                return f"{uri}/{db_name}"
 
     PASSWORD_MIN_LENGTH: int = Field(default=6, description="pw minimum size")
     PASSWORD_MAX_LENGTH: int = Field(default=40, description="pw maximum size")
@@ -394,6 +405,7 @@ class Settings(BaseSettings):
         env_file_encoding="utf-8",
         case_sensitive=False,
         extra="allow",
+        validate_default=False, 
     )
     # class Config:
     #     env_file=".env",

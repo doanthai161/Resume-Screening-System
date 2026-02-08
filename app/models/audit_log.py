@@ -4,7 +4,6 @@ from enum import Enum
 from pydantic import Field
 from beanie import Document
 from bson import ObjectId
-from pymongo import IndexModel, ASCENDING, DESCENDING
 from app.utils.time import now_vn
 
 
@@ -147,19 +146,19 @@ class AuditLog(Document):
     class Settings:
         name = "audit_logs"
         indexes = [
-            {"key": [("timestamp", -1)], "name": "idx_audit_timestamp_desc"},
-            {"key": [("event_type", 1)], "name": "idx_audit_event_type"},
-            {"key": [("user_id", 1)], "name": "idx_audit_user_id"},
-            {"key": [("user_email", 1)], "name": "idx_audit_user_email"},
-            {"key": [("resource_type", 1)], "name": "idx_audit_resource_type"},
-            {"key": [("resource_id", 1)], "name": "idx_audit_resource_id"},
-            {"key": [("severity", 1)], "name": "idx_audit_severity"},
-            {"key": [("success", 1)], "name": "idx_audit_success"},
-            {"key": [("user_id", 1), ("timestamp", -1)], "name": "idx_audit_user_timestamp"},
-            {"key": [("event_type", 1), ("timestamp", -1)], "name": "idx_audit_event_timestamp"},
-            {"key": [("resource_type", 1), ("resource_id", 1)], "name": "idx_audit_resource"},
-            {"key": [("timestamp", -1), ("severity", 1)], "name": "idx_audit_timestamp_severity"},
-            {"key": [("timestamp", 1)], "expireAfterSeconds": 31536000, "name": "idx_audit_ttl"},
+            [("timestamp", -1)],
+            [("event_type", 1)],
+            [("user_id", 1)],
+            [("user_email", 1)],
+            [("resource_type", 1)],
+            [("resource_id", 1)],
+            [("severity", 1)],
+            [("success", 1)],
+            [("created_at", -1)],
+            [("user_id", 1), ("timestamp", -1)],
+            [("event_type", 1), ("timestamp", -1)],
+            [("resource_type", 1), ("resource_id", 1)],
+            [("timestamp", -1), ("severity", 1)],
         ]
     class Config:
         arbitrary_types_allowed = True

@@ -39,23 +39,21 @@ class ResumeFile(Document):
     class Settings:
         name = "resume_files"
         indexes = [
-            {"key": [("uploader_id", 1)], "name": "idx_resume_files_uploader"},
-            {"key": [("user_id", 1)], "name": "idx_resume_files_user", "sparse": True},
-            {"key": [("company_branch_id", 1)], "name": "idx_resume_files_company"},
-            {"key": [("checksum", 1)], "name": "idx_resume_files_checksum", "unique": True},
-            {"key": [("status", 1)], "name": "idx_resume_files_status"},
-            {"key": [("uploaded_at", -1)], "name": "idx_resume_files_uploaded_desc"},
-            {"key": [("processed_at", 1)], "name": "idx_resume_files_processed", "sparse": True},
-            {"key": [("parsed_data.skills", 1)], "name": "idx_resume_files_skills", "sparse": True},
-            {"key": [("parsed_data.languages", 1)], "name": "idx_resume_files_languages", "sparse": True},
-            {"key": [("parsed_data.certifications", 1)], "name": "idx_resume_files_certifications", "sparse": True},
-            {"key": [("parsed_data.confidence_score", -1)], "name": "idx_resume_files_confidence", "sparse": True},
-            {"key": [("company_branch_id", 1), ("status", 1)], "name": "idx_resume_company_status"},
-            {"key": [("company_branch_id", 1), ("uploaded_at", -1)], "name": "idx_resume_company_recent"},
-            {"key": [("uploader_id", 1), ("uploaded_at", -1)], "name": "idx_resume_uploader_recent"},
-            {"key": [("status", 1), ("processed_at", 1)], "name": "idx_resume_status_processed"},
-            {"key": [("parsed_data.raw_text", "text")], "name": "idx_resume_text_search", "sparse": True},
-            {"key": [("uploaded_at", 1)], "expireAfterSeconds": 63072000, "name": "idx_resume_ttl"},
+            [("uploader_id", 1)],
+            [("user_id", 1)],
+            [("company_branch_id", 1)],
+            [("checksum", 1)],
+            [("status", 1)],
+            [("uploaded_at", -1)],
+            [("processed_at", 1)],
+            [("parsed_data.skills", 1)],
+            [("parsed_data.languages", 1)],
+            [("parsed_data.certifications", 1)],
+            [("parsed_data.confidence_score", -1)],
+            [("company_branch_id", 1), ("status", 1)],
+            [("company_branch_id", 1), ("uploaded_at", -1)],
+            [("uploader_id", 1), ("uploaded_at", -1)],
+            [("status", 1), ("processed_at", 1)],
         ]
     
     class Config:

@@ -20,10 +20,12 @@ class EmailOTP(Document):
     class Settings:
         name = "email_otps"
         indexes = [
-            {"key": [("expires_at", 1)], "expireAfterSeconds": 0, "name": "ttl_index"},
-            {"key": [("email", 1), ("otp_type", 1)], "name": "email_otp_type_idx"},
-            {"key": [("email", 1), ("otp_type", 1), ("is_used", 1), ("expires_at", 1)], "name": "active_otp_idx"},
-            {"key": [("is_used", 1)], "name": "idx_otp_is_used"},
+            [("email", 1)],
+            [("expires_at", 1)],
+            [("otp_type", 1)],
+            [("is_used", 1)],
+            [("created_at", -1)],
+            [("email", 1), ("otp_type", 1)],
         ]
 
     class Config:

@@ -1,6 +1,5 @@
 from beanie import Document
 from pydantic import Field
-from pymongo import IndexModel
 from bson import ObjectId
 from datetime import datetime
 from app.utils.time import now_vn
@@ -23,13 +22,15 @@ class JobApplication(Document):
     class Settings:
         name = "job_applications"
         indexes = [
-            {"key": [("resume_file_id", 1), ("job_requirement_id", 1)], "name": "idx_applications_resume_job"},
-            {"key": [("job_requirement_id", 1)], "name": "idx_applications_job"},
-            {"key": [("applicant_id", 1)], "name": "idx_applications_applicant", "sparse": True},
-            {"key": [("current_stage", 1)], "name": "idx_applications_stage"},
-            {"key": [("created_at", -1)], "name": "idx_applications_created_desc"},
-            {"key": [("job_requirement_id", 1), ("current_stage", 1)], "name": "idx_applications_job_stage"},
-            {"key": [("applicant_id", 1), ("created_at", -1)], "name": "idx_applications_applicant_recent"},
+            [("resume_file_id", 1)],
+            [("job_requirement_id", 1)],
+            [("applicant_id", 1)],
+            [("applied_by", 1)],
+            [("current_stage", 1)],
+            [("created_at", -1)],
+            [("resume_file_id", 1), ("job_requirement_id", 1)],
+            [("job_requirement_id", 1), ("current_stage", 1)],
+            [("applicant_id", 1), ("created_at", -1)],
         ]
     
     class Config:

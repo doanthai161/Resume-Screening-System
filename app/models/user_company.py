@@ -3,7 +3,6 @@ from pydantic import Field
 from beanie import Document
 from datetime import datetime
 from app.utils.time import now_vn
-from pymongo import IndexModel
 from typing import Optional, List
 
 class UserCompany(Document):
@@ -26,15 +25,16 @@ class UserCompany(Document):
     class Settings:
         name = "user_companies"
         indexes = [
-            {"key": [("user_id", 1)], "name": "idx_user_companies_user_id"},
-            {"key": [("company_branch_id", 1)], "name": "idx_user_companies_company_branch_id"},
-            {"key": [("assigned_by", 1)], "name": "idx_user_companies_assigned_by"},
-            {"key": [("unassigned_by", 1)], "name": "idx_user_companies_unassigned_by", "sparse": True},
-            {"key": [("start_date", 1)], "name": "idx_user_companies_start_date", "sparse": True},
-            {"key": [("end_date", 1)], "name": "idx_user_companies_end_date", "sparse": True},
-            {"key": [("is_active", 1)], "name": "idx_user_companies_is_active"},
-            {"key": [("user_id", 1), ("is_active", 1)], "name": "idx_user_companies_user_active"},
-            {"key": [("company_branch_id", 1), ("is_active", 1)], "name": "idx_user_companies_branch_active"},
+            [("user_id", 1)],
+            [("company_branch_id", 1)],
+            [("assigned_by", 1)],
+            [("unassigned_by", 1)],
+            [("start_date", 1)],
+            [("end_date", 1)],
+            [("is_active", 1)],
+            [("created_at", -1)],
+            [("user_id", 1), ("is_active", 1)],
+            [("company_branch_id", 1), ("is_active", 1)],
         ]
 
     class Config:

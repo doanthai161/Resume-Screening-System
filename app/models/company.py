@@ -4,9 +4,6 @@ from datetime import datetime
 from app.utils.time import now_vn
 from bson import ObjectId
 from typing import Optional
-from pymongo import IndexModel
-
-
 class Company(Document):
     user_id: ObjectId = Field(..., description="ID of the user who owns the company")
     name: str = Field(..., description="Name of the company")
@@ -25,11 +22,12 @@ class Company(Document):
     class Settings:
         name = "companies"
         indexes = [
-            {"key": [("user_id", 1)], "name": "idx_companies_user_id"},
-            {"key": [("company_code", 1)], "name": "idx_companies_company_code", "unique": True},
-            {"key": [("email", 1)], "name": "idx_companies_email"},
-            {"key": [("is_active", 1)], "name": "idx_companies_active"},
-            {"key": [("name", 1)], "name": "idx_companies_name"},
+            [("user_id", 1)],
+            [("name", 1)],
+            [("company_code", 1)],
+            [("email", 1)],
+            [("is_active", 1)],
+            [("created_at", -1)],
         ]
 
     class Config:

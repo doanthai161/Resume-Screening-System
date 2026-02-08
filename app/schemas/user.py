@@ -32,6 +32,11 @@ class UserCreate(BaseModel):
         if len(v.encode("utf-8")) > 72:
             raise ValueError("Password too long")
         return v
+    @field_validator('phone_number')
+    def validate_phone_number(cls, v):
+        if v and not v.isdigit():
+            raise ValueError('Phone number must contain only digits')
+        return v
 
 class UserUpdate(BaseModel):
     full_name: Optional[str]

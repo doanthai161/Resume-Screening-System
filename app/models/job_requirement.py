@@ -3,7 +3,6 @@ from app.utils.time import now_vn
 from typing import List, Optional
 from beanie import Document
 from pydantic import Field
-from pymongo import IndexModel
 from bson import ObjectId
 
 
@@ -29,15 +28,15 @@ class JobRequirement(Document):
     class Settings:
         name = "job_requirements"
         indexes = [
-            {"key": [("user_id", 1)], "name": "idx_job_requirements_user_id"},
-            {"key": [("company_branch_id", 1)], "name": "idx_job_requirements_company_branch_id"},
-            {"key": [("is_open", 1)], "name": "idx_job_requirements_is_open"},
-            {"key": [("is_active", 1)], "name": "idx_job_requirements_is_active"},
-            {"key": [("auto_screening_enabled", 1)], "name": "idx_job_auto_screening"},
-            {"key": [("expiration_time", 1)], "name": "idx_job_expiration", "sparse": True},
-            {"key": [("company_branch_id", 1), ("is_open", 1)], "name": "idx_job_branch_open"},
-            {"key": [("company_branch_id", 1), ("is_active", 1)], "name": "idx_job_branch_active"},
-            {"key": [("title", 1)], "name": "idx_job_title"},
+            [("user_id", 1)],
+            [("company_branch_id", 1)],
+            [("title", 1)],
+            [("is_open", 1)],
+            [("is_active", 1)],
+            [("expiration_time", 1)],
+            [("created_at", -1)],
+            [("company_branch_id", 1), ("is_open", 1)],
+            [("company_branch_id", 1), ("is_active", 1)],
         ]
 
     class Config:

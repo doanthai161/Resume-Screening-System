@@ -1,6 +1,5 @@
 from beanie import Document
 from pydantic import Field
-from pymongo import IndexModel
 from bson import ObjectId
 from datetime import datetime
 from app.utils.time import now_vn
@@ -25,12 +24,14 @@ class AIModel(Document):
     class Settings:
         name = "ai_models"
         indexes = [
-            {"key": [("name", 1)], "name": "idx_ai_models_name"},
-            {"key": [("model_type", 1)], "name": "idx_ai_models_type"},
-            {"key": [("is_active", 1)], "name": "idx_ai_models_active"},
-            {"key": [("provider", 1), ("model_id", 1)], "name": "idx_ai_models_provider"},
-            {"key": [("model_type", 1), ("is_active", 1)], "name": "idx_ai_type_active"},
-            {"key": [("last_used", -1)], "name": "idx_ai_last_used_desc", "sparse": True},
+            [("name", 1)],
+            [("model_type", 1)],
+            [("provider", 1)],
+            [("is_active", 1)],
+            [("last_used", -1)],
+            [("created_at", -1)],
+            [("provider", 1), ("model_id", 1)],
+            [("model_type", 1), ("is_active", 1)],
         ]
     
     class Config:

@@ -3,7 +3,6 @@ from datetime import datetime
 from pydantic import BaseModel, Field, HttpUrl
 from beanie import Document
 from bson import ObjectId
-from pymongo import IndexModel
 from app.utils.time import now_vn
 
 
@@ -45,15 +44,15 @@ class ResumeFile(Document):
     class Settings:
         name = "resume_files"
         indexes = [
-            {"key": [("uploader_id", 1)], "name": "idx_resume_files_uploader"},
-            {"key": [("user_id", 1)], "name": "idx_resume_files_user", "sparse": True},
-            {"key": [("company_branch_id", 1)], "name": "idx_resume_files_company", "sparse": True},
-            {"key": [("checksum", 1)], "name": "idx_resume_files_checksum", "unique": True},
-            {"key": [("status", 1)], "name": "idx_resume_files_status"},
-            {"key": [("uploaded_at", -1)], "name": "idx_resume_files_uploaded_desc"},
-            {"key": [("parsed_data.skills", 1)], "name": "idx_resume_files_skills"},
-            {"key": [("company_branch_id", 1), ("status", 1)], "name": "idx_resume_company_status"},
-            {"key": [("uploader_id", 1), ("uploaded_at", -1)], "name": "idx_resume_uploader_recent"},
+            [("uploader_id", 1)],
+            [("user_id", 1)],
+            [("company_branch_id", 1)],
+            [("checksum", 1)],
+            [("status", 1)],
+            [("uploaded_at", -1)],
+            [("parsed_data.skills", 1)],
+            [("company_branch_id", 1), ("status", 1)],
+            [("uploader_id", 1), ("uploaded_at", -1)],
         ]
     
     class Config:

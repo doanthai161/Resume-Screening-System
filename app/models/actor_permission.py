@@ -3,8 +3,6 @@ from beanie import Document
 from datetime import datetime
 from app.utils.time import now_vn
 from bson import ObjectId
-from pymongo import IndexModel
-
 class ActorPermission(Document):
     actor_id: ObjectId = Field(..., description="ID of the actor")
     permission_id: ObjectId = Field(..., description="ID of the permission")
@@ -13,9 +11,10 @@ class ActorPermission(Document):
     class Settings:
         name = "actor_permissions"
         indexes = [
-            {"key": [("actor_id", 1), ("permission_id", 1)], "name": "idx_actor_permission", "unique": True},
-            {"key": [("actor_id", 1)], "name": "idx_actor_permissions_actor"},
-            {"key": [("permission_id", 1)], "name": "idx_actor_permissions_permission"},
+            [("actor_id", 1)],
+            [("permission_id", 1)],
+            [("created_at", -1)],
+            [("actor_id", 1), ("permission_id", 1)],
         ]
 
     class Config:

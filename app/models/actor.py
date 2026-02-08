@@ -14,7 +14,7 @@ class Actor(Document):
     class Settings:
         name = "actors"
         indexes = [
-            {"key": [("name", 1)], "name": "idx_actors_name"},
-            {"key": [("created_at", -1)], "name": "idx_actors_created_at_desc"},
-            {"key": [("is_active", 1)], "name": "idx_actors_active"},
+            [("name", 1)],
+            [("is_active", 1)],
+            [("created_at", -1)],
         ]

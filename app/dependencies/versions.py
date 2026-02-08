@@ -8,7 +8,7 @@ from app.api import (
     company_branches,
     user_actor,
     user_company,
-    register
+    register,
 )
 
 

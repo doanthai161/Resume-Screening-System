@@ -1,6 +1,5 @@
 from beanie import Document
 from pydantic import Field
-from pymongo import IndexModel
 from bson import ObjectId
 from datetime import datetime
 from app.utils.time import now_vn
@@ -17,11 +16,11 @@ class CategoryScores(Document):
     class Settings:
         name = "category_scores"
         indexes = [
-            IndexModel([("skills", 1)], name="idx_category_scores_skills"),
-            IndexModel([("experience", 1)], name="idx_category_scores_experience"),
-            IndexModel([("education", 1)], name="idx_category_scores_education"),
-            IndexModel([("certifications", 1)], name="idx_category_scores_certifications"),
-            IndexModel([("overall_fit", 1)], name="idx_category_scores_overall_fit"),
+            [("skills", 1)],
+            [("experience", 1)],
+            [("education", 1)],
+            [("certifications", 1)],
+            [("overall_fit", 1)],
         ]
     class Config:
         arbitrary_types_allowed = True
@@ -65,14 +64,16 @@ class ScreeningResult(Document):
     class Settings:
         name = "screening_results"
         indexes = [
-            {"key": [("resume_file_id", 1), ("job_requirement_id", 1)], "name": "idx_screening_resume_job", "unique": True},
-            {"key": [("job_requirement_id", 1)], "name": "idx_screening_job"},
-            {"key": [("evaluator_id", 1)], "name": "idx_screening_evaluator"},
-            {"key": [("overall_score", -1)], "name": "idx_screening_score_desc"},
-            {"key": [("status", 1)], "name": "idx_screening_status"},
-            {"key": [("evaluated_at", -1)], "name": "idx_screening_evaluated_desc"},
-            {"key": [("job_requirement_id", 1), ("overall_score", -1)], "name": "idx_screening_job_score"},
-            {"key": [("job_requirement_id", 1), ("status", 1)], "name": "idx_screening_job_status"},
+            [("resume_file_id", 1)],
+            [("job_requirement_id", 1)],
+            [("evaluator_id", 1)],
+            [("overall_score", -1)],
+            [("status", 1)],
+            [("evaluated_at", -1)],
+            [("created_at", -1)],
+            [("resume_file_id", 1), ("job_requirement_id", 1)],
+            [("job_requirement_id", 1), ("overall_score", -1)],
+            [("job_requirement_id", 1), ("status", 1)],
         ]
     
     class Config:

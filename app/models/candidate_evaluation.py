@@ -4,8 +4,6 @@ from bson import ObjectId
 from datetime import datetime
 from app.utils.time import now_vn
 from typing import Optional
-from pymongo import IndexModel
-
 class CandidateEvaluation(Document):
     user_id: ObjectId = Field(..., description="ID of the user")
     job_posting_id: ObjectId = Field(..., description="ID of the job posting")
@@ -17,9 +15,10 @@ class CandidateEvaluation(Document):
     class Settings:
         name = "candidate_evaluations"
         indexes = [
-            {"key": [("user_id", 1)], "name": "idx_candidate_evaluations_user_id"},
-            {"key": [("job_posting_id", 1)], "name": "idx_candidate_evaluations_job_posting_id"},
-            {"key": [("user_id", 1), ("job_posting_id", 1)], "name": "idx_candidate_user_job", "unique": True},
+            [("user_id", 1)],
+            [("job_posting_id", 1)],
+            [("created_at", -1)],
+            [("user_id", 1), ("job_posting_id", 1)],
         ]
     class Config:
         arbitrary_types_allowed = True

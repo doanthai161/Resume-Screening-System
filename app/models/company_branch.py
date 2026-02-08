@@ -4,8 +4,6 @@ from datetime import datetime
 from app.utils.time import now_vn
 from bson import ObjectId
 from typing import Optional, List
-from pymongo import IndexModel
-
 class CompanyBranch(Document):
     company_id: ObjectId = Field(..., description="ID of the parent company")
     bussiness_type: str = Field(..., description="Type of business the branch is involved in")
@@ -29,13 +27,14 @@ class CompanyBranch(Document):
     class Settings:
         name = "company_branches"
         indexes = [
-            {"key": [("company_id", 1)], "name": "idx_company_branches_company_id"},
-            {"key": [("branch_name", 1)], "name": "idx_company_branches_branch_name"},
-            {"key": [("is_active", 1)], "name": "idx_company_branches_is_active"},
-            {"key": [("city", 1)], "name": "idx_company_branches_city", "sparse": True},
-            {"key": [("country", 1)], "name": "idx_company_branches_country", "sparse": True},
-            {"key": [("company_id", 1), ("is_active", 1)], "name": "idx_company_branches_company_active"},
-            {"key": [("city", 1), ("country", 1)], "name": "idx_company_branches_location", "sparse": True},
+            [("company_id", 1)],
+            [("branch_name", 1)],
+            [("city", 1)],
+            [("country", 1)],
+            [("is_active", 1)],
+            [("created_at", -1)],
+            [("company_id", 1), ("is_active", 1)],
+            [("city", 1), ("country", 1)],
         ]
     class Config:
         arbitrary_types_allowed = True

@@ -2,7 +2,6 @@ from pydantic import Field
 from beanie import Document
 from datetime import datetime
 from app.utils.time import now_vn
-from pymongo import IndexModel
 from typing import Optional
 
 
@@ -16,8 +15,9 @@ class Permission(Document):
     class Settings:
         name = "permissions"
         indexes = [
-            {"key": [("name", 1)], "name": "idx_permissions_name", "unique": True},
-            {"key": [("is_active", 1)], "name": "idx_permissions_active"},
+            [("name", 1)],
+            [("is_active", 1)],
+            [("created_at", -1)],
         ]
     class Config:
         arbitrary_types_allowed = True
