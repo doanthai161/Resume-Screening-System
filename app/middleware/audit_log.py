@@ -1,4 +1,3 @@
-# app/middleware/audit_log.py
 import json
 import logging
 from datetime import datetime
@@ -10,6 +9,7 @@ from pydantic import BaseModel
 from bson import ObjectId
 import inspect
 import time
+import asyncio
 
 from app.models.audit_log import AuditLog
 from app.models.user import User
@@ -21,7 +21,6 @@ logger = logging.getLogger(__name__)
 
 
 class AuditLogEntry(BaseModel):
-    """Audit log entry schema for validation"""
     action: str
     resource_type: str
     resource_id: Optional[str] = None
@@ -169,18 +168,6 @@ def audit_log_action(
     sensitive: bool = True,
     async_mode: bool = True
 ):
-    """
-    Decorator for auditing API actions
-    
-    Args:
-        action: Action name (e.g., "user.create", "company.update")
-        resource_id_param: Name of the parameter containing resource ID
-        extract_resource_id: Function to extract resource ID from request/response
-        include_request_body: Whether to include request body in audit log
-        include_response_body: Whether to include response body in audit log
-        sensitive: Whether the action contains sensitive data (will be masked)
-        async_mode: Whether to log asynchronously (background task)
-    """
     def decorator(func):
         @wraps(func)
         async def wrapper(*args, **kwargs):
@@ -209,7 +196,6 @@ def audit_log_action(
             }
             
             try:
-                # Extract request info
                 if request:
                     audit_data.update({
                         "ip_address": request.client.host if request.client else None,
@@ -371,7 +357,6 @@ async def _log_audit_entry(audit_data: Dict[str, Any], async_mode: bool = True):
         )
         
         if async_mode:
-            import asyncio
             asyncio.create_task(_save_audit_log_async(audit_log))
         else:
             await audit_log.insert()
@@ -535,7 +520,7 @@ async def log_audit_action(
         logger.error(f"Failed in manual audit logging: {e}")
 
 
-async def log_security_event(
+async def log_security_event_async(
     event_type: str,
     description: str,
     user_id: Optional[str] = None,
@@ -550,8 +535,64 @@ async def log_security_event(
         ip_address=ip_address,
         metadata={"description": description, **(metadata or {})},
         severity=severity,
-        success=False  # Security events are typically negative
+        success=False
     )
+
+
+def log_security_event(
+    event_type: str,
+    description: str,
+    user_id: Optional[str] = None,
+    ip_address: Optional[str] = None,
+    severity: str = "warning",
+    metadata: Optional[Dict[str, Any]] = None,
+    *args,  # Thêm *args để xử lý các tham số không mong đợi
+    **kwargs  # Thêm **kwargs để linh hoạt
+):
+    """
+    Multi-purpose security logging function
+    
+    Có thể được gọi theo 2 cách:
+    1. Direct call (synchronous): log_security_event(...)
+    2. Background task: background_tasks.add_task(log_security_event, ...)
+    """
+    
+    # Kiểm tra xem đang được gọi trong background task hay không
+    # bằng cách kiểm tra các tham số đặc biệt
+    is_direct_call = not any([
+        # Nếu có các tham số đặc biệt của FastAPI background task
+        '_background_task' in kwargs,
+        '_request' in kwargs,
+        # Hoặc nếu có tham số không xác định
+        len(args) > 0
+    ])
+    
+    def wrapper():
+        """Actual function that will be executed in background"""
+        try:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            loop.run_until_complete(
+                log_security_event_async(
+                    event_type=event_type,
+                    description=description,
+                    user_id=user_id,
+                    ip_address=ip_address,
+                    severity=severity,
+                    metadata=metadata
+                )
+            )
+            loop.close()
+        except Exception as e:
+            logger.error(f"Failed to log security event: {e}")
+    
+    # Nếu là direct call (gọi trực tiếp), chạy ngay
+    if is_direct_call:
+        wrapper()
+        return None  # Trả về None cho direct call
+    
+    # Nếu là background task, trả về wrapper function
+    return wrapper
 
 
 async def log_business_event(
@@ -671,6 +712,7 @@ async def get_user_activity_logs(
     limit: int = 100
 ) -> list:
     try:
+        import datetime
         end_date = now_vn()
         start_date = end_date - datetime.timedelta(days=days)
         
@@ -697,7 +739,7 @@ async def cleanup_old_audit_logs(days_to_keep: int = 90):
         
         result = await AuditLog.find({
             "timestamp": {"$lt": cutoff_date},
-            "severity": {"$ne": "critical"}  # Keep critical logs longer
+            "severity": {"$ne": "critical"}
         }).delete()
         
         logger.info(f"Cleaned up {result.deleted_count} old audit logs")

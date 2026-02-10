@@ -137,6 +137,39 @@ class Monitoring:
 
 monitoring = Monitoring()
 
+
+class Metrics:    
+    @staticmethod
+    def record_latency(name: str, duration: float, tags: Optional[Dict[str, str]] = None):
+        monitoring.record_metric(
+            name=f"{name}.latency",
+            value=duration,
+            metric_type=MetricType.HISTOGRAM,
+            tags=tags or {}
+        )
+    
+    @staticmethod
+    def increment_counter(name: str, value: float = 1.0, tags: Optional[Dict[str, str]] = None):
+        monitoring.record_metric(
+            name=f"{name}.counter",
+            value=value,
+            metric_type=MetricType.COUNTER,
+            tags=tags or {}
+        )
+    
+    @staticmethod
+    def set_gauge(name: str, value: float, tags: Optional[Dict[str, str]] = None):
+        monitoring.record_metric(
+            name=f"{name}.gauge",
+            value=value,
+            metric_type=MetricType.GAUGE,
+            tags=tags or {}
+        )
+
+
+metrics = Metrics()
+
+
 def monitor_endpoint(endpoint_name: str):
     def decorator(func: Callable):
         @functools.wraps(func)
@@ -338,6 +371,8 @@ def monitor_cache_operation(operation_name: str):
         @functools.wraps(func)
         async def async_wrapper(*args, **kwargs):
             start_time = time.time()
+            result = None
+            cache_status = "unknown"
             
             with monitoring.trace_span(f"cache_{operation_name}"):
                 try:
@@ -358,23 +393,30 @@ def monitor_cache_operation(operation_name: str):
                     raise
                 finally:
                     duration = time.time() - start_time
+                    if result is not None:
+                        cache_status = "hit" if hasattr(result, '_from_cache') and result._from_cache else "miss"
+                    
                     monitoring.record_metric(
                         name=f"cache_{operation_name}_duration",
                         value=duration,
                         metric_type=MetricType.HISTOGRAM,
-                        tags={"cache": "hit" if hasattr(result, '_from_cache') and result._from_cache else "miss"}
+                        tags={"cache": cache_status}
                     )
         
         @functools.wraps(func)
         def sync_wrapper(*args, **kwargs):
             start_time = time.time()
+            result = None
+            cache_status = "unknown"
             
             with monitoring.trace_span(f"cache_{operation_name}"):
                 try:
                     result = func(*args, **kwargs)
+                    cache_status = "hit" if hasattr(result, '_from_cache') and result._from_cache else "miss"
+                    
                     monitoring.record_metric(
                         name=f"cache_{operation_name}_calls",
-                        tags={"status": "success"}
+                        tags={"status": "success", "cache": cache_status}
                     )
                     return result
                 except Exception as e:
@@ -385,15 +427,124 @@ def monitor_cache_operation(operation_name: str):
                     raise
                 finally:
                     duration = time.time() - start_time
+                    if result is not None:
+                        cache_status = "hit" if hasattr(result, '_from_cache') and result._from_cache else "miss"
+                    
                     monitoring.record_metric(
                         name=f"cache_{operation_name}_duration",
                         value=duration,
-                        metric_type=MetricType.HISTOGRAM
+                        metric_type=MetricType.HISTOGRAM,
+                        tags={"cache": cache_status}
                     )
         
         return async_wrapper if asyncio.iscoroutinefunction(func) else sync_wrapper
     return decorator
 
+
+def monitor_async(cacheable: bool = False, cache_ttl: int = 300):
+    def decorator(func: Callable):
+        @functools.wraps(func)
+        async def wrapper(*args, **kwargs):
+            start_time = time.time()
+            result = None
+            success = False
+            cache_status = "unknown" if cacheable else "not_cached"
+            
+            try:
+                result = await func(*args, **kwargs)
+                success = True
+                
+                monitoring.record_metric(
+                    name=f"{func.__module__.split('.')[-1]}.{func.__name__}.calls",
+                    tags={"status": "success", "cacheable": str(cacheable)}
+                )
+                
+                return result
+                
+            except Exception as e:
+                success = False
+                
+                monitoring.record_metric(
+                    name=f"{func.__module__.split('.')[-1]}.{func.__name__}.calls",
+                    tags={"status": "error", "error_type": type(e).__name__, "cacheable": str(cacheable)}
+                )
+                
+                raise
+                
+            finally:
+                elapsed_time = time.time() - start_time
+                
+                monitoring.record_metric(
+                    name=f"{func.__module__.split('.')[-1]}.{func.__name__}.duration",
+                    value=elapsed_time,
+                    metric_type=MetricType.HISTOGRAM,
+                    tags={"success": str(success), "cacheable": str(cacheable)}
+                )
+                
+                if success and cacheable and result is not None:
+                    cache_status = "hit" if hasattr(result, '_from_cache') and result._from_cache else "miss"
+                    
+                    monitoring.record_metric(
+                        name=f"{func.__module__.split('.')[-1]}.{func.__name__}.cache",
+                        tags={"status": cache_status}
+                    )
+        
+        return wrapper
+    return decorator
+
+
+def monitor_sync(cacheable: bool = False, cache_ttl: int = 300):
+    def decorator(func: Callable):
+        @functools.wraps(func)
+        def wrapper(*args, **kwargs):
+            start_time = time.time()
+            result = None
+            success = False
+            cache_status = "unknown" if cacheable else "not_cached"
+            
+            try:
+                result = func(*args, **kwargs)
+                success = True
+                
+                monitoring.record_metric(
+                    name=f"{func.__module__.split('.')[-1]}.{func.__name__}.calls",
+                    tags={"status": "success", "cacheable": str(cacheable)}
+                )
+                
+                return result
+                
+            except Exception as e:
+                success = False
+                
+                monitoring.record_metric(
+                    name=f"{func.__module__.split('.')[-1]}.{func.__name__}.calls",
+                    tags={"status": "error", "error_type": type(e).__name__, "cacheable": str(cacheable)}
+                )
+                
+                raise
+                
+            finally:
+                elapsed_time = time.time() - start_time
+                
+                monitoring.record_metric(
+                    name=f"{func.__module__.split('.')[-1]}.{func.__name__}.duration",
+                    value=elapsed_time,
+                    metric_type=MetricType.HISTOGRAM,
+                    tags={"success": str(success), "cacheable": str(cacheable)}
+                )
+                
+                if success and cacheable and result is not None:
+                    cache_status = "hit" if hasattr(result, '_from_cache') and result._from_cache else "miss"
+                    
+                    monitoring.record_metric(
+                        name=f"{func.__module__.split('.')[-1]}.{func.__name__}.cache",
+                        tags={"status": cache_status}
+                    )
+        
+        return wrapper
+    return decorator
+
+monitor = monitor_async
 
 def start_trace(operation_name: str) -> TraceContext:
     trace = TraceContext(
@@ -450,3 +601,25 @@ def get_monitoring_data() -> Dict[str, Any]:
         "current_trace": monitoring.get_current_trace().trace_id if monitoring.get_current_trace() else None,
         "timestamp": time.time()
     }
+
+
+__all__ = [
+    'Monitoring',
+    'monitoring',
+    'MetricType',
+    'TraceContext',
+    'monitor_endpoint',
+    'monitor_service_call',
+    'monitor_db_operation',
+    'monitor_cache_operation',
+    'monitor_async',
+    'monitor_sync',
+    'monitor',
+    'start_trace',
+    'end_trace',
+    'record_response_time',
+    'record_business_metric',
+    'get_monitoring_data',
+    'Metrics',
+    'metrics'
+]

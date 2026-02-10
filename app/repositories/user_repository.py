@@ -12,7 +12,7 @@ from app.schemas.user import (
     UserFilter
 )
 from app.core.redis import get_redis, is_redis_available
-from app.core.monitoring import monitor_db_operation, monitor_cache_operation
+from app.core.monitoring import monitor_db_operation, monitor_cache_operation, monitor
 from app.utils.time import now_vn
 from app.core.config import settings
 from app.core.database import get_database_info
