@@ -470,8 +470,10 @@ class AuditLogMiddleware:
 
 
 async def log_audit_action(
+    event_type: str,
     action: str,
     resource_type: str,
+    event_name: Optional[str] = None,
     resource_id: Optional[str] = None,
     user_id: Optional[str] = None,
     user_email: Optional[str] = None,
@@ -484,7 +486,7 @@ async def log_audit_action(
     response_status: Optional[int] = None,
     response_body: Optional[Dict[str, Any]] = None,
     metadata: Optional[Dict[str, Any]] = None,
-    severity: str = "info",
+    severity: str = "critical",
     success: bool = True,
     error_message: Optional[str] = None,
     duration_ms: Optional[float] = None,
@@ -493,6 +495,8 @@ async def log_audit_action(
 ):
     try:
         audit_data = {
+            "event_type": event_type,
+            "event_name": event_name,
             "action": action,
             "resource_type": resource_type,
             "resource_id": resource_id,
@@ -529,6 +533,7 @@ async def log_security_event_async(
     metadata: Optional[Dict[str, Any]] = None
 ):
     await log_audit_action(
+        event_type=event_type,
         action=f"security.{event_type}",
         resource_type="security",
         user_id=user_id,
@@ -546,29 +551,17 @@ def log_security_event(
     ip_address: Optional[str] = None,
     severity: str = "warning",
     metadata: Optional[Dict[str, Any]] = None,
-    *args,  # Thêm *args để xử lý các tham số không mong đợi
-    **kwargs  # Thêm **kwargs để linh hoạt
+    *args,
+    **kwargs
 ):
-    """
-    Multi-purpose security logging function
     
-    Có thể được gọi theo 2 cách:
-    1. Direct call (synchronous): log_security_event(...)
-    2. Background task: background_tasks.add_task(log_security_event, ...)
-    """
-    
-    # Kiểm tra xem đang được gọi trong background task hay không
-    # bằng cách kiểm tra các tham số đặc biệt
     is_direct_call = not any([
-        # Nếu có các tham số đặc biệt của FastAPI background task
         '_background_task' in kwargs,
         '_request' in kwargs,
-        # Hoặc nếu có tham số không xác định
         len(args) > 0
     ])
     
     def wrapper():
-        """Actual function that will be executed in background"""
         try:
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
@@ -586,12 +579,10 @@ def log_security_event(
         except Exception as e:
             logger.error(f"Failed to log security event: {e}")
     
-    # Nếu là direct call (gọi trực tiếp), chạy ngay
     if is_direct_call:
         wrapper()
-        return None  # Trả về None cho direct call
+        return None
     
-    # Nếu là background task, trả về wrapper function
     return wrapper
 
 
@@ -603,6 +594,7 @@ async def log_business_event(
     metadata: Optional[Dict[str, Any]] = None
 ):
     await log_audit_action(
+        event_type=event_type,
         action=f"business.{event_type}",
         resource_type=resource_type,
         resource_id=resource_id,

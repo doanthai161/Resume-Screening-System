@@ -17,6 +17,7 @@ from app.models.resume_file import ResumeFile, ParsedResumeData
 from app.models.screening_result import ScreeningResult
 from app.models.ai_model import AIModel
 from app.models.job_application import JobApplication
+from app.models.audit_log import AuditLog
 
 from pymongo.errors import DuplicateKeyError
 import os
@@ -43,6 +44,7 @@ DOCUMENT_MODELS = [
     ScreeningResult,
     AIModel,
     JobApplication,
+    AuditLog,
 ]
 
 MODEL_NAMES = {
@@ -61,6 +63,7 @@ MODEL_NAMES = {
     "ScreeningResult": ScreeningResult,
     "AIModel": AIModel,
     "JobApplication": JobApplication,
+    "AuditLog": AuditLog,
 }
 
 async def _ensure_default_permissions() -> None:
@@ -396,12 +399,13 @@ async def init_db():
         logger.info("✓ MongoDB connection successful")
         
         database = client[settings.MONGODB_DB_NAME]
-        
+
         try:
             await init_beanie(
                 database=database,
                 document_models=DOCUMENT_MODELS,
             )
+            logger.info("AuditLog collection: %s", AuditLog.get_motor_collection())
             logger.info(f'Beanie initialized with {len(DOCUMENT_MODELS)} models in database: {settings.MONGODB_DB_NAME}')
         except Exception as beanie_error:
             logger.warning(f"Beanie initialization failed: {beanie_error}")
@@ -421,7 +425,6 @@ async def init_db():
                 await _ensure_default_actors()
                 await _ensure_default_ai_models()
                 await _create_first_superuser()
-                # await create_indexes()
                 
                 with open(INIT_FILE_PATH, 'w', encoding='utf-8') as f:
                     f.write(f"Default data initialized on: {datetime.datetime.now(datetime.UTC)}")

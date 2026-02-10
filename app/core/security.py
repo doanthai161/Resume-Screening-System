@@ -490,8 +490,6 @@ async def get_current_api_user(
     return user
 
 def get_client_identifier(request: Request) -> str:
-    """Get unique identifier for rate limiting"""
-    # Try to get user ID if authenticated
     auth_header = request.headers.get("Authorization")
     if auth_header and auth_header.startswith("Bearer "):
         token = auth_header[7:]
@@ -507,20 +505,22 @@ def get_client_identifier(request: Request) -> str:
     
     return f"ip:{ip}"
 
+from app.models.audit_log import AuditEventType, AuditSeverity
+ 
 async def log_security_event(
     event_type: str,
+    event_name:str,
     user_id: Optional[str] = None,
+    description: Optional[str]= None,
     email: Optional[str] = None,
     ip_address: Optional[str] = None,
     user_agent: Optional[str] = None,
     details: Optional[Dict] = None,
     success: bool = True
 ):
-    """Log security event using AuditLogService"""
     try:
         from app.services.audit_log_service import AuditLogService
-        from app.models.audit_log import AuditEventType, AuditSeverity
-        
+
         try:
             audit_event_type = AuditEventType(event_type)
         except ValueError:
@@ -535,7 +535,9 @@ async def log_security_event(
         
         await AuditLogService.log_security_event(
             event_type=audit_event_type,
-            user_id=user_id,  # Already string, service will convert to ObjectId
+            description= description,
+            user_id=user_id,
+            event_name=event_name,
             user_email=email,
             user_ip=ip_address,
             user_agent=user_agent,

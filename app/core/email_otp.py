@@ -3,17 +3,14 @@ import logging
 from typing import Optional
 from dotenv import load_dotenv
 
-# Load environment variables
 load_dotenv()
 
-# Configure logging
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
 
-# Try to import Brevo SDK
 try:
     import sib_api_v3_sdk
     from sib_api_v3_sdk.rest import ApiException
@@ -22,7 +19,6 @@ except ImportError:
     BREVO_SDK_AVAILABLE = False
     logger.warning("Brevo SDK not installed. Install with: pip install brevo-python")
 
-# Brevo configuration
 BREVO_API_KEY = os.getenv("BREVO_API_KEY")
 BREVO_SENDER_EMAIL = os.getenv("BREVO_SENDER_EMAIL")
 BREVO_SENDER_NAME = os.getenv("BREVO_SENDER_NAME", "No Reply")
@@ -49,21 +45,6 @@ async def send_otp_email(
     full_name: Optional[str] = None,
     template_id: Optional[int] = None,
 ) -> bool:
-    """
-    Send OTP email using Brevo Transactional Email API
-    Compatible with FastAPI background tasks
-    
-    Args:
-        email: Recipient email address
-        otp: OTP code to send
-        otp_type: Type of OTP (registration, password_reset, etc.)
-        full_name: Recipient's full name (optional)
-        template_id: Brevo template ID (optional)
-    
-    Returns:
-        bool: True if successful, False otherwise
-    """
-    
     if not BREVO_SDK_AVAILABLE:
         logger.error("Brevo SDK not available")
         return False
@@ -231,7 +212,6 @@ async def send_otp_email(
         </html>
         """
         
-        # Plain text content (for email clients that don't support HTML)
         text_content = f"""{greeting}
 
 Your One-Time Password (OTP) for {otp_type.replace('_', ' ')}:
@@ -255,7 +235,6 @@ Best regards,
 {os.getenv("APP_NAME", "Your Application")} Team
 """
         
-        # Create email object
         send_smtp_email = sib_api_v3_sdk.SendSmtpEmail(
             sender=sib_api_v3_sdk.SendSmtpEmailSender(
                 name=BREVO_SENDER_NAME,
@@ -278,7 +257,6 @@ Best regards,
             }
         )
         
-        # If using template from Brevo
         if template_id:
             send_smtp_email.template_id = template_id
             send_smtp_email.params = {
@@ -287,10 +265,8 @@ Best regards,
                 "TYPE": otp_type.replace('_', ' ').title()
             }
         
-        # Send the email
         api_response = api_instance.send_transac_email(send_smtp_email)
         
-        # Log success
         logger.info(f"✅ OTP email sent successfully to {email}. Message ID: {api_response.message_id}")
         logger.info(f"   OTP: {otp}, Type: {otp_type}, Recipient: {full_name or 'N/A'}")
         
@@ -298,9 +274,8 @@ Best regards,
         
     except ApiException as e:
         error_msg = str(e)
-        logger.error(f"❌ Brevo API Exception when sending OTP to {email}: {error_msg}")
+        logger.error(f" Brevo API Exception when sending OTP to {email}: {error_msg}")
         
-        # Log more details for debugging
         if hasattr(e, 'body') and e.body:
             logger.error(f"   API Response: {e.body}")
         
@@ -316,9 +291,6 @@ def send_welcome_email(
     full_name: str,
     login_url: Optional[str] = None,
 ) -> bool:
-    """
-    Send welcome email to new users
-    """
     if not BREVO_SDK_AVAILABLE:
         return False
     
@@ -362,9 +334,7 @@ def send_welcome_email(
         return False
 
 
-# Helper function for checking Brevo configuration
 def check_brevo_configuration() -> dict:
-    """Check if Brevo is properly configured"""
     config_status = {
         "sdk_available": BREVO_SDK_AVAILABLE,
         "api_key_configured": bool(BREVO_API_KEY),

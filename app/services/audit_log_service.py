@@ -15,31 +15,28 @@ class AuditLogService:
     
     @staticmethod
     def _convert_to_response(log: AuditLog) -> AuditLogResponse:
-        """Convert database model to response schema"""
         data = log.dict()
         data["id"] = str(log.id)
         
-        # Convert ObjectId to string
         if data.get("user_id"):
             data["user_id"] = str(data["user_id"])
         if data.get("resource_id"):
             data["resource_id"] = str(data["resource_id"])
         
         return AuditLogResponse(**data)
-    
+        
     @staticmethod
     async def create_log(log_data: AuditLogCreate) -> AuditLog:
-        """Create an audit log entry"""
         try:
-            # Convert string IDs to ObjectId for database
-            data = log_data.dict()
+            data = log_data.model_dump()
+            
             if data.get("user_id"):
                 data["user_id"] = ObjectId(data["user_id"])
             if data.get("resource_id"):
                 data["resource_id"] = ObjectId(data["resource_id"])
-            
+
             audit_log = AuditLog(**data)
-            await audit_log.insert()
+            await audit_log.insert()  
             return audit_log
         except Exception as e:
             import logging
@@ -49,6 +46,7 @@ class AuditLogService:
     @staticmethod
     async def log_security_event(
         event_type: AuditEventType,
+        event_name: str,
         user_id: Optional[str] = None,
         user_email: Optional[str] = None,
         user_ip: Optional[str] = None,
@@ -60,7 +58,6 @@ class AuditLogService:
         severity_map = {
             AuditEventType.USER_LOGIN_FAILED: AuditSeverity.HIGH,
             AuditEventType.ACCESS_DENIED: AuditSeverity.HIGH,
-            
             AuditEventType.USER_PASSWORD_CHANGE: AuditSeverity.MEDIUM,
             AuditEventType.USER_PASSWORD_RESET: AuditSeverity.MEDIUM,
             AuditEventType.USER_TWO_FACTOR_ENABLE: AuditSeverity.MEDIUM,
@@ -69,7 +66,6 @@ class AuditLogService:
             AuditEventType.PERMISSION_REVOKED: AuditSeverity.MEDIUM,
             AuditEventType.ROLE_ASSIGNED: AuditSeverity.MEDIUM,
             AuditEventType.ROLE_REMOVED: AuditSeverity.MEDIUM,
-            
             AuditEventType.USER_LOGIN: AuditSeverity.LOW,
             AuditEventType.USER_LOGOUT: AuditSeverity.LOW,
             AuditEventType.USER_REGISTER: AuditSeverity.LOW,
@@ -91,12 +87,12 @@ class AuditLogService:
         
         description = descriptions.get(
             event_type, 
-            f"Security event: {event_type.value}"
+            f"Security event: {getattr(event_type, 'value', 'unknown')}"
         )
-        
+
         log_data = AuditLogCreate(
             event_type=event_type,
-            event_name=event_type.value.replace(".", " ").title(),
+            event_name=event_name,
             description=description,
             severity=severity,
             user_id=user_id,
@@ -122,7 +118,10 @@ class AuditLogService:
         except Exception as e:
             import logging
             logging.error(f"Failed to create security audit log: {e}")
-    
+            print(f"ERROR in create_log: {e}")
+            import traceback
+            traceback.print_exc()
+            
     @staticmethod
     async def search_logs(query: AuditLogQuery) -> AuditLogListResponse:
         from pymongo import DESCENDING, ASCENDING

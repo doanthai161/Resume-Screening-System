@@ -5,13 +5,11 @@ from app.models.audit_log import AuditEventType, AuditSeverity
 
 
 class AuditLogCreate(BaseModel):
-    """Schema for creating audit log entries (API input)"""
     event_type: AuditEventType
     event_name: str
     description: Optional[str] = None
     severity: AuditSeverity = AuditSeverity.LOW
     
-    # Use string for IDs in API schemas
     user_id: Optional[str] = Field(None, description="ID of user who performed action")
     user_email: Optional[str] = Field(None, description="Email of user")
     user_ip: Optional[str] = Field(None, description="IP address of user")
@@ -43,7 +41,6 @@ class AuditLogCreate(BaseModel):
 
 
 class AuditLogResponse(BaseModel):
-    """Schema for audit log responses (API output)"""
     id: str
     event_type: AuditEventType
     event_name: str
@@ -83,7 +80,6 @@ class AuditLogResponse(BaseModel):
 
 
 class AuditLogQuery(BaseModel):
-    """Query parameters for searching audit logs"""
     event_type: Optional[AuditEventType] = None
     user_id: Optional[str] = None
     user_email: Optional[str] = None
@@ -105,7 +101,6 @@ class AuditLogQuery(BaseModel):
 
 
 class AuditLogSummary(BaseModel):
-    """Summary statistics for audit logs"""
     total_events: int = 0
     successful_events: int = 0
     failed_events: int = 0
@@ -121,6 +116,5 @@ class AuditLogSummary(BaseModel):
 
 
 class AuditLogListResponse(BaseModel):
-    """Response for paginated audit log list"""
     logs: List[AuditLogResponse]
     pagination: Dict[str, Any]

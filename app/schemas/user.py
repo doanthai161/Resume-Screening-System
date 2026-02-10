@@ -44,7 +44,7 @@ class UserUpdate(BaseModel):
     address: Optional[str]
 
 class UserResponse(BaseModel):
-    id: str
+    id: Optional[str]
     email: EmailStr
     full_name: Optional[str]
     phone_number: Optional[str]

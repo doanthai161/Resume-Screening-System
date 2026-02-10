@@ -30,7 +30,7 @@ from app.utils.otp import generate_otp
 from app.core.rate_limiter import limiter
 from slowapi.errors import RateLimitExceeded
 from slowapi import _rate_limit_exceeded_handler
-from app.utils.time import now_vn
+from app.utils.time import now_vn, now_utc
 from datetime import datetime, timedelta, timezone
 from app.models.actor import Actor
 from app.models.user_actor import UserActor
@@ -38,6 +38,7 @@ from app.core.config import settings
 from bson import ObjectId
 from app.repositories.user_repository import UserRepository
 from app.middleware.audit_log import log_security_event, log_audit_action
+from app.models.audit_log import AuditEventType
 
 router = APIRouter()
 
@@ -118,7 +119,7 @@ async def register(
                     f"Failed to assign default role to user {data.email}: {e}"
                 )
         otp_code = generate_otp()
-        expires_at = datetime.now(timezone.utc) + timedelta(minutes=settings.OTP_EXPIRY_MINUTES)
+        expires_at = now_utc() + timedelta(minutes=settings.OTP_EXPIRY_MINUTES)
         
         existing_otp = await EmailOTP.find_one({
             "email": data.email,
@@ -159,17 +160,19 @@ async def register(
         
         background_tasks.add_task(
             log_security_event,
-            event_type="user_registered",
-            description=f"User registered via email",
+            event_type=AuditEventType.USER_REGISTER,
+            event_name="User Registered",
+            description="User registered via email",
             user_id=str(user.id),
+            email=data.email,
             ip_address=request.client.host if request.client else None,
-            severity="info",
-            metadata={
+            user_agent=request.headers.get("user-agent"),
+            details={
                 "email": data.email,
                 "registration_method": "email",
-                "has_phone": bool(data.phone_number),
-                "user_agent": request.headers.get("user-agent")
-            }
+                "has_phone": bool(data.phone_number)
+            },
+            success=True
         )
         
         return UserResponse(
@@ -278,7 +281,7 @@ async def verify_otp(
         
         background_tasks.add_task(
             log_security_event,
-            event_type="email_verified",
+            event_type=AuditEventType.USER_EMAIL_VERIFY,
             user_id=str(user.id),
             email=data.email,
             ip_address=request.client.host if request.client else None,
@@ -339,11 +342,9 @@ async def resend_otp(
                 detail="User already verified"
             )
         
-        # Generate new OTP
         otp_code = generate_otp()
         expires_at = datetime.now(timezone.utc) + timedelta(minutes=settings.OTP_EXPIRY_MINUTES)
         
-        # Find existing OTP
         existing_otp = await EmailOTP.find_one(
             EmailOTP.email == data.email,
             EmailOTP.otp_type == "registration",
@@ -351,7 +352,6 @@ async def resend_otp(
         )
         
         if existing_otp:
-            # Check if we should wait before resending
             time_since_creation = datetime.now(timezone.utc) - existing_otp.created_at
             if time_since_creation < timedelta(seconds=30):  # 30 seconds cooldown
                 raise HTTPException(
@@ -359,7 +359,6 @@ async def resend_otp(
                     detail="Please wait before requesting another OTP"
                 )
             
-            # Update existing OTP
             existing_otp.otp_code = otp_code
             existing_otp.expires_at = expires_at
             existing_otp.attempts = 0
@@ -378,7 +377,6 @@ async def resend_otp(
             )
             await email_otp.insert()
         
-        # Send OTP email in background
         background_tasks.add_task(
             send_otp_email,
             email=data.email,
@@ -395,7 +393,7 @@ async def resend_otp(
         # Log security event
         background_tasks.add_task(
             log_security_event,
-            event_type="otp_resent",
+            event_type=AuditEventType.OTP_RESENT,
             user_id=str(user.id),
             email=data.email,
             ip_address=request.client.host if request.client else None,
@@ -426,18 +424,13 @@ async def login(
     request: Request,
     background_tasks: BackgroundTasks
 ):
-    """
-    Login with email and password
-    """
     try:
-        # Authenticate user using repository
         user = await UserRepository.authenticate_user(data.email, data.password)
         
         if not user:
-            # Log failed login attempt
             background_tasks.add_task(
                 log_security_event,
-                event_type="login_failed",
+                event_type=AuditEventType.USER_LOGIN_FAILED,
                 email=data.email,
                 ip_address=request.client.host if request.client else None,
                 user_agent=request.headers.get("user-agent"),
@@ -450,21 +443,18 @@ async def login(
                 detail=ErrorCode.INVALID_CREDENTIALS,
             )
         
-        # Check if user is active
         if not user.is_active:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail=ErrorCode.USER_INACTIVE,
             )
         
-        # Check if email is verified
         if not user.is_verified:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="Please verify your email first",
             )
         
-        # Get user roles and permissions for token
         actor_links = await UserActor.find(
             UserActor.user_id == user.id
         ).to_list()
@@ -476,7 +466,6 @@ async def login(
                 {"_id": {"$in": actor_ids}, "is_active": True}
             ).to_list()
         
-        # Get permissions
         permissions = []
         active_actor_ids = [actor.id for actor in actors]
         if active_actor_ids:
@@ -492,7 +481,6 @@ async def login(
                     {"_id": {"$in": permission_ids}, "is_active": True}
                 ).to_list()
         
-        # Create token pair with scopes/permissions
         scopes = [f"role:{actor.name}" for actor in actors]
         scopes.extend([f"perm:{perm.name}" for perm in permissions])
         
@@ -500,11 +488,9 @@ async def login(
             user=user,
             scopes=scopes
         )
-        
-        # Log successful login
         background_tasks.add_task(
             log_security_event,
-            event_type="login_success",
+            event_type=AuditEventType.USER_LOGIN,
             user_id=str(user.id),
             email=data.email,
             ip_address=request.client.host if request.client else None,
@@ -551,20 +537,15 @@ async def logout(
     current_user: CurrentUser = Depends(get_current_user),
     background_tasks: BackgroundTasks = None
 ):
-    """
-    Logout user by blacklisting token
-    """
     try:
         token = await get_token_from_request(request)
         if token:
-            # Blacklist the token
             await blacklist_token(token)
             
-            # Log logout event
             if background_tasks:
                 background_tasks.add_task(
                     log_security_event,
-                    event_type="logout",
+                    event_type=AuditEventType.USER_LOGOUT,
                     user_id=str(current_user.user.id),
                     email=current_user.user.email,
                     ip_address=request.client.host if request.client else None,
@@ -578,7 +559,6 @@ async def logout(
         
     except Exception as e:
         logger.error(f"Logout error for user {current_user.user.email}: {e}")
-        # Still return success even if logging fails
         return {"message": "Logged out successfully"}
 
 @router.post("/refresh", response_model=AccessToken)
@@ -616,7 +596,6 @@ async def refresh_token(
                 detail=ErrorCode.TOKEN_EXPIRED,
             )
         
-        # Get user
         user = await UserRepository.get_user_by_email(token_payload.email)
         if not user or not user.is_active:
             raise HTTPException(
@@ -636,10 +615,9 @@ async def refresh_token(
             f"Token refreshed for user: {user.email}"
         )
         
-        # Log security event
         background_tasks.add_task(
             log_security_event,
-            event_type="token_refreshed",
+            event_type=AuditEventType.REFRESH_TOKEN,
             user_id=str(user.id),
             email=user.email,
             ip_address=request.client.host if request.client else None,
@@ -682,32 +660,46 @@ async def get_token_from_request(request: Request) -> Optional[str]:
     return None
 
 async def log_security_event(
-    event_type: str,
+    event_type: AuditEventType,
+    event_name: str,
     user_id: Optional[str] = None,
+    description: Optional[str] = None,  # ← CÓ NHƯNG KHÔNG DÙNG
     email: Optional[str] = None,
     ip_address: Optional[str] = None,
     user_agent: Optional[str] = None,
     details: Optional[Dict] = None,
     success: bool = True
 ):
-    """Log security event for audit trail"""
-    from app.models.audit_log import AuditLogService, AuditEventType
-    from bson import ObjectId
-    
     try:
-        try:
-            audit_event_type = AuditEventType(event_type)
-        except ValueError:
-            audit_event_type = AuditEventType.CUSTOM_EVENT
+        from app.services.audit_log_service import AuditLogService
+        
+        print("=" * 50)
+        print("DEBUG log_security_event - START")
+        print(f"event_type: {event_type}, type: {type(event_type)}")
+        print(f"event_name: {event_name}")
+        print(f"user_id: {user_id}")
+        print(f"description: {description}")
+        print(f"email: {email}")
+        print(f"ip_address: {ip_address}")
+        print(f"user_agent: {user_agent}")
+        print(f"details: {details}")
+        print(f"success: {success}")
         
         await AuditLogService.log_security_event(
-            event_type=audit_event_type,
-            user_id=ObjectId(user_id) if user_id else None,
+            event_type=event_type,
+            user_id=user_id,
+            event_name=event_name,
             user_email=email,
             user_ip=ip_address,
             user_agent=user_agent,
             details=details or {},
             success=success
         )
+        
+        print("DEBUG log_security_event - END")
+        print("=" * 50)
+        
     except Exception as e:
-        logger.error(f"Failed to log security event: {e}")
+        from app.logs.logging_config import logger
+        logger.error(f"Failed to log security event: {e}", exc_info=True)
+        print(f"ERROR in log_security_event: {e}")

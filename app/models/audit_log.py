@@ -8,8 +8,6 @@ from app.utils.time import now_vn
 
 
 class AuditEventType(str, Enum):
-    """Types of audit events"""
-    # Authentication events
     USER_LOGIN = "user.login"
     USER_LOGIN_FAILED = "user.login_failed"
     USER_LOGOUT = "user.logout"
@@ -20,7 +18,6 @@ class AuditEventType(str, Enum):
     USER_TWO_FACTOR_ENABLE = "user.two_factor_enable"
     USER_TWO_FACTOR_DISABLE = "user.two_factor_disable"
     
-    # Authorization events
     PERMISSION_GRANTED = "permission.granted"
     PERMISSION_REVOKED = "permission.revoked"
     ROLE_ASSIGNED = "role.assigned"
@@ -49,63 +46,57 @@ class AuditEventType(str, Enum):
     JOB_REQUIREMENT_PUBLISHED = "job_requirement.published"
     JOB_REQUIREMENT_CLOSED = "job_requirement.closed"
     
-    # Resume events
     RESUME_UPLOADED = "resume.uploaded"
     RESUME_PARSED = "resume.parsed"
     RESUME_DELETED = "resume.deleted"
     RESUME_DOWNLOADED = "resume.downloaded"
     
-    # Screening events
     SCREENING_STARTED = "screening.started"
     SCREENING_COMPLETED = "screening.completed"
     SCREENING_FAILED = "screening.failed"
     SCREENING_REVIEWED = "screening.reviewed"
     SCREENING_OVERRIDDEN = "screening.overridden"
     
-    # AI Model events
     AI_MODEL_TRAINED = "ai_model.trained"
     AI_MODEL_DEPLOYED = "ai_model.deployed"
     AI_MODEL_UPDATED = "ai_model.updated"
     AI_MODEL_DELETED = "ai_model.deleted"
     
-    # Application events
     APPLICATION_CREATED = "application.created"
     APPLICATION_UPDATED = "application.updated"
     APPLICATION_STATUS_CHANGED = "application.status_changed"
     APPLICATION_DELETED = "application.deleted"
     
-    # File events
     FILE_UPLOADED = "file.uploaded"
     FILE_DOWNLOADED = "file.downloaded"
     FILE_DELETED = "file.deleted"
     
-    # System events
     CONFIGURATION_CHANGED = "configuration.changed"
     BACKUP_CREATED = "backup.created"
     BACKUP_RESTORED = "backup.restored"
     SYSTEM_MAINTENANCE = "system.maintenance"
     SECURITY_ALERT = "security.alert"
     
-    # API events
     API_CALL = "api.call"
     API_RATE_LIMIT_EXCEEDED = "api.rate_limit_exceeded"
     API_ERROR = "api.error"
     
-    # Data events
     DATA_EXPORT = "data.export"
     DATA_IMPORT = "data.import"
     DATA_DELETION = "data.deletion"
     
-    # Custom events
     CUSTOM_EVENT = "custom.event"
+    OTP_RESENT = "otp_resent"
+    REFRESH_TOKEN= "refresh_token"
 
 
 class AuditSeverity(str, Enum):
-    """Severity levels for audit events"""
+    INFO = "info"
     LOW = "low"
     MEDIUM = "medium"
     HIGH = "high"
     CRITICAL = "critical"
+    WARNING = "warning"
 
 
 class AuditLog(Document):

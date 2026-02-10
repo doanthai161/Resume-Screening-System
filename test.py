@@ -1,25 +1,45 @@
-# test_clear_cache.py
 import asyncio
 import sys
-sys.path.append('.')
-from app.core.cache import cache
+import os
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-async def main():
-    email = "danieldoan16103@gmail.com"
+from app.core.database import init_db
+from app.models.audit_log import AuditLog, AuditEventType, AuditSeverity
+from app.models.user import User
+from beanie import init_beanie
+
+async def test_beanie():
+    print("Testing Beanie initialization...")
     
-    # Clear cache
-    await cache.delete(f"user:email:{email}")
-    print(f"✅ Cleared cache for {email}")
+    # Kết nối DB
+    await init_db.connect()
     
-    # Check if still exists
-    cached = await cache.get(f"user:email:{email}")
-    if cached:
-        print(f"❌ Cache still exists: {cached}")
-    else:
-        print(f"✅ Cache cleared successfully")
+    # Khởi tạo Beanie
+    await init_beanie(
+        database=init_db.db,
+        document_models=[
+            User,
+            AuditLog,
+        ]
+    )
     
-    # Close connections
-    await cache.close()
+    print("Beanie initialized successfully!")
+    
+    # Test tạo document
+    test_log = AuditLog(
+        event_type=AuditEventType.USER_REGISTER,
+        event_name="Test",
+        severity=AuditSeverity.LOW,
+        resource_type="test",
+        action="test",
+        success=True
+    )
+    await test_log.insert()
+    print(f"Test audit log created with id: {test_log.id}")
+    
+    # Đếm số document
+    count = await AuditLog.count()
+    print(f"Total audit logs in database: {count}")
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    asyncio.run(test_beanie())
