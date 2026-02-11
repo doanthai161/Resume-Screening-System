@@ -7,7 +7,7 @@ from app.models.job_requirement import JobRequirement
 from app.schemas.job_requirement import JobRequirementCreate, JobRequirementUpdate
 from app.core.redis import get_redis, is_redis_available
 from app.core.monitoring import monitor_db_operation, monitor_cache_operation
-from app.utils.time import now_vn
+from app.utils.time import now_utc
 
 logger = logging.getLogger(__name__)
 
@@ -77,7 +77,7 @@ class JobRequirementRepository:
             job_dict["user_id"] = ObjectId(job_dict["user_id"])
             job_dict["company_branch_id"] = ObjectId(job_dict["company_branch_id"])
             
-            current_time = now_vn()
+            current_time = now_utc()
             job_dict["created_at"] = current_time
             job_dict["updated_at"] = current_time
             
@@ -133,7 +133,7 @@ class JobRequirementRepository:
             for field, value in update_dict.items():
                 setattr(job, field, value)
             
-            job.updated_at = now_vn()
+            job.updated_at = now_utc()
             await job.save()
             
             cache_key = JobRequirementRepository._get_single_cache_key(job_id)
@@ -156,7 +156,7 @@ class JobRequirementRepository:
             
             job.is_active = False
             job.is_open = False
-            job.updated_at = now_vn()
+            job.updated_at = now_utc()
             await job.save()
             
             cache_key = JobRequirementRepository._get_single_cache_key(job_id)
@@ -349,7 +349,7 @@ class JobRequirementRepository:
                 **base_query,
                 "is_active": True,
                 "is_open": True,
-                "expiration_time": {"$lt": now_vn()}
+                "expiration_time": {"$lt": now_utc()}
             }
             expired_jobs = await JobRequirement.find(expired_query).count()
             
@@ -555,7 +555,7 @@ class JobRequirementRepository:
             object_ids = [ObjectId(job_id) for job_id in job_ids]
             
             # Prepare update
-            update_dict = {**update_data, "updated_at": now_vn()}
+            update_dict = {**update_data, "updated_at": now_utc()}
             
             # Perform bulk update
             result = await JobRequirement.find({"_id": {"$in": object_ids}}) \
@@ -578,7 +578,7 @@ class JobRequirementRepository:
         """Find expired but still open job requirements"""
         try:
             expired_jobs = await JobRequirement.find({
-                "expiration_time": {"$lt": now_vn()},
+                "expiration_time": {"$lt": now_utc()},
                 "is_open": True,
                 "is_active": True
             }).to_list()

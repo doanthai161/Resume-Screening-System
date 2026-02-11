@@ -3,7 +3,7 @@ from datetime import datetime
 from pydantic import BaseModel, Field, HttpUrl
 from beanie import Document
 from bson import ObjectId
-from app.utils.time import now_vn
+from app.utils.time import now_utc
 
 
 class ParsedResumeData(BaseModel):
@@ -17,7 +17,7 @@ class ParsedResumeData(BaseModel):
     raw_text: Optional[str] = Field(None)
     parser_version: str = Field("1.0.0")
     confidence_score: float = Field(0.0, ge=0.0, le=1.0)
-    parsed_at: datetime = Field(default_factory=lambda: now_vn())
+    parsed_at: datetime = Field(default_factory=lambda: now_utc())
 
 class ResumeFile(Document):
     filename: str = Field(..., description="Tên file trong hệ thống")
@@ -37,7 +37,7 @@ class ResumeFile(Document):
     
     metadata: Dict[str, Any] = Field(default_factory=dict)
     
-    uploaded_at: datetime = Field(default_factory=lambda: now_vn())
+    uploaded_at: datetime = Field(default_factory=lambda: now_utc())
     processed_at: Optional[datetime] = Field(None)
     last_accessed_at: Optional[datetime] = Field(None)
     

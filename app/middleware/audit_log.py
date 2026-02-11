@@ -13,7 +13,7 @@ import asyncio
 
 from app.models.audit_log import AuditLog
 from app.models.user import User
-from app.utils.time import now_vn
+from app.utils.time import now_utc
 from app.core.security import get_current_user
 from app.core.config import settings
 
@@ -191,7 +191,7 @@ def audit_log_action(
                 "resource_type": AuditLogConfig.get_resource_type(action),
                 "success": True,
                 "severity": "info",
-                "timestamp": now_vn(),
+                "timestamp": now_utc(),
                 "metadata": {}
             }
             
@@ -455,7 +455,7 @@ class AuditLogMiddleware:
                 severity="error" if exc else "info",
                 error_message=str(exc) if exc else None,
                 duration_ms=round(duration_ms, 2),
-                timestamp=now_vn(),
+                timestamp=now_utc(),
                 metadata={
                     "scheme": request.url.scheme,
                     "headers": dict(request.headers),
@@ -515,7 +515,7 @@ async def log_audit_action(
             "success": success,
             "error_message": error_message,
             "duration_ms": duration_ms,
-            "timestamp": timestamp or now_vn()
+            "timestamp": timestamp or now_utc()
         }
         
         await _log_audit_entry(audit_data, async_mode)
@@ -705,7 +705,7 @@ async def get_user_activity_logs(
 ) -> list:
     try:
         import datetime
-        end_date = now_vn()
+        end_date = now_utc()
         start_date = end_date - datetime.timedelta(days=days)
         
         logs = await AuditLog.find({
@@ -727,7 +727,7 @@ async def get_user_activity_logs(
 async def cleanup_old_audit_logs(days_to_keep: int = 90):
     try:
         import datetime
-        cutoff_date = now_vn() - datetime.timedelta(days=days_to_keep)
+        cutoff_date = now_utc() - datetime.timedelta(days=days_to_keep)
         
         result = await AuditLog.find({
             "timestamp": {"$lt": cutoff_date},

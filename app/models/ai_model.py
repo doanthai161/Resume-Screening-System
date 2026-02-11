@@ -2,7 +2,7 @@ from beanie import Document
 from pydantic import Field
 from bson import ObjectId
 from datetime import datetime
-from app.utils.time import now_vn
+from app.utils.time import now_utc
 from typing import Optional, Dict, Any
 
 class AIModel(Document):
@@ -18,8 +18,8 @@ class AIModel(Document):
     last_used: Optional[datetime] = Field(None)
     description: Optional[str] = Field(None)
     created_by: ObjectId = Field(..., description="ID of the user who created the AI model")
-    created_at: datetime = Field(default_factory=lambda: now_vn())
-    updated_at: datetime = Field(default_factory=lambda: now_vn())
+    created_at: datetime = Field(default_factory=lambda: now_utc())
+    updated_at: datetime = Field(default_factory=lambda: now_utc())
     
     class Settings:
         name = "ai_models"

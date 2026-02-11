@@ -4,7 +4,7 @@ from enum import Enum
 from pydantic import Field
 from beanie import Document
 from bson import ObjectId
-from app.utils.time import now_vn
+from app.utils.time import now_utc
 
 
 class AuditEventType(str, Enum):
@@ -130,9 +130,9 @@ class AuditLog(Document):
     response_status: Optional[int] = Field(None, description="HTTP response status")
     metadata: Dict[str, Any] = Field(default_factory=dict, description="Additional metadata")
     tags: List[str] = Field(default_factory=list, description="Tags for categorization")
-    timestamp: datetime = Field(default_factory=lambda: now_vn(), description="When event occurred")
+    timestamp: datetime = Field(default_factory=lambda: now_utc(), description="When event occurred")
     duration_ms: Optional[float] = Field(None, description="Duration in milliseconds")
-    created_at: datetime = Field(default_factory=lambda: now_vn(), description="When log was created")
+    created_at: datetime = Field(default_factory=lambda: now_utc(), description="When log was created")
 
     class Settings:
         name = "audit_logs"

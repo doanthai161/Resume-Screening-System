@@ -1,6 +1,6 @@
 from bson import ObjectId
 from fastapi import Request, BackgroundTasks, APIRouter, HTTPException, status, FastAPI, Depends
-from app.utils.time import now_vn
+from app.utils.time import now_utc
 from app.models.actor import Actor
 from app.models.permission import Permission
 from app.models.actor_permission import ActorPermission
@@ -58,7 +58,7 @@ async def assign_permission_to_actor(
                 ActorPermission(
                     actor_id=actor.id,
                     permission_id=permission.id,
-                    created_at=now_vn(),
+                    created_at=now_utc(),
                     created_by=current_user.user_id,
                 )
             )

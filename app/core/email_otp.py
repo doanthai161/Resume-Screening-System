@@ -253,7 +253,7 @@ Best regards,
                 "otp_type": otp_type,
                 "full_name": full_name or "",
                 "company_name": BREVO_SENDER_NAME,
-                "expiry_minutes": 10
+                "expiry_minutes": 30
             }
         )
         

@@ -3,7 +3,7 @@ from pydantic import Field, EmailStr
 from datetime import datetime
 from typing import Optional
 from bson import ObjectId
-from app.utils.time import now_vn
+from app.utils.time import now_utc, is_expired_check
 
 
 class EmailOTP(Document):
@@ -14,8 +14,8 @@ class EmailOTP(Document):
     attempts: int = 0
     max_attempts: int = 3
     is_used: bool = False
-    created_at: datetime = Field(default_factory=now_vn)
-    updated_at: datetime = Field(default_factory=now_vn)
+    created_at: datetime = Field(default_factory=now_utc)
+    updated_at: datetime = Field(default_factory=now_utc)
     class Settings:
         name = "email_otps"
         indexes = [
@@ -36,8 +36,7 @@ class EmailOTP(Document):
 
     @property
     def is_expired(self) -> bool:
-        from datetime import datetime
-        return datetime.now() > self.expires_at
+        return is_expired_check(self.expires_at)
 
     @property
     def can_attempt(self) -> bool:
@@ -45,8 +44,8 @@ class EmailOTP(Document):
 
     def increment_attempt(self) -> None:
         self.attempts += 1
-        self.updated_at = now_vn()
+        self.updated_at = now_utc()
 
     def mark_as_used(self) -> None:
         self.is_used = True
-        self.updated_at = now_vn()
+        self.updated_at = now_utc()

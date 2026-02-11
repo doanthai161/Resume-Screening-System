@@ -2,7 +2,7 @@ from bson import ObjectId
 from pydantic import Field
 from beanie import Document
 from datetime import datetime
-from app.utils.time import now_vn
+from app.utils.time import now_utc
 from typing import Optional, List
 
 class UserCompany(Document):
@@ -11,7 +11,7 @@ class UserCompany(Document):
     role: str = Field(default="member", description="Role of the user in the branch")
     permissions: List[str] = Field(default_factory=list, description="Specific permissions for this assignment")
     assigned_by: ObjectId = Field(..., description="ID of the user who made this assignment")
-    assigned_at: datetime = Field(default_factory=lambda: now_vn(), description="When the user was assigned")
+    assigned_at: datetime = Field(default_factory=lambda: now_utc(), description="When the user was assigned")
     unassigned_by: Optional[ObjectId] = Field(None, description="ID of the user who unassigned")
     unassigned_at: Optional[datetime] = Field(None, description="When the user was unassigned")
     unassign_reason: Optional[str] = Field(None, description="Reason for unassignment")
@@ -19,8 +19,8 @@ class UserCompany(Document):
     end_date: Optional[datetime] = Field(None, description="When the assignment expires")
     is_active: bool = Field(default=True, description="Is the assignment currently active?")
     updated_by: Optional[ObjectId] = Field(None, description="ID of the user who last updated")
-    created_at: datetime = Field(default_factory=lambda: now_vn())
-    updated_at: datetime = Field(default_factory=lambda: now_vn())
+    created_at: datetime = Field(default_factory=lambda: now_utc())
+    updated_at: datetime = Field(default_factory=lambda: now_utc())
 
     class Settings:
         name = "user_companies"

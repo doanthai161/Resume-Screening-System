@@ -14,7 +14,7 @@ from app.schemas.user_company import (
 )
 from app.core.redis import get_redis, is_redis_available
 from app.core.monitoring import monitor_db_operation, monitor_cache_operation
-from app.utils.time import now_vn
+from app.utils.time import now_utc
 
 logger = logging.getLogger(__name__)
 
@@ -76,11 +76,11 @@ class UserCompanyRepository:
                 inactive_assignment.is_active = True
                 inactive_assignment.role = role
                 inactive_assignment.permissions = permissions or []
-                inactive_assignment.assigned_at = now_vn()
+                inactive_assignment.assigned_at = now_utc()
                 inactive_assignment.assigned_by = ObjectId(assigned_by)
                 inactive_assignment.unassigned_at = None
                 inactive_assignment.unassigned_by = None
-                inactive_assignment.updated_at = now_vn()
+                inactive_assignment.updated_at = now_utc()
                 await inactive_assignment.save()
                 
                 assignment = inactive_assignment
@@ -92,12 +92,12 @@ class UserCompanyRepository:
                     role=role,
                     permissions=permissions or [],
                     assigned_by=ObjectId(assigned_by),
-                    assigned_at=start_date or now_vn(),
-                    start_date=start_date or now_vn(),
+                    assigned_at=start_date or now_utc(),
+                    start_date=start_date or now_utc(),
                     end_date=end_date,
                     is_active=True,
-                    created_at=now_vn(),
-                    updated_at=now_vn()
+                    created_at=now_utc(),
+                    updated_at=now_utc()
                 )
                 await assignment.insert()
                 logger.info(f"Created new assignment: {assignment.id} for user {user_id} to branch {company_branch_id}")
@@ -134,10 +134,10 @@ class UserCompanyRepository:
                 return False
             
             assignment.is_active = False
-            assignment.unassigned_at = now_vn()
+            assignment.unassigned_at = now_utc()
             assignment.unassigned_by = ObjectId(unassigned_by)
             assignment.unassign_reason = reason
-            assignment.updated_at = now_vn()
+            assignment.updated_at = now_utc()
             await assignment.save()
             
             await UserCompanyRepository._invalidate_assignment_caches(assignment)
@@ -163,7 +163,7 @@ class UserCompanyRepository:
             audit_data = {
                 "deleted_assignment": assignment.dict(),
                 "deleted_by": deleted_by,
-                "deleted_at": now_vn()
+                "deleted_at": now_utc()
             }
             
             await assignment.delete()
@@ -413,7 +413,7 @@ class UserCompanyRepository:
             old_role = assignment.role
             assignment.role = role
             assignment.updated_by = ObjectId(updated_by)
-            assignment.updated_at = now_vn()
+            assignment.updated_at = now_utc()
             await assignment.save()
             
             await UserCompanyRepository._invalidate_assignment_caches(assignment)
@@ -444,7 +444,7 @@ class UserCompanyRepository:
             
             assignment.permissions = permissions
             assignment.updated_by = ObjectId(updated_by)
-            assignment.updated_at = now_vn()
+            assignment.updated_at = now_utc()
             await assignment.save()
             
             await UserCompanyRepository._invalidate_assignment_caches(assignment)
@@ -480,7 +480,7 @@ class UserCompanyRepository:
             if updated_by:
                 assignment.updated_by = ObjectId(updated_by)
             
-            assignment.updated_at = now_vn()
+            assignment.updated_at = now_utc()
             await assignment.save()
             
             await UserCompanyRepository._invalidate_assignment_caches(assignment)
@@ -520,7 +520,7 @@ class UserCompanyRepository:
                 assignment.permissions = new_permissions
             
             assignment.updated_by = ObjectId(reactivated_by)
-            assignment.updated_at = now_vn()
+            assignment.updated_at = now_utc()
             await assignment.save()
             
             await UserCompanyRepository._invalidate_assignment_caches(assignment)
@@ -572,7 +572,7 @@ class UserCompanyRepository:
             async for doc in UserCompany.aggregate(pipeline):
                 role_counts[doc["_id"]] = doc["count"]
             
-            thirty_days_ago = now_vn().replace(hour=0, minute=0, second=0, microsecond=0)
+            thirty_days_ago = now_utc().replace(hour=0, minute=0, second=0, microsecond=0)
             thirty_days_ago = thirty_days_ago.replace(day=thirty_days_ago.day - 30)
             
             recent_assignments = await UserCompany.find({
@@ -580,7 +580,7 @@ class UserCompanyRepository:
                 "assigned_at": {"$gte": thirty_days_ago}
             }).count()
             
-            seven_days_from_now = now_vn().replace(hour=23, minute=59, second=59, microsecond=999999)
+            seven_days_from_now = now_utc().replace(hour=23, minute=59, second=59, microsecond=999999)
             seven_days_from_now = seven_days_from_now.replace(day=seven_days_from_now.day + 7)
             
             ending_soon = await UserCompany.find({
@@ -589,7 +589,7 @@ class UserCompanyRepository:
                 "end_date": {
                     "$ne": None,
                     "$lte": seven_days_from_now,
-                    "$gte": now_vn()
+                    "$gte": now_utc()
                 }
             }).count()
             
@@ -711,7 +711,7 @@ class UserCompanyRepository:
             if not assignment:
                 return False
             
-            current_time = now_vn()
+            current_time = now_utc()
             if assignment.start_date and assignment.start_date > current_time:
                 return False
             

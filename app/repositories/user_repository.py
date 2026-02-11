@@ -13,7 +13,7 @@ from app.schemas.user import (
 )
 from app.core.redis import get_redis, is_redis_available
 from app.core.monitoring import monitor_db_operation, monitor_cache_operation, monitor
-from app.utils.time import now_vn
+from app.utils.time import now_utc
 from app.core.config import settings
 from app.core.database import get_database_info
 from motor.motor_asyncio import AsyncIOMotorClient
@@ -124,8 +124,8 @@ class UserRepository:
             is_active=False,
             is_verified=False,
             is_superuser=False,
-            created_at=now_vn(),
-            updated_at=now_vn(),
+            created_at=now_utc(),
+            updated_at=now_utc(),
         )
 
         await user.insert()
@@ -232,7 +232,7 @@ class UserRepository:
             for field, value in update_dict.items():
                 setattr(user, field, value)
             
-            user.updated_at = now_vn()
+            user.updated_at = now_utc()
             await user.save()
             
             await UserRepository._invalidate_user_caches(user)
@@ -258,7 +258,7 @@ class UserRepository:
                     raise ValueError("Cannot delete the last superuser")
             
             user.is_active = False
-            user.deleted_at = now_vn()
+            user.deleted_at = now_utc()
             user.deleted_by = ObjectId(deleted_by) if deleted_by else None
             await user.save()
             
@@ -436,7 +436,7 @@ class UserRepository:
                 logger.warning(f"Failed authentication attempt for email: {email}")
                 return None
             
-            user.last_login = now_vn()
+            user.last_login = now_utc()
             await user.save()
             
             # Don't cache authenticated user with updated timestamp
@@ -458,7 +458,7 @@ class UserRepository:
                 return False
             
             user.is_verified = True
-            user.verified_at = now_vn()
+            user.verified_at = now_utc()
             await user.save()
             
             await UserRepository._invalidate_user_caches(user)
@@ -537,7 +537,7 @@ class UserRepository:
                 return False
             
             user.hashed_password = UserRepository._hash_password(new_password)
-            user.updated_at = now_vn()
+            user.updated_at = now_utc()
             await user.save()
             
             token_cache_key = UserRepository._get_reset_token_cache_key(token)
@@ -569,7 +569,7 @@ class UserRepository:
                 return False
             
             user.hashed_password = UserRepository._hash_password(new_password)
-            user.updated_at = now_vn()
+            user.updated_at = now_utc()
             await user.save()
             await UserRepository._invalidate_user_caches(user)
             
@@ -687,7 +687,7 @@ class UserRepository:
             if not update_data:
                 return 0, len(user_ids)
             
-            update_data["updated_at"] = now_vn()
+            update_data["updated_at"] = now_utc()
             
             result = await User.find({"_id": {"$in": [ObjectId(uid) for uid in user_ids]}}) \
                               .update_many({"$set": update_data})
@@ -728,9 +728,9 @@ class UserRepository:
             
             update_data = {
                 "is_active": False,
-                "deactivated_at": now_vn(),
+                "deactivated_at": now_utc(),
                 "deactivated_by": ObjectId(deactivated_by),
-                "updated_at": now_vn()
+                "updated_at": now_utc()
             }
             
             result = await User.find({"_id": {"$in": [ObjectId(uid) for uid in user_ids]}}) \

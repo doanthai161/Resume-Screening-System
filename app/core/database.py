@@ -405,7 +405,7 @@ async def init_db():
                 database=database,
                 document_models=DOCUMENT_MODELS,
             )
-            logger.info("AuditLog collection: %s", AuditLog.get_motor_collection())
+            # logger.info("AuditLog collection: %s", AuditLog.get_motor_collection())
             logger.info(f'Beanie initialized with {len(DOCUMENT_MODELS)} models in database: {settings.MONGODB_DB_NAME}')
         except Exception as beanie_error:
             logger.warning(f"Beanie initialization failed: {beanie_error}")

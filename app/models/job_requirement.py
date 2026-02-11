@@ -1,5 +1,5 @@
 from datetime import datetime
-from app.utils.time import now_vn
+from app.utils.time import now_utc
 from typing import List, Optional
 from beanie import Document
 from pydantic import Field
@@ -22,8 +22,8 @@ class JobRequirement(Document):
     screening_model_id: Optional[ObjectId] = Field(None, description="AI model used to screen")
     auto_screening_enabled: bool = Field(True, description="Is auto screening enabled?")
     screening_threshold: float = Field(70.0, ge=0.0, le=100.0, description="Threshold score to pass screening")
-    created_at: datetime = Field(default_factory=lambda: now_vn())
-    updated_at: datetime = Field(default_factory=lambda: now_vn())
+    created_at: datetime = Field(default_factory=lambda: now_utc())
+    updated_at: datetime = Field(default_factory=lambda: now_utc())
 
     class Settings:
         name = "job_requirements"

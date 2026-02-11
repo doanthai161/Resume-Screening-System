@@ -11,7 +11,7 @@ from app.models.company import Company
 from app.schemas.company_branch import CompanyBranchCreate, CompanyBranchUpdate
 from app.core.redis import get_redis, is_redis_available
 from app.core.monitoring import monitor_db_operation, monitor_cache_operation
-from app.utils.time import now_vn
+from app.utils.time import now_utc
 from app.utils.helpers import generate_cache_key, batch_process
 
 logger = logging.getLogger(__name__)
@@ -286,15 +286,15 @@ class CompanyBranchRepository:
             branch_dict["created_by"] = ObjectId(created_by)
             branch_dict["is_headquarters"] = result[0].get("existing_branches_count", 0) == 0
             branch_dict["is_active"] = True
-            branch_dict["created_at"] = now_vn()
-            branch_dict["updated_at"] = now_vn()
+            branch_dict["created_at"] = now_utc()
+            branch_dict["updated_at"] = now_utc()
             
             branch = CompanyBranch(**branch_dict)
             await branch.insert()
             
             await Company.find_one({"_id": ObjectId(company_id)}).update({
                 "$push": {"branch_ids": branch.id},
-                "$set": {"updated_at": now_vn()}
+                "$set": {"updated_at": now_utc()}
             })
             
             await CompanyBranchRepository._invalidate_branch_creation(branch)
@@ -398,7 +398,7 @@ class CompanyBranchRepository:
                     raise ValueError("Cannot remove headquarters status from the only headquarters")
             
             update_dict = update_data.model_dump(exclude_unset=True)
-            update_dict["updated_at"] = now_vn()
+            update_dict["updated_at"] = now_utc()
             
             await CompanyBranch.find_one({"_id": ObjectId(branch_id)}).update({
                 "$set": update_dict
@@ -907,7 +907,7 @@ class CompanyBranchRepository:
                 k: v for k, v in update_data.items()
                 if k not in {"_id", "company_id", "is_headquarters"}
             }
-            update_dict["updated_at"] = now_vn()
+            update_dict["updated_at"] = now_utc()
             
             result = await CompanyBranch.find({
                 "_id": {"$in": [ObjectId(bid) for bid in authorized_ids]}

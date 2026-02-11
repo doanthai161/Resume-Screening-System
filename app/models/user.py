@@ -2,7 +2,7 @@ from datetime import datetime
 from typing import Optional
 from beanie import Document, Indexed
 from pydantic import EmailStr, Field, ConfigDict
-from app.utils.time import now_vn
+from app.utils.time import now_utc
 
 
 class User(Document):
@@ -14,9 +14,10 @@ class User(Document):
     is_active: bool = Field(True, description="Is account active")
     is_verified: bool = Field(False, description="Is email verified")
     is_superuser: bool = Field(False, description="Is superuser")
+    verified_at: Optional[datetime] = Field(None, description="Verify at")
     last_login: Optional[datetime] = Field(None, description="Last login timestamp")
-    created_at: datetime = Field(default_factory=now_vn)
-    updated_at: datetime = Field(default_factory=now_vn)
+    created_at: datetime = Field(default_factory=now_utc)
+    updated_at: datetime = Field(default_factory=now_utc)
     
     model_config = ConfigDict(
         arbitrary_types_allowed=True,

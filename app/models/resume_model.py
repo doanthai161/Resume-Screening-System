@@ -3,7 +3,7 @@ from datetime import datetime
 from pydantic import BaseModel, Field
 from beanie import Document
 from bson import ObjectId
-from app.utils.time import now_vn
+from app.utils.time import now_utc
 
 class ParsedResumeData(BaseModel):
     personal_info: Dict[str, Any] = Field(default_factory=dict)
@@ -16,7 +16,7 @@ class ParsedResumeData(BaseModel):
     raw_text: Optional[str] = Field(None, description="Toàn bộ text extract từ CV")
     parser_version: str = Field("1.0", description="Version của parser")
     confidence_score: float = Field(0.0, ge=0.0, le=1.0, description="Độ tin cậy parse")
-    parsed_at: datetime = Field(default_factory=lambda: now_vn())
+    parsed_at: datetime = Field(default_factory=lambda: now_utc())
 
 class ResumeFile(Document):
     filename: str = Field(..., description="Tên file lưu trong hệ thống")
@@ -32,7 +32,7 @@ class ResumeFile(Document):
     status: str = Field("pending", description="Trạng thái: pending, processing, processed, error")
     processing_errors: List[str] = Field(default_factory=list, description="Lỗi khi xử lý")
     metadata: Dict[str, Any] = Field(default_factory=dict, description="Metadata bổ sung")
-    uploaded_at: datetime = Field(default_factory=lambda: now_vn())
+    uploaded_at: datetime = Field(default_factory=lambda: now_utc())
     processed_at: Optional[datetime] = Field(None, description="Thời điểm xử lý xong")
     last_accessed_at: Optional[datetime] = Field(None, description="Thời điểm truy cập gần nhất")
     
@@ -76,9 +76,9 @@ class ResumeFile(Document):
     def mark_as_processed(self, parsed_data: ParsedResumeData) -> None:
         self.parsed_data = parsed_data
         self.status = "processed"
-        self.processed_at = now_vn()
+        self.processed_at = now_utc()
     
     def mark_as_error(self, error_messages: List[str]) -> None:
         self.status = "error"
         self.processing_errors = error_messages
-        self.processed_at = now_vn()
+        self.processed_at = now_utc()

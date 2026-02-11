@@ -1,7 +1,7 @@
 from pydantic import Field
 from beanie import Document
 from datetime import datetime
-from app.utils.time import now_vn
+from app.utils.time import now_utc
 from bson import ObjectId
 from typing import Optional, List
 class CompanyBranch(Document):
@@ -21,8 +21,8 @@ class CompanyBranch(Document):
     is_active: bool = Field(default=True, description="Is the branch active?")
     created_by: ObjectId = Field(..., description="ID of the user who created the branch")
     updated_by: Optional[ObjectId] = Field(None, description="ID of the user who last updated the branch")
-    created_at: datetime = Field(default_factory=lambda: now_vn())
-    updated_at: datetime = Field(default_factory=lambda: now_vn())
+    created_at: datetime = Field(default_factory=lambda: now_utc())
+    updated_at: datetime = Field(default_factory=lambda: now_utc())
 
     class Settings:
         name = "company_branches"

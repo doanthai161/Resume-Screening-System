@@ -2,7 +2,7 @@ from beanie import Document
 from pydantic import Field
 from bson import ObjectId
 from datetime import datetime
-from app.utils.time import now_vn
+from app.utils.time import now_utc
 from typing import Optional, List, Dict, Any
 
 
@@ -16,8 +16,8 @@ class JobApplication(Document):
     screening_result_id: Optional[ObjectId] = Field(None, description="Reference to screening result")
     source: str = Field("manual_upload", description="manual_upload, website, linkedin, etc")
     notes: Optional[str] = Field(None, description="Notes from recruiter")
-    created_at: datetime = Field(default_factory=lambda: now_vn())
-    updated_at: datetime = Field(default_factory=lambda: now_vn())
+    created_at: datetime = Field(default_factory=lambda: now_utc())
+    updated_at: datetime = Field(default_factory=lambda: now_utc())
     
     class Settings:
         name = "job_applications"

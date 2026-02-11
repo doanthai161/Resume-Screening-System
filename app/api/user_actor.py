@@ -1,6 +1,6 @@
 from bson import ObjectId
 from fastapi import Request, BackgroundTasks, APIRouter, HTTPException, status, FastAPI, Depends
-from app.utils.time import now_vn
+from app.utils.time import now_utc
 from app.models.user import User
 from app.models.actor import Actor
 from app.models.user_actor import UserActor

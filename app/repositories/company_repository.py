@@ -13,7 +13,7 @@ from app.schemas.company import (
 from app.schemas.company_branch import CompanyBranchCreate, CompanyBranchUpdate
 from app.core.redis import get_redis, is_redis_available
 from app.core.monitoring import monitor_db_operation, monitor_cache_operation
-from app.utils.time import now_vn
+from app.utils.time import now_utc
 
 logger = logging.getLogger(__name__)
 
@@ -61,13 +61,13 @@ class CompanyRepository:
             
             company_dict = company_data.model_dump()
             company_dict["owner_id"] = owner_id_obj
-            company_dict["created_at"] = now_vn()
-            company_dict["updated_at"] = now_vn()
+            company_dict["created_at"] = now_utc()
+            company_dict["updated_at"] = now_utc()
             
             company_dict["members"] = [{
                 "user_id": owner_id_obj,
                 "role": "owner",
-                "joined_at": now_vn(),
+                "joined_at": now_utc(),
                 "permissions": ["admin", "manage_company", "manage_branches", "manage_members"]
             }]
             
@@ -127,7 +127,7 @@ class CompanyRepository:
             for field, value in update_dict.items():
                 setattr(company, field, value)
             
-            company.updated_at = now_vn()
+            company.updated_at = now_utc()
             await company.save()
             
             cache_key = CompanyRepository._get_company_cache_key(company_id)
@@ -163,7 +163,7 @@ class CompanyRepository:
                 raise ValueError("Only the owner can delete the company")
             
             company.is_active = False
-            company.updated_at = now_vn()
+            company.updated_at = now_utc()
             await company.save()
             
             await CompanyRepository._invalidate_company_caches(company)
@@ -204,8 +204,8 @@ class CompanyRepository:
             branch_dict = branch_data.dict()
             branch_dict["company_id"] = ObjectId(company_id)
             branch_dict["created_by"] = ObjectId(created_by)
-            branch_dict["created_at"] = now_vn()
-            branch_dict["updated_at"] = now_vn()
+            branch_dict["created_at"] = now_utc()
+            branch_dict["updated_at"] = now_utc()
             branch_dict["is_active"] = True
             
             branch = CompanyBranch(**branch_dict)
@@ -281,7 +281,7 @@ class CompanyRepository:
             for field, value in update_dict.items():
                 setattr(branch, field, value)
             
-            branch.updated_at = now_vn()
+            branch.updated_at = now_utc()
             await branch.save()
             
             await CompanyRepository._invalidate_branch_caches(branch)
@@ -319,7 +319,7 @@ class CompanyRepository:
                 raise ValueError("User does not have permission to delete this branch")
             
             branch.is_active = False
-            branch.updated_at = now_vn()
+            branch.updated_at = now_utc()
             await branch.save()
             
             await CompanyRepository._invalidate_branch_caches(branch)
@@ -514,12 +514,12 @@ class CompanyRepository:
                 "user_id": ObjectId(user_id),
                 "role": role,
                 "permissions": permissions or ["view"],
-                "joined_at": now_vn(),
+                "joined_at": now_utc(),
                 "added_by": ObjectId(added_by) if added_by else None
             }
             
             company.members.append(new_member)
-            company.updated_at = now_vn()
+            company.updated_at = now_utc()
             await company.save()
             
             await CompanyRepository._delete_cache(CompanyRepository._get_user_companies_cache_key(user_id))
@@ -570,7 +570,7 @@ class CompanyRepository:
             if len(company.members) == original_length:
                 raise ValueError("User is not a member of this company")
             
-            company.updated_at = now_vn()
+            company.updated_at = now_utc()
             await company.save()
             
             await CompanyRepository._delete_cache(CompanyRepository._get_user_companies_cache_key(user_id))
@@ -629,7 +629,7 @@ class CompanyRepository:
             if not member_found:
                 raise ValueError("User is not a member of this company")
             
-            company.updated_at = now_vn()
+            company.updated_at = now_utc()
             await company.save()
             
             await CompanyRepository._delete_cache(CompanyRepository._get_user_companies_cache_key(user_id))

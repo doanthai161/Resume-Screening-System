@@ -82,6 +82,7 @@ class AccessToken(BaseModel):
     token_type: str = "bearer"
 
 class VerifyOTPResponse(BaseModel):
+    success:bool
     token: AccessToken
     user: UserResponse
 

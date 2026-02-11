@@ -1,7 +1,7 @@
 from pydantic import Field 
 from beanie import Document
 from datetime import datetime
-from app.utils.time import now_vn
+from app.utils.time import now_utc
 from bson import ObjectId
 from typing import Optional
 class Company(Document):
@@ -16,8 +16,8 @@ class Company(Document):
     website: str = Field(..., description="Company website URL")
     is_active: bool = Field(default=True, description="Is the company active?")
     updated_by: Optional[ObjectId] = Field(None, description="ID of the user who last updated the company")
-    created_at: datetime = Field(default_factory=lambda: now_vn())
-    updated_at: datetime = Field(default_factory=lambda: now_vn())
+    created_at: datetime = Field(default_factory=lambda: now_utc())
+    updated_at: datetime = Field(default_factory=lambda: now_utc())
 
     class Settings:
         name = "companies"

@@ -30,7 +30,7 @@ from app.utils.otp import generate_otp
 from app.core.rate_limiter import limiter
 from slowapi.errors import RateLimitExceeded
 from slowapi import _rate_limit_exceeded_handler
-from app.utils.time import now_vn, now_utc
+from app.utils.time import now_utc, ensure_utc
 from datetime import datetime, timedelta, timezone
 from app.models.actor import Actor
 from app.models.user_actor import UserActor
@@ -105,7 +105,7 @@ async def register(
                     user_id=ObjectId(user.id),
                     actor_id=ObjectId(default_actor.id),
                     created_by=ObjectId(user.id),
-                    created_at=now_vn()
+                    created_at=now_utc()
                 )
                 await user_actor.insert()
                 background_tasks.add_task(
@@ -132,7 +132,7 @@ async def register(
             existing_otp.expires_at = expires_at
             existing_otp.attempts = 0
             existing_otp.is_used = False
-            existing_otp.updated_at = now_vn()
+            existing_otp.updated_at = now_utc()
             await existing_otp.save()
         else:
             email_otp = EmailOTP(
@@ -140,8 +140,8 @@ async def register(
                 otp_code=otp_code,
                 otp_type="registration",
                 expires_at=expires_at,
-                created_at=now_vn(),
-                updated_at=now_vn()
+                created_at=now_utc(),
+                updated_at=now_utc()
             )
             await email_otp.insert()
         
@@ -282,6 +282,7 @@ async def verify_otp(
         background_tasks.add_task(
             log_security_event,
             event_type=AuditEventType.USER_EMAIL_VERIFY,
+            event_name= "rerify_otp",
             user_id=str(user.id),
             email=data.email,
             ip_address=request.client.host if request.client else None,
@@ -296,19 +297,21 @@ async def verify_otp(
         )
         
         return VerifyOTPResponse(
+            token= AccessToken(
+                access_token=token_pair.access_token if hasattr(token_pair, 'access_token') else token_pair,
+                token_type= "bearer"
+            ),
             success=True,
-            message="Email verified successfully",
-            access_token=token_pair.access_token if hasattr(token_pair, 'access_token') else token_pair,
-            token_type="bearer",
             user=UserResponse(
                 id=str(user.id),
                 email=user.email,
                 full_name=user.full_name,
+                message="Email verified successfully",
                 phone_number=user.phone_number,
                 address=user.address,
-                is_active=True,
-                is_verified=True,
-                created_at=user.created_at
+                # is_active=True,
+                # is_verified=True,
+                # created_at=user.created_at
             )
         )
         
@@ -343,16 +346,17 @@ async def resend_otp(
             )
         
         otp_code = generate_otp()
-        expires_at = datetime.now(timezone.utc) + timedelta(minutes=settings.OTP_EXPIRY_MINUTES)
+        print(otp_code)
+        expires_at = now_utc() + timedelta(minutes=settings.OTP_EXPIRY_MINUTES)
         
-        existing_otp = await EmailOTP.find_one(
-            EmailOTP.email == data.email,
-            EmailOTP.otp_type == "registration",
-            EmailOTP.is_used == False
-        )
+        existing_otp = await EmailOTP.find_one({
+            "email": data.email,
+            "otp_type": "registration",
+            "is_used": False
+        })
         
         if existing_otp:
-            time_since_creation = datetime.now(timezone.utc) - existing_otp.created_at
+            time_since_creation = now_utc() - ensure_utc(existing_otp.created_at)
             if time_since_creation < timedelta(seconds=30):  # 30 seconds cooldown
                 raise HTTPException(
                     status_code=status.HTTP_429_TOO_MANY_REQUESTS,
@@ -363,37 +367,36 @@ async def resend_otp(
             existing_otp.expires_at = expires_at
             existing_otp.attempts = 0
             existing_otp.is_used = False
-            existing_otp.updated_at = now_vn()
+            existing_otp.updated_at = now_utc()
             await existing_otp.save()
         else:
-            # Create new OTP
             email_otp = EmailOTP(
                 email=data.email,
                 otp_code=otp_code,
                 otp_type="registration",
                 expires_at=expires_at,
-                created_at=now_vn(),
-                updated_at=now_vn()
+                created_at=now_utc(),
+                updated_at=now_utc()
             )
             await email_otp.insert()
         
-        background_tasks.add_task(
-            send_otp_email,
-            email=data.email,
-            otp=otp_code,
-            otp_type="registration",
-            full_name=user.full_name
-        )
+        # background_tasks.add_task(
+        #     send_otp_email,
+        #     email=data.email,
+        #     otp=otp_code,
+        #     otp_type="registration",
+        #     full_name=user.full_name
+        # )
         
         background_tasks.add_task(
             logger.info,
             f"OTP resent to: {data.email}"
         )
         
-        # Log security event
         background_tasks.add_task(
             log_security_event,
             event_type=AuditEventType.OTP_RESENT,
+            event_name= "resend otp",
             user_id=str(user.id),
             email=data.email,
             ip_address=request.client.host if request.client else None,
@@ -663,7 +666,7 @@ async def log_security_event(
     event_type: AuditEventType,
     event_name: str,
     user_id: Optional[str] = None,
-    description: Optional[str] = None,  # ← CÓ NHƯNG KHÔNG DÙNG
+    description: Optional[str] = None,
     email: Optional[str] = None,
     ip_address: Optional[str] = None,
     user_agent: Optional[str] = None,
@@ -672,18 +675,6 @@ async def log_security_event(
 ):
     try:
         from app.services.audit_log_service import AuditLogService
-        
-        print("=" * 50)
-        print("DEBUG log_security_event - START")
-        print(f"event_type: {event_type}, type: {type(event_type)}")
-        print(f"event_name: {event_name}")
-        print(f"user_id: {user_id}")
-        print(f"description: {description}")
-        print(f"email: {email}")
-        print(f"ip_address: {ip_address}")
-        print(f"user_agent: {user_agent}")
-        print(f"details: {details}")
-        print(f"success: {success}")
         
         await AuditLogService.log_security_event(
             event_type=event_type,
@@ -695,10 +686,7 @@ async def log_security_event(
             details=details or {},
             success=success
         )
-        
-        print("DEBUG log_security_event - END")
-        print("=" * 50)
-        
+
     except Exception as e:
         from app.logs.logging_config import logger
         logger.error(f"Failed to log security event: {e}", exc_info=True)

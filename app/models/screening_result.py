@@ -2,7 +2,7 @@ from beanie import Document
 from pydantic import Field
 from bson import ObjectId
 from datetime import datetime
-from app.utils.time import now_vn
+from app.utils.time import now_utc
 from typing import Optional, List
 
 
@@ -56,10 +56,10 @@ class ScreeningResult(Document):
     notes: Optional[str] = Field(None, description="Notes from recruiter")
     
     # Timestamps
-    evaluated_at: datetime = Field(default_factory=lambda: now_vn())
+    evaluated_at: datetime = Field(default_factory=lambda: now_utc())
     reviewed_at: Optional[datetime] = Field(None)
-    created_at: datetime = Field(default_factory=lambda: now_vn())
-    updated_at: datetime = Field(default_factory=lambda: now_vn())
+    created_at: datetime = Field(default_factory=lambda: now_utc())
+    updated_at: datetime = Field(default_factory=lambda: now_utc())
     
     class Settings:
         name = "screening_results"

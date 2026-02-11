@@ -1,6 +1,6 @@
 from bson import ObjectId
 from fastapi import Request, BackgroundTasks, APIRouter, HTTPException, status, FastAPI, Depends, Query
-from app.utils.time import now_vn
+from app.utils.time import now_utc
 from datetime import datetime, timedelta, timezone
 from app.models.permission import Permission
 from app.schemas.permission import PermissionCreate, PermissionResponse, PermissionUpdate, PermissionListResponse
@@ -125,7 +125,7 @@ async def update_permission(
         if data.description is not None:
             permission.description = data.description
 
-        permission.updated_at = now_vn()
+        permission.updated_at = now_utc()
         await permission.save()
         background_tasks.add_task(
             logger.info,
@@ -195,7 +195,7 @@ async def delete_permission(
             raise HTTPException(status_code=404, detail="Permission not found")
 
         permission.is_active = False
-        permission.updated_at = now_vn()
+        permission.updated_at = now_utc()
         await permission.save()
         background_tasks.add_task(
             logger.info,
