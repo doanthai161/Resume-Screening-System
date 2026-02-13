@@ -24,6 +24,8 @@ class CompanyBranchRepository:
     USER_BRANCHES_CACHE_TTL = 1800
     PERMISSION_CACHE_TTL = 300
     STATS_CACHE_TTL = 600
+    NULL_CACHE_VALUE = "__NULL__" 
+    NULL_CACHE_TTL = 60
     
     @staticmethod
     def _get_cache_key(*parts: str) -> str:
@@ -114,19 +116,30 @@ class CompanyBranchRepository:
         return None
     
     @staticmethod
-    async def _set_cached(key: str, value: Any, ttl: Optional[int] = None) -> None:
+    async def _set_cache(key: str, data: Any, ttl: Optional[int] = None) -> None:
         if not is_redis_available():
             return
-        
         try:
             redis_client = get_redis()
+            import json
+            
+            if data is None:
+                value_to_store = CompanyBranchRepository.NULL_CACHE_VALUE
+                effective_ttl = CompanyBranchRepository.NULL_CACHE_TTL 
+            elif isinstance(data, str):
+                value_to_store = data
+                effective_ttl = ttl
+            else:
+                value_to_store = json.dumps(data, default=str)
+                effective_ttl = ttl
+
             await redis_client.setex(
-                key,
-                ttl or CompanyBranchRepository.BRANCH_CACHE_TTL,
-                json.dumps(value, default=str)
+                key, 
+                effective_ttl or CompanyBranchRepository.BRANCH_CACHE_TTL, 
+                value_to_store
             )
         except Exception as e:
-            logger.debug(f"Cache set error for key {key}: {e}")
+            logger.warning(f"Cache set error for key {key}: {e}")
     
     @staticmethod
     async def _delete_cached(*keys: str) -> None:

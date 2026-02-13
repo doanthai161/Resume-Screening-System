@@ -17,6 +17,7 @@ from app.utils.time import now_utc
 from app.core.config import settings
 from app.core.database import get_database_info
 from motor.motor_asyncio import AsyncIOMotorClient
+from app.core.security import get_password_hash, verify_password 
 
 logger = logging.getLogger(__name__)
 
@@ -27,6 +28,8 @@ class UserRepository:
     USER_LIST_CACHE_TTL = 300 
     USER_SEARCH_CACHE_TTL = 300  
     RESET_TOKEN_TTL = 3600 
+    NULL_CACHE_VALUE = "__NULL__"
+    NULL_CACHE_TTL = 60
     
     
     @staticmethod
@@ -41,10 +44,40 @@ class UserRepository:
     def _get_user_username_cache_key(username: str) -> str:
         return f"{UserRepository.CACHE_PREFIX}user_username:{username}"
     
+    LIST_VERSION_KEY = f"{CACHE_PREFIX}list_version"
     @staticmethod
-    def _get_user_list_cache_key(page: int, size: int, filters: dict) -> str:
+    async def _get_list_cache_version() -> str:
+        if not is_redis_available():
+            return "noversion"
+        try:
+            redis_client = get_redis()
+            version = await redis_client.get(UserRepository.LIST_VERSION_KEY)
+            if version:
+                return version.decode('utf-8') if isinstance(version, bytes) else version
+            
+            await redis_client.set(UserRepository.LIST_VERSION_KEY, "1")
+            return "1"
+        except Exception as e:
+            logger.warning(f"Error getting list version: {e}")
+            return "err_version"
+
+    @staticmethod
+    async def _increment_list_cache_version() -> None:
+        if not is_redis_available():
+            return
+
+        try:
+            redis_client = get_redis()
+            await redis_client.incr(UserRepository.LIST_VERSION_KEY)
+            logger.info("User list cache version incremented (invalidated old lists).")
+        except Exception as e:
+            logger.warning(f"Error incrementing list version: {e}")
+    @staticmethod
+    async def _get_user_list_cache_key(page: int, size: int, filters: dict) -> str:
         filter_str = str(sorted(filters.items()))
-        return f"{UserRepository.CACHE_PREFIX}list:{page}:{size}:{filter_str}"
+        version = await UserRepository._get_list_cache_version()
+        
+        return f"{UserRepository.CACHE_PREFIX}list:v{version}:{page}:{size}:{filter_str}"
     
     @staticmethod
     def _get_user_search_cache_key(search_term: str, skip: int, limit: int) -> str:
@@ -54,22 +87,6 @@ class UserRepository:
     def _get_reset_token_cache_key(token: str) -> str:
         return f"{UserRepository.CACHE_PREFIX}reset_token:{token}"
     
-    
-    @staticmethod
-    def _hash_password(password: str) -> str:
-        salt = bcrypt.gensalt()
-        hashed = bcrypt.hashpw(password.encode('utf-8'), salt)
-        return hashed.decode('utf-8')
-    
-    @staticmethod
-    def _verify_password(plain_password: str, hashed_password: str) -> bool:
-        try:
-            return bcrypt.checkpw(
-                plain_password.encode('utf-8'),
-                hashed_password.encode('utf-8')
-            )
-        except Exception:
-            return False
 
     @staticmethod
     def _get_db_client():
@@ -120,7 +137,7 @@ class UserRepository:
             **data,
             email=email,
             phone_number=phone_number,
-            hashed_password=UserRepository._hash_password(password),
+            hashed_password=get_password_hash(password),
             is_active=False,
             is_verified=False,
             is_superuser=False,
@@ -142,6 +159,8 @@ class UserRepository:
         cached_data = await UserRepository._get_from_cache(cache_key)
         
         if cached_data:
+            if cached_data == UserRepository.NULL_CACHE_VALUE:
+                return None
             logger.debug(f"Cache hit for user: {user_id}")
             user = User.model_validate(cached_data)
             setattr(user, '_from_cache', True)
@@ -155,7 +174,12 @@ class UserRepository:
                     user.dict(exclude={"hashed_password"}),
                     UserRepository.USER_CACHE_TTL
                 )
-                logger.debug(f"Cache set for user: {user_id}")
+            else:
+                await UserRepository._set_cache(
+                    cache_key, 
+                    UserRepository.NULL_CACHE_VALUE, 
+                    UserRepository.NULL_CACHE_TTL
+                )
             return user
         except Exception as e:
             logger.error(f"Error getting user {user_id}: {e}")
@@ -169,12 +193,19 @@ class UserRepository:
         cached = await UserRepository._get_from_cache(cache_key)
 
         if cached:
+            if cached == UserRepository.NULL_CACHE_VALUE:
+                return None            
             user = User.model_validate(cached)
             setattr(user, "_from_cache", True)
             return user
 
         user = await User.find_one(User.email == email)
         if not user:
+            await UserRepository._set_cache(
+                cache_key, 
+                UserRepository.NULL_CACHE_VALUE, 
+                UserRepository.NULL_CACHE_TTL
+            )
             return None
 
         data = user.model_dump(exclude={"hashed_password"})
@@ -312,7 +343,7 @@ class UserRepository:
         sort_desc: bool = True
     ) -> Tuple[List[User], int]:
         filter_dict = filters.model_dump(exclude_unset=True) if filters else {}
-        cache_key = UserRepository._get_user_list_cache_key(page, size, filter_dict)
+        cache_key = await UserRepository._get_user_list_cache_key(page, size, filter_dict)
         cached_data = await UserRepository._get_from_cache(cache_key)
         
         if cached_data:
@@ -429,17 +460,16 @@ class UserRepository:
         try:
             user = await UserRepository.get_user_by_email(email)
             
-            if not user or not user.is_active:
+            if not user:
                 return None
             
-            if not UserRepository._verify_password(password, user.hashed_password):
+            if not verify_password(password, user.hashed_password):
                 logger.warning(f"Failed authentication attempt for email: {email}")
                 return None
             
             user.last_login = now_utc()
             await user.save()
             
-            # Don't cache authenticated user with updated timestamp
             await UserRepository._delete_cache(UserRepository._get_user_cache_key(str(user.id)))
             
             logger.info(f"User authenticated: {email}")
@@ -458,6 +488,7 @@ class UserRepository:
                 return False
             
             user.is_verified = True
+            user.is_active = True
             user.verified_at = now_utc()
             await user.save()
             
@@ -536,7 +567,7 @@ class UserRepository:
             if not user:
                 return False
             
-            user.hashed_password = UserRepository._hash_password(new_password)
+            user.hashed_password=get_password_hash(new_password)
             user.updated_at = now_utc()
             await user.save()
             
@@ -564,11 +595,11 @@ class UserRepository:
             if not user or not user.is_active:
                 return False
             
-            if not UserRepository._verify_password(current_password, user.hashed_password):
+            if not verify_password(current_password, user.hashed_password):
                 logger.warning(f"Password change failed for user: {user_id}")
                 return False
             
-            user.hashed_password = UserRepository._hash_password(new_password)
+            user.hashed_password=get_password_hash(new_password)
             user.updated_at = now_utc()
             await user.save()
             await UserRepository._invalidate_user_caches(user)
@@ -768,14 +799,24 @@ class UserRepository:
     async def _set_cache(key: str, data: Any, ttl: Optional[int] = None) -> None:
         if not is_redis_available():
             return
-        
         try:
             redis_client = get_redis()
             import json
+            
+            if data is None:
+                value_to_store = UserRepository.NULL_CACHE_VALUE
+                effective_ttl = UserRepository.NULL_CACHE_TTL
+            elif isinstance(data, str):
+                value_to_store = data
+                effective_ttl = ttl
+            else:
+                value_to_store = json.dumps(data, default=str)
+                effective_ttl = ttl
+
             await redis_client.setex(
                 key, 
-                ttl or UserRepository.USER_CACHE_TTL, 
-                json.dumps(data, default=str)
+                effective_ttl or UserRepository.USER_CACHE_TTL, 
+                value_to_store
             )
         except Exception as e:
             logger.warning(f"Cache set error for key {key}: {e}")
@@ -820,13 +861,7 @@ class UserRepository:
             return
         
         try:
-            redis_client = get_redis()
-            pattern = f"{UserRepository.CACHE_PREFIX}list:*"
-            keys = await redis_client.keys(pattern)
-            
-            if keys:
-                await redis_client.delete(*keys)
-                logger.debug(f"Cleared {len(keys)} user list cache keys")
+            await UserRepository._increment_list_cache_version()
             
         except Exception as e:
             logger.warning(f"Error clearing user list caches: {e}")

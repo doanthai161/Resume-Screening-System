@@ -46,10 +46,10 @@ class UserUpdate(BaseModel):
 class UserResponse(BaseModel):
     id: Optional[str]
     email: EmailStr
-    full_name: Optional[str]
-    phone_number: Optional[str]
-    address: Optional[str]
-    message:Optional[str]
+    full_name: Optional[str]= None
+    phone_number: Optional[str] =None
+    address: Optional[str]= None
+    message:Optional[str]= None
 
 class UserListRespponse(BaseModel):
     users: list[UserResponse]
@@ -80,6 +80,10 @@ class VerifyOTPRegisterRequest(BaseModel):
 class AccessToken(BaseModel):
     access_token: str
     token_type: str = "bearer"
+    expires_in: Optional[int] = 0
+    refresh_token: Optional[str] = None
+    refresh_token_expires_in: Optional[int] = 0
+    user: Optional[UserResponse] = None
 
 class VerifyOTPResponse(BaseModel):
     success:bool

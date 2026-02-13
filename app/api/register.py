@@ -145,13 +145,14 @@ async def register(
             )
             await email_otp.insert()
         
-        background_tasks.add_task(
-            send_otp_email,
-            email=data.email,
-            otp=otp_code,
-            otp_type="registration",
-            full_name=data.full_name
-        )
+        # background_tasks.add_task(
+        #     send_otp_email,
+        #     email=data.email,
+        #     otp=otp_code,
+        #     otp_type="registration",
+        #     full_name=data.full_name
+        # )
+        print(otp_code, " :OTP ")
         
         background_tasks.add_task(
             logger.info,
@@ -434,6 +435,7 @@ async def login(
             background_tasks.add_task(
                 log_security_event,
                 event_type=AuditEventType.USER_LOGIN_FAILED,
+                event_name="check existing user in login",
                 email=data.email,
                 ip_address=request.client.host if request.client else None,
                 user_agent=request.headers.get("user-agent"),
@@ -494,6 +496,7 @@ async def login(
         background_tasks.add_task(
             log_security_event,
             event_type=AuditEventType.USER_LOGIN,
+            event_name = "login",
             user_id=str(user.id),
             email=data.email,
             ip_address=request.client.host if request.client else None,
@@ -519,6 +522,7 @@ async def login(
                 full_name=user.full_name,
                 phone_number=user.phone_number,
                 address=user.address,
+                message="login",
                 is_active=user.is_active,
                 is_verified=user.is_verified,
                 created_at=user.created_at
@@ -550,6 +554,7 @@ async def logout(
                     log_security_event,
                     event_type=AuditEventType.USER_LOGOUT,
                     user_id=str(current_user.user.id),
+                    event_name = "logout",
                     email=current_user.user.email,
                     ip_address=request.client.host if request.client else None,
                     user_agent=request.headers.get("user-agent"),
@@ -621,6 +626,7 @@ async def refresh_token(
         background_tasks.add_task(
             log_security_event,
             event_type=AuditEventType.REFRESH_TOKEN,
+            event_name = "refresh_token",
             user_id=str(user.id),
             email=user.email,
             ip_address=request.client.host if request.client else None,
