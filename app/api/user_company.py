@@ -1,4 +1,3 @@
-# app/api/v1/endpoints/user_company.py
 from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, status, Request, BackgroundTasks
 from fastapi.responses import JSONResponse
@@ -43,12 +42,10 @@ async def assign_user_to_company_branch(
     background_tasks: BackgroundTasks,
     current_user: User = Depends(get_current_user)
 ):
-    """Assign user to company branch"""
     import time
     start_time = time.time()
     
     try:
-        # Check if current user has permission to assign users
         user_role = await CompanyRepository.get_user_company_role(
             user_id=str(current_user.id),
             company_id=data.company_id  # Need to get company_id from branch
@@ -60,7 +57,6 @@ async def assign_user_to_company_branch(
                 detail="Only owners, admins and managers can assign users"
             )
         
-        # Get company branch to validate
         branch = await CompanyRepository.get_company_branch(data.company_branch_id)
         if not branch or not branch.is_active:
             raise HTTPException(
@@ -94,7 +90,6 @@ async def assign_user_to_company_branch(
                     detail="Failed to add user to company members"
                 )
         
-        # Assign user to branch using repository
         assignment = await UserCompanyRepository.assign_user_to_branch(
             user_id=data.user_id,
             company_branch_id=data.company_branch_id,
@@ -109,7 +104,6 @@ async def assign_user_to_company_branch(
                 detail="Failed to assign user to branch"
             )
         
-        # Record business metric
         record_business_metric(
             "user_assigned_to_branch",
             tags={
@@ -119,7 +113,6 @@ async def assign_user_to_company_branch(
             }
         )
         
-        # Background logging
         background_tasks.add_task(
             logger.info,
             f"User {data.user_id} assigned to branch {data.company_branch_id} by {current_user.id}"
@@ -169,12 +162,10 @@ async def unassign_user_from_company_branch(
     data: AssignUserToCompanyBranch,
     current_user: User = Depends(get_current_user)
 ):
-    """Unassign user from company branch"""
     import time
     start_time = time.time()
     
     try:
-        # Check if current user has permission to unassign users
         user_role = await CompanyRepository.get_user_company_role(
             user_id=str(current_user.id),
             company_id=data.company_id
@@ -186,7 +177,6 @@ async def unassign_user_from_company_branch(
                 detail="Only owners, admins and managers can unassign users"
             )
         
-        # Unassign user using repository
         success = await UserCompanyRepository.unassign_user_from_branch(
             user_id=data.user_id,
             company_branch_id=data.company_branch_id,
@@ -199,7 +189,6 @@ async def unassign_user_from_company_branch(
                 detail="User assignment not found"
             )
         
-        # Record business metric
         record_business_metric(
             "user_unassigned_from_branch",
             tags={
@@ -254,14 +243,11 @@ async def delete_user_company_assignment(
     assignment_id: str,
     current_user: User = Depends(get_current_user)
 ):
-    """Delete user-company assignment permanently"""
     import time
     start_time = time.time()
     
     try:
-        # Check if current user is admin or owner
         if not (current_user.is_superuser or "admin" in current_user.permissions):
-            # Get assignment to check company access
             assignment = await UserCompanyRepository.get_assignment(assignment_id)
             if assignment:
                 user_role = await CompanyRepository.get_user_company_role(
@@ -275,7 +261,6 @@ async def delete_user_company_assignment(
                         detail="Only owners and admins can delete assignments"
                     )
         
-        # Delete assignment using repository
         success = await UserCompanyRepository.delete_assignment(
             assignment_id=assignment_id,
             deleted_by=str(current_user.id)
@@ -287,7 +272,6 @@ async def delete_user_company_assignment(
                 detail="Assignment not found"
             )
         
-        # Record business metric
         record_business_metric(
             "user_company_assignment_deleted",
             tags={"deleted_by": str(current_user.id)}
@@ -332,12 +316,10 @@ async def get_user_company_assignment(
     assignment_id: str,
     current_user: User = Depends(get_current_user)
 ):
-    """Get user-company assignment by ID"""
     import time
     start_time = time.time()
     
     try:
-        # Get assignment using repository
         assignment = await UserCompanyRepository.get_assignment(assignment_id)
         if not assignment:
             raise HTTPException(
@@ -345,7 +327,6 @@ async def get_user_company_assignment(
                 detail="Assignment not found"
             )
         
-        # Check if current user has access
         has_access = await CompanyRepository.validate_user_access(
             user_id=str(current_user.id),
             company_branch_id=assignment.company_branch_id
@@ -357,7 +338,6 @@ async def get_user_company_assignment(
                 detail="Access denied"
             )
         
-        # Get user and branch details for response
         user = await UserRepository.get_user(assignment.user_id)
         branch = await CompanyRepository.get_company_branch(assignment.company_branch_id)
         
@@ -414,12 +394,10 @@ async def list_branch_users(
     size: int = 20,
     current_user: User = Depends(get_current_user)
 ):
-    """List users in a company branch"""
     import time
     start_time = time.time()
     
     try:
-        # Check if current user has access to branch
         has_access = await CompanyRepository.validate_user_access(
             user_id=str(current_user.id),
             company_branch_id=company_branch_id
@@ -431,7 +409,6 @@ async def list_branch_users(
                 detail="Access denied"
             )
         
-        # Validate pagination
         if page < 1:
             page = 1
         if size < 1 or size > 100:
@@ -439,7 +416,6 @@ async def list_branch_users(
         
         skip = (page - 1) * size
         
-        # Get assignments using repository
         assignments, total = await UserCompanyRepository.list_branch_assignments(
             company_branch_id=company_branch_id,
             active_only=active_only,
@@ -447,7 +423,6 @@ async def list_branch_users(
             limit=size
         )
         
-        # Get user details for each assignment
         assignments_with_details = []
         for assignment in assignments:
             user = await UserRepository.get_user(assignment.user_id)
@@ -473,7 +448,6 @@ async def list_branch_users(
                     updated_at=assignment.updated_at
                 ))
         
-        # Record metric
         record_business_metric(
             "branch_users_listed",
             value=len(assignments_with_details),
@@ -515,14 +489,11 @@ async def list_user_branches(
     active_only: bool = True,
     current_user: User = Depends(get_current_user)
 ):
-    """List company branches assigned to a user"""
     import time
     start_time = time.time()
     
     try:
-        # Check if current user can view this user's assignments
         if user_id != str(current_user.id) and not (current_user.is_superuser or "admin" in current_user.permissions):
-            # Check if current user manages any of the user's companies
             user_assignments = await UserCompanyRepository.list_user_assignments(user_id, active_only)
             can_view = False
             
@@ -541,13 +512,11 @@ async def list_user_branches(
                     detail="Access denied"
                 )
         
-        # Get assignments using repository
         assignments = await UserCompanyRepository.list_user_assignments(
             user_id=user_id,
             active_only=active_only
         )
         
-        # Get details for each assignment
         assignments_with_details = []
         for assignment in assignments:
             user = await UserRepository.get_user(assignment.user_id)
@@ -573,7 +542,6 @@ async def list_user_branches(
                     updated_at=assignment.updated_at
                 ))
         
-        # Record metric
         record_business_metric(
             "user_branches_listed",
             value=len(assignments_with_details),
@@ -607,12 +575,10 @@ async def get_branch_assignment_stats(
     company_branch_id: str,
     current_user: User = Depends(get_current_user)
 ):
-    """Get branch assignment statistics"""
     import time
     start_time = time.time()
     
     try:
-        # Check if current user has access to branch
         has_access = await CompanyRepository.validate_user_access(
             user_id=str(current_user.id),
             company_branch_id=company_branch_id
@@ -624,10 +590,8 @@ async def get_branch_assignment_stats(
                 detail="Access denied"
             )
         
-        # Get statistics using repository
         stats = await UserCompanyRepository.get_branch_assignment_stats(company_branch_id)
         
-        # Record metric
         record_business_metric(
             "branch_stats_retrieved",
             tags={"company_branch_id": company_branch_id}
@@ -660,12 +624,10 @@ async def update_assignment_role(
     role: str,
     current_user: User = Depends(get_current_user)
 ):
-    """Update assignment role"""
     import time
     start_time = time.time()
     
     try:
-        # Get assignment to check company access
         assignment = await UserCompanyRepository.get_assignment(assignment_id)
         if not assignment:
             raise HTTPException(
@@ -673,7 +635,6 @@ async def update_assignment_role(
                 detail="Assignment not found"
             )
         
-        # Check if current user has permission to update role
         user_role = await CompanyRepository.get_user_company_role(
             user_id=str(current_user.id),
             company_branch_id=assignment.company_branch_id
@@ -685,7 +646,6 @@ async def update_assignment_role(
                 detail="Only owners, admins and managers can update roles"
             )
         
-        # Update role using repository
         updated_assignment = await UserCompanyRepository.update_assignment_role(
             assignment_id=assignment_id,
             role=role,
@@ -698,7 +658,6 @@ async def update_assignment_role(
                 detail="Assignment not found"
             )
         
-        # Get user and branch details for response
         user = await UserRepository.get_user(updated_assignment.user_id)
         branch = await CompanyRepository.get_company_branch(updated_assignment.company_branch_id)
         
@@ -708,7 +667,6 @@ async def update_assignment_role(
                 detail="User or branch not found"
             )
         
-        # Record metric
         record_business_metric(
             "assignment_role_updated",
             tags={

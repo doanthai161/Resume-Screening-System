@@ -606,8 +606,8 @@ class UserCompanyRepository:
             
             await UserCompanyRepository._set_cache(
                 cache_key,
-                stats.dict(),
-                900  # 15 minutes for stats cache
+                stats.model_dump(),
+                900
             )
             logger.debug(f"Cache set for branch stats: {company_branch_id}")
             
