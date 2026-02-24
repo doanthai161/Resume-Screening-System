@@ -2,6 +2,7 @@ from typing import List, Optional, Dict, Any, Tuple
 from datetime import datetime
 from bson import ObjectId
 from pymongo.errors import DuplicateKeyError
+from motor.motor_asyncio import AsyncIOMotorCursor
 import logging
 from app.models.company import Company
 from app.models.company_branch import CompanyBranch
@@ -60,7 +61,8 @@ class CompanyRepository:
                 raise ValueError(f"Owner with ID {owner_id} does not exist")
             
             company_dict = company_data.model_dump()
-            company_dict["owner_id"] = owner_id_obj
+            # company_dict["owner_id"] = owner_id_obj
+            company_dict["user_id"] = owner_id_obj 
             company_dict["created_at"] = now_utc()
             company_dict["updated_at"] = now_utc()
             
@@ -88,6 +90,49 @@ class CompanyRepository:
             logger.error(f"Error creating company: {e}", exc_info=True)
             raise
     
+
+
+    @staticmethod
+    @monitor_db_operation("company_list_all_active")
+    async def list_all_active_companies(
+        page: int = 1,
+        size: int = 10
+    ) -> Tuple[List[Company], int]:
+        """
+        Lấy danh sách tất cả các công ty đang hoạt động, có phân trang.
+
+        Args:
+            page (int): Số trang hiện tại.
+            size (int): Số lượng mục trên mỗi trang.
+
+        Returns:
+            Tuple[List[Company], int]: Một tuple chứa danh sách các đối tượng Company
+                                    và tổng số lượng công ty đang hoạt động.
+        """
+        skip = (page - 1) * size
+        
+        try:
+            # Xây dựng bộ lọc: chỉ lấy các công ty đang hoạt động
+            filter_dict = {"is_active": True}
+            
+            # Tạo cursor để tìm kiếm
+            cursor: AsyncIOMotorCursor = Company.find(filter_dict)
+            
+            # Lấy tổng số lượng công ty khớp bộ lọc
+            total = await cursor.count()
+            
+            # Lấy danh sách công ty đã phân trang
+            companies = await cursor.skip(skip).limit(size).to_list()
+            
+            logger.info(f"Found {len(companies)} active companies (page {page})")
+            return companies, total
+            
+        except Exception as e:
+            logger.error(f"Error listing all active companies: {e}", exc_info=True)
+            # Trả về danh sách rỗng và tổng số 0 nếu có lỗi
+            return [], 0
+
+
     @staticmethod
     @monitor_db_operation("company_get")
     @monitor_cache_operation("company_get")
@@ -133,10 +178,10 @@ class CompanyRepository:
             cache_key = CompanyRepository._get_company_cache_key(company_id)
             await CompanyRepository._delete_cache(cache_key)
             
-            member_ids = [str(member["user_id"]) for member in company.members]
-            for user_id in member_ids:
-                user_cache_key = CompanyRepository._get_user_companies_cache_key(user_id)
-                await CompanyRepository._delete_cache(user_cache_key)
+            # member_ids = [str(member["user_id"]) for member in company.members]
+            # for user_id in member_ids:
+            #     user_cache_key = CompanyRepository._get_user_companies_cache_key(user_id)
+            #     await CompanyRepository._delete_cache(user_cache_key)
             
             logger.info(f"Company updated: {company_id}")
             return company
@@ -153,14 +198,14 @@ class CompanyRepository:
             if not company:
                 return False
             
-            is_owner = False
-            for member in company.members:
-                if str(member["user_id"]) == user_id and member["role"] == "owner":
-                    is_owner = True
-                    break
+            # is_owner = False
+            # for member in company.members:
+            #     if str(member["user_id"]) == user_id and member["role"] == "owner":
+            #         is_owner = True
+            #         break
             
-            if not is_owner:
-                raise ValueError("Only the owner can delete the company")
+            # if not is_owner:
+            #     raise ValueError("Only the owner can delete the company")
             
             company.is_active = False
             company.updated_at = now_utc()
@@ -233,7 +278,7 @@ class CompanyRepository:
         
         if cached_data:
             logger.debug(f"Cache hit for branch: {branch_id}")
-            branch = CompanyBranch.parse_obj(cached_data)
+            branch = CompanyBranch.model_validate(cached_data)
             setattr(branch, '_from_cache', True)
             return branch
         

@@ -7,6 +7,7 @@ from typing import Optional
 class Company(Document):
     user_id: ObjectId = Field(..., description="ID of the user who owns the company")
     name: str = Field(..., description="Name of the company")
+    industry: Optional[str] = Field(None, max_length=100, description="industry")
     company_short_name: str = Field(..., max_length=50, description="Short name or abbreviation of the company")
     description: Optional[str] = Field(None, max_length=250, description="Description of the company")
     company_code: str = Field(..., max_length=50, description="Unique code for the company")

@@ -27,6 +27,7 @@ class CompanyResponse(BaseModel):
     name: str
     company_short_name: str
     description: Optional[str]
+    industry: Optional[str]
     company_code: str
     tax_code: Optional[str]
     email: EmailStr

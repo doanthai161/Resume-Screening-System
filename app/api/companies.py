@@ -13,7 +13,7 @@ from app.schemas.company import (
     CompanyResponse,
     CompanyListResponse,
 )
-from app.core.security import get_current_user, require_permission
+from app.core.security import get_current_user, require_permission, CurrentUser
 from app.models.user import User
 from app.core.monitoring import monitor_endpoint, record_response_time
 from app.middleware.audit_log import audit_log_action
@@ -38,7 +38,9 @@ async def create_company(
     request: Request,
     company_data: CompanyCreate,
     background_tasks: BackgroundTasks,
-    current_user: User = Depends(get_current_user)
+    current_user: CurrentUser = Depends(
+        require_permission("companies:create")
+    ),
 ):
     import time
     start_time = time.time()
@@ -58,16 +60,14 @@ async def create_company(
             id=str(company.id),
             name=company.name,
             description=company.description,
+            company_short_name= company.company_short_name,
+            tax_code = company.tax_code,
+            company_code= company.company_code,
             industry=company.industry,
-            size=company.size,
             website=company.website,
-            phone=company.phone,
             email=company.email,
-            address=company.address,
-            city=company.city,
-            country=company.country,
             logo_url=company.logo_url,
-            owner_id=str(company.owner_id),
+            user_id=str(company.user_id),
             is_active=company.is_active,
             created_at=company.created_at,
             updated_at=company.updated_at
@@ -91,8 +91,8 @@ async def create_company(
 @router.get(
     "/",
     response_model=CompanyListResponse,
-    summary="List companies",
-    description="List companies with pagination and filtering"
+    summary="List all active companies",
+    description="Get a paginated list of all companies that are currently active."
 )
 @limiter.limit("10/minute")
 @monitor_endpoint("list_companies")
@@ -101,66 +101,39 @@ async def list_companies(
     background_tasks: BackgroundTasks,
     page: int = 1,
     size: int = 10,
-    search: Optional[str] = None,
-    industry: Optional[str] = None,
-    current_user: User = Depends(get_current_user)
+    current_user: CurrentUser = Depends(get_current_user)
 ):
     import time
     start_time = time.time()
     
     try:
-        if page < 1:
-            page = 1
-        if size < 1 or size > 100:
-            size = 10
-        
-        skip = (page - 1) * size
-        
-        user_companies = await CompanyRepository.get_user_companies(str(current_user.id))
-        
-        is_admin = current_user.is_superuser or "admin" in current_user.permissions
-        companies = []
-        total = 0
-        
-        if is_admin and (search or industry):
-            companies, total = await CompanyRepository.search_companies(
-                search_term=search,
-                industry=industry,
-                skip=skip,
-                limit=size
-            )
-        else:
-            companies = user_companies[skip:skip + size]
-            total = len(user_companies)
+        if page < 1: page = 1
+        if size < 1 or size > 100: size = 10
+
+        companies, total = await CompanyRepository.list_all_active_companies(
+            page=page,
+            size=size
+        )
         
         company_responses = []
         for company in companies:
-            company_responses.append(CompanyResponse(
-                id=str(company.id),
-                name=company.name,
-                description=company.description,
-                industry=company.industry,
-                size=company.size,
-                website=company.website,
-                phone=company.phone,
-                email=company.email,
-                address=company.address,
-                city=company.city,
-                country=company.country,
-                logo_url=company.logo_url,
-                owner_id=str(company.owner_id),
-                is_active=company.is_active,
-                created_at=company.created_at,
-                updated_at=company.updated_at
-            ))
+            company_dict = company.model_dump()
+            company_dict['id'] = str(company.id) # Chuyển ObjectId thành string
+            company_dict['user_id'] = str(company.user_id) # Chuyển ObjectId thành string
+            company_responses.append(CompanyResponse(**company_dict))
+
+        # company_responses = [
+        #     CompanyResponse(**{**company.model_dump(), "id": str(company.id), "user_id": str(company.user_id)})
+        #     for company in companies
+        # ]
         
         background_tasks.add_task(
             logger.info,
-            f"User {current_user.id} listed {len(company_responses)} companies"
+            f"User {current_user.email} listed {len(company_responses)} active companies."
         )
         
         return CompanyListResponse(
-            companies=company_responses,
+            companies=company_responses, # Sử dụng danh sách đã tạo
             total=total,
             page=page,
             size=size
@@ -219,16 +192,14 @@ async def get_company(
             id=str(company.id),
             name=company.name,
             description=company.description,
+            company_short_name= company.company_short_name,
+            tax_code = company.tax_code,
+            company_code= company.company_code,
             industry=company.industry,
-            size=company.size,
             website=company.website,
-            phone=company.phone,
             email=company.email,
-            address=company.address,
-            city=company.city,
-            country=company.country,
             logo_url=company.logo_url,
-            owner_id=str(company.owner_id),
+            user_id=str(company.user_id),
             is_active=company.is_active,
             created_at=company.created_at,
             updated_at=company.updated_at
@@ -260,26 +231,19 @@ async def update_company(
     company_id: str,
     update_data: CompanyUpdate,
     background_tasks: BackgroundTasks,
-    current_user: User = Depends(get_current_user)
+    current_user: CurrentUser = Depends(
+        require_permission("companies:edit")
+    ),
 ):
-    """Update company"""
     import time
     start_time = time.time()
     
     try:
-        # Check if user has permission to update
         user_role = await CompanyRepository.get_user_company_role(
             user_id=str(current_user.id),
             company_id=company_id
         )
         
-        if not user_role or user_role not in ["owner", "admin"]:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Only owners and admins can update company"
-            )
-        
-        # Update company using repository
         company = await CompanyRepository.update_company(company_id, update_data)
         if not company:
             raise HTTPException(
@@ -296,16 +260,14 @@ async def update_company(
             id=str(company.id),
             name=company.name,
             description=company.description,
+            company_short_name= company.company_short_name,
+            tax_code = company.tax_code,
+            company_code= company.company_code,
             industry=company.industry,
-            size=company.size,
             website=company.website,
-            phone=company.phone,
             email=company.email,
-            address=company.address,
-            city=company.city,
-            country=company.country,
             logo_url=company.logo_url,
-            owner_id=str(company.owner_id),
+            user_id=str(company.user_id),
             is_active=company.is_active,
             created_at=company.created_at,
             updated_at=company.updated_at
@@ -335,14 +297,14 @@ async def delete_company(
     request: Request,
     company_id: str,
     background_tasks: BackgroundTasks,
-    current_user: User = Depends(get_current_user)
+    current_user: CurrentUser = Depends(
+        require_permission("companies:delete")
+    ),
 ):
-    """Delete company (soft delete)"""
     import time
     start_time = time.time()
     
     try:
-        # Delete company using repository
         success = await CompanyRepository.delete_company(
             company_id=company_id,
             user_id=str(current_user.id)

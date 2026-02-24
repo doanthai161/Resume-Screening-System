@@ -23,6 +23,8 @@ logger = logging.getLogger(__name__)
 class AuditLogEntry(BaseModel):
     action: str
     resource_type: str
+    event_type: Optional[str] = None
+    event_name: Optional[str] = None
     resource_id: Optional[str] = None
     user_id: Optional[str] = None
     user_email: Optional[str] = None
@@ -332,9 +334,18 @@ def audit_log_action(
 
 async def _log_audit_entry(audit_data: Dict[str, Any], async_mode: bool = True):
     try:
+        action_parts = audit_data.get("action", "unknown.unknown").split(".", 1)
+        audit_data["event_type"] = audit_data.get("action", "custom.event")
+        audit_data["event_name"] = action_parts[1] if len(action_parts) > 1 else "unknown"
+
+        if audit_data.get("severity") == "error":
+            audit_data["severity"] = "high"
+
         entry = AuditLogEntry(**audit_data)
         
         audit_log = AuditLog(
+            event_type=entry.event_type,
+            event_name=entry.event_name,
             action=entry.action,
             resource_type=entry.resource_type,
             resource_id=ObjectId(entry.resource_id) if entry.resource_id else None,
