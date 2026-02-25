@@ -1,3 +1,4 @@
+from itertools import count
 from fastapi import Request, BackgroundTasks, APIRouter, HTTPException, status, FastAPI, Depends
 from app.schemas.company_branch import CompanyBranchCreate, CompanyBranchResponse
 from app.core.rate_limiter import limiter
@@ -12,6 +13,7 @@ from app.core.monitoring import monitor_endpoint, record_response_time
 from app.middleware.audit_log import audit_log_action
 from app.repositories.company_branch_repository import CompanyBranchRepository
 from typing import List
+from app.core.security import get_current_user, require_permission, CurrentUser
 
 router = APIRouter()
 app = FastAPI()
@@ -35,7 +37,9 @@ async def create_company_branch(
     company_id: str,
     branch_data: CompanyBranchCreate,
     background_tasks: BackgroundTasks,
-    current_user: User = Depends(get_current_user)
+    current_user: CurrentUser = Depends(
+        require_permission("companies:create")
+    ),
 ):
     import time
     start_time = time.time()
@@ -44,28 +48,28 @@ async def create_company_branch(
         branch = await CompanyBranchRepository.create_company_branch(
             company_id=company_id,
             branch_data=branch_data,
-            created_by=str(current_user.id)
+            created_by_id=str(current_user.user_id)
         )
         
         background_tasks.add_task(
             logger.info,
-            f"Company branch created: {branch.id} - {branch.name} by user {current_user.id}"
+            f"User {current_user.email} created company branch {branch.id} for company {company_id}"
         )
         
         return CompanyBranchResponse(
-            id=str(branch.id),
+            id = str(branch.id),
             company_id=str(branch.company_id),
-            name=branch.name,
-            description=branch.description,
+            bussiness_type=branch.bussiness_type,
+            branch_name=branch.branch_name,
+            phone_number=branch.phone_number,
             address=branch.address,
-            city=branch.city,
+            description=branch.description,
+            company_type=branch.company_type,
+            company_industry=branch.company_industry,
             country=branch.country,
-            phone=branch.phone,
-            email=branch.email,
-            is_headquarters=branch.is_headquarters,
-            is_active=branch.is_active,
-            created_at=branch.created_at,
-            updated_at=branch.updated_at
+            company_size=branch.company_size,
+            working_days=branch.working_days,
+            overtime_policy=branch.overtime_policy,
         )
         
     except ValueError as e:
@@ -95,14 +99,12 @@ async def list_company_branches(
     request: Request,
     company_id: str,
     background_tasks: BackgroundTasks,
-    current_user: User = Depends(get_current_user)
+    current_user: CurrentUser = Depends(get_current_user)
 ):
-    """List company branches"""
     import time
     start_time = time.time()
     
     try:
-        # Check if user has access to company
         user_companies = await CompanyBranchRepository.get_user_company_branches(str(current_user.id))
         has_access = any(str(c.id) == company_id for c in user_companies)
         
@@ -112,7 +114,6 @@ async def list_company_branches(
                 detail="Access denied"
             )
         
-        # Get branches using repository
         branches = await CompanyBranchRepository.get_company_branches(company_id)
         
         background_tasks.add_task(
@@ -170,16 +171,6 @@ async def get_company_branch(
     start_time = time.time()
     
     try:
-        has_access = await CompanyBranchRepository.validate_user_access(
-            user_id=str(current_user.id),
-            company_branch_id=branch_id
-        )
-        
-        if not has_access and not (current_user.is_superuser or "admin" in current_user.permissions):
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Access denied"
-            )
         
         branch = await CompanyBranchRepository.get_company_branch(branch_id)
         if not branch:
@@ -200,19 +191,19 @@ async def get_company_branch(
         )
         
         return CompanyBranchResponse(
-            id=str(branch.id),
+            id = str(branch.id),
             company_id=str(branch.company_id),
-            name=branch.name,
-            description=branch.description,
+            bussiness_type=branch.bussiness_type,
+            branch_name=branch.branch_name,
+            phone_number=branch.phone_number,
             address=branch.address,
-            city=branch.city,
+            description=branch.description,
+            company_type=branch.company_type,
+            company_industry=branch.company_industry,
             country=branch.country,
-            phone=branch.phone,
-            email=branch.email,
-            is_headquarters=branch.is_headquarters,
-            is_active=branch.is_active,
-            created_at=branch.created_at,
-            updated_at=branch.updated_at
+            company_size=branch.company_size,
+            working_days=branch.working_days,
+            overtime_policy=branch.overtime_policy,
         )
         
     except HTTPException:

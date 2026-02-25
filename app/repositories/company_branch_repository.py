@@ -13,6 +13,7 @@ from app.core.redis import get_redis, is_redis_available
 from app.core.monitoring import monitor_db_operation, monitor_cache_operation
 from app.utils.time import now_utc
 from app.utils.helpers import generate_cache_key, batch_process
+from beanie.exceptions import RevisionIdWasChanged
 
 logger = logging.getLogger(__name__)
 
@@ -219,15 +220,12 @@ class CompanyBranchRepository:
                 return None
             
             data = result[0]
-            if return_model and "_id" in data:
-                branch_data = {**data}
-                branch_data.pop("company", None)
-                branch_data.pop("user_member", None)
-                return CompanyBranch(**branch_data)
+            if return_model:
+                return CompanyBranch.model_validate(data)
             
             return data
         except Exception as e:
-            logger.error(f"Aggregation error: {e}")
+            logger.error(f"Aggregation error: {e}", exc_info=True)
             return None
     
     @staticmethod
@@ -235,91 +233,44 @@ class CompanyBranchRepository:
     async def create_company_branch(
         company_id: str,
         branch_data: CompanyBranchCreate,
-        created_by: str
+        created_by_id: str
     ) -> CompanyBranch:
         try:
-            permission_pipeline = [
-                {
-                    "$match": {
-                        "_id": ObjectId(company_id),
-                        "is_active": True
-                    }
-                },
-                {
-                    "$project": {
-                        "has_permission": {
-                            "$anyElementTrue": {
-                                "$map": {
-                                    "input": "$members",
-                                    "as": "member",
-                                    "in": {
-                                        "$and": [
-                                            {
-                                                "$eq": [
-                                                    "$$member.user_id",
-                                                    ObjectId(created_by)
-                                                ]
-                                            },
-                                            {
-                                                "$or": [
-                                                    {
-                                                        "$eq": [
-                                                            "$$member.role",
-                                                            "owner"
-                                                        ]
-                                                    },
-                                                    {
-                                                        "$in": [
-                                                            "manage_branches",
-                                                            "$$member.permissions"
-                                                        ]
-                                                    }
-                                                ]
-                                            }
-                                        ]
-                                    }
-                                }
-                            }
-                        },
-                        "existing_branches_count": {
-                            "$size": {
-                                "$ifNull": ["$branch_ids", []]
-                            }
-                        }
-                    }
-                }
-            ]
-            
-            result = await Company.aggregate(permission_pipeline).to_list(length=1)
-            if not result or not result[0].get("has_permission"):
-                raise ValueError("User does not have permission to create branches")
-            
             branch_dict = branch_data.model_dump()
             branch_dict["company_id"] = ObjectId(company_id)
-            branch_dict["created_by"] = ObjectId(created_by)
-            branch_dict["is_headquarters"] = result[0].get("existing_branches_count", 0) == 0
+            branch_dict["created_by"] = ObjectId(created_by_id)
             branch_dict["is_active"] = True
             branch_dict["created_at"] = now_utc()
             branch_dict["updated_at"] = now_utc()
             
+            existing_branches_count = await CompanyBranch.find(
+                CompanyBranch.company_id == ObjectId(company_id)
+            ).count()
+            branch_dict["is_headquarters"] = existing_branches_count == 0
+            
             branch = CompanyBranch(**branch_dict)
             await branch.insert()
             
-            await Company.find_one({"_id": ObjectId(company_id)}).update({
-                "$push": {"branch_ids": branch.id},
-                "$set": {"updated_at": now_utc()}
-            })
+            company = await Company.find_one({"_id": ObjectId(company_id)})
+            if not company:
+                raise ValueError(f"Company with id {company_id} not found.")
             
-            await CompanyBranchRepository._invalidate_branch_creation(branch)
+            company.branch_ids.append(branch.id)
+            company.updated_at = now_utc()
             
-            logger.info(f"Company branch created: {branch.id}")
+            await company.save()
+            
+            logger.info(f"Company branch created: {branch.id} for company {company_id}")
             return branch
             
         except DuplicateKeyError as e:
-            logger.error(f"Duplicate key error: {e}")
-            raise ValueError("Branch with similar criteria already exists")
+            logger.error(f"Duplicate key error while creating branch: {e}")
+            raise ValueError("A branch with these details already exists.")
+        except RevisionIdWasChanged as e:
+            logger.error(f"Concurrency conflict while updating company: {e}")
+            raise ValueError("The company data was modified by another process. Please try again.")
         except Exception as e:
-            logger.error(f"Error creating branch: {e}")
+            logger.error(f"Error creating branch in repository: {e}", exc_info=True)
             raise
     
     @staticmethod
@@ -338,21 +289,23 @@ class CompanyBranchRepository:
             {
                 "$project": {
                     "_id": 1,
-                    "name": 1,
-                    "description": 1,
+                    "company_id": 1,
+                    "branch_name": 1,
+                    "bussiness_type": 1,
+                    "phone_number": 1,
                     "address": 1,
-                    "city": 1,
+                    "description": 1,
+                    "company_type": 1,
+                    "company_industry": 1,
                     "country": 1,
-                    "email": 1,
-                    "phone": 1,
+                    "company_size": 1,
+                    "working_days": 1,
+                    "overtime_policy": 1,
                     "is_headquarters": 1,
                     "is_active": 1,
-                    "company_id": 1,
                     "created_by": 1,
                     "created_at": 1,
                     "updated_at": 1,
-                    "company_name": "$company.name",
-                    "company_status": "$company.is_active"
                 }
             }
         ]

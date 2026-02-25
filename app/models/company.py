@@ -3,7 +3,8 @@ from beanie import Document
 from datetime import datetime
 from app.utils.time import now_utc
 from bson import ObjectId
-from typing import Optional
+from typing import Optional, List
+
 class Company(Document):
     user_id: ObjectId = Field(..., description="ID of the user who owns the company")
     name: str = Field(..., description="Name of the company")
@@ -15,6 +16,7 @@ class Company(Document):
     email: str = Field(..., description="Company contact email")
     logo_url: Optional[str] = Field(None, description="URL to the company logo image")
     website: str = Field(..., description="Company website URL")
+    branch_ids: List[ObjectId] = Field(default_factory=list, description="list branch id")
     is_active: bool = Field(default=True, description="Is the company active?")
     updated_by: Optional[ObjectId] = Field(None, description="ID of the user who last updated the company")
     created_at: datetime = Field(default_factory=lambda: now_utc())
