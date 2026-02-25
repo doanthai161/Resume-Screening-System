@@ -1,10 +1,11 @@
 from typing import Optional
+from click import Option
 from pydantic import BaseModel
 from bson import ObjectId
 from datetime import datetime
 
-class JobRequirementCreate(BaseModel):
-    user_id: str
+class JobRequirementBase(BaseModel):
+    user_id: Optional[str] = None
     company_branch_id: str
     title: str
     programming_languages: list[str]
@@ -14,6 +15,9 @@ class JobRequirementCreate(BaseModel):
     salary_min: Optional[int] = None
     salary_max: Optional[int] = None
     expiration_time: Optional[datetime] = None
+
+class JobRequirementCreate(JobRequirementBase):
+    pass
 
 class JobRequirementUpdate(BaseModel):
     title: Optional[str]
@@ -42,6 +46,9 @@ class JobRequirementResponse(BaseModel):
     is_open: bool
     created_at: datetime
     updated_at: datetime
+
+    class Config:
+        from_attributes = True
 
 class JobRequirementListResponse(BaseModel):
     job_requirements: list[JobRequirementResponse]

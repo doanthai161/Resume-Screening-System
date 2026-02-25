@@ -35,13 +35,13 @@ class JobRequirementService:
         trace = start_trace("create_job_requirement")
         
         try:
-            if not await JobRequirementService._validate_user_company_access(
-                user_id, job_data.company_branch_id
-            ):
-                raise HTTPException(
-                    status_code=status.HTTP_403_FORBIDDEN,
-                    detail="User does not have access to this company branch"
-                )
+            # if not await JobRequirementService._validate_user_company_access(
+            #     user_id, job_data.company_branch_id
+            # ):
+            #     raise HTTPException(
+            #         status_code=status.HTTP_403_FORBIDDEN,
+            #         detail="User does not have access to this company branch"
+            #     )
             
             if job_data.expiration_time and job_data.expiration_time < datetime.now():
                 raise HTTPException(
@@ -69,7 +69,8 @@ class JobRequirementService:
                 )
             
             try:
-                job = await JobRequirementRepository.create_job_requirement(job_data)
+                repo = JobRequirementRepository()
+                job = await repo.create_job_requirement(job_data)
             except DuplicateKeyError:
                 raise HTTPException(
                     status_code=status.HTTP_409_CONFLICT,
