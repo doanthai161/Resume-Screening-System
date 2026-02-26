@@ -54,6 +54,53 @@ async def create_job_requirement(
 
 
 @router.get(
+    "/search",
+    response_model=JobRequirementListResponse,
+    summary="Search job requirements",
+    description="Search job requirements by text and filters. If no query is provided, returns all jobs."
+)
+@limiter.limit("30/minute")
+async def search_job_requirements(
+    request: Request,
+    q: Optional[str] = Query(None, min_length=2, description="Search query for title or description"),
+    programming_languages: Optional[List[str]] = Query(None, description="Filter by programming languages"),
+    skills: Optional[List[str]] = Query(None, description="Filter by required skills"),
+    experience_level: Optional[str] = Query(None, description="Filter by experience level"),
+    skip: int = Query(0, ge=0),
+    limit: int = Query(20, ge=1, le=100),
+    current_user: CurrentUser = Depends(get_current_user),
+):
+    try:
+        user_id = str(current_user.user_id) if current_user else None
+        logger.info(
+        "[API] search_job_requirements called | "
+        f"q={q}, programming_languages={programming_languages}, "
+        f"skills={skills}, experience_level={experience_level}, "
+        f"skip={skip}, limit={limit}"
+    )
+
+        service = JobRequirementService()
+        response = await service.search_job_requirements(
+            search_term=q,
+            programming_languages=programming_languages,
+            skills=skills,
+            experience_level=experience_level,
+            skip=skip,
+            limit=limit
+        )
+        
+        return response
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Unexpected error in search_job_requirements API: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Internal server error"
+        )
+
+@router.get(
     "/{job_id}",
     response_model=JobRequirementResponse,
     summary="Get job requirement by ID",
@@ -186,51 +233,6 @@ async def list_job_requirements(
         raise
     except Exception as e:
         logger.error(f"Unexpected error in list_job_requirements API: {e}", exc_info=True)
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Internal server error"
-        )
-
-
-@router.get(
-    "/search",
-    response_model=JobRequirementListResponse,
-    summary="Search job requirements",
-    description="Search job requirements by text and filters"
-)
-@limiter.limit("30/minute")
-async def search_job_requirements(
-    request: Request,
-    q: str = Query(..., min_length=2, description="Search query for title or description"),
-    programming_languages: Optional[List[str]] = Query(None, description="Filter by programming languages"),
-    skills: Optional[List[str]] = Query(None, description="Filter by required skills"),
-    experience_level: Optional[str] = Query(None, description="Filter by experience level"),
-    skip: int = Query(0, ge=0),
-    limit: int = Query(20, ge=1, le=100),
-    current_user: CurrentUser = Depends(get_current_user),
-):
-    try:
-        user_id = str(current_user.user_id) if current_user else None
-        jobs, total = await JobRequirementService.search_job_requirements(
-            user_id=user_id,
-            search_term=q,
-            programming_languages=programming_languages,
-            skills=skills,
-            experience_level=experience_level,
-            skip=skip,
-            limit=limit
-        )
-        
-        return JobRequirementListResponse(
-            items=jobs,
-            total=total,
-            skip=skip,
-            limit=limit
-        )
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Unexpected error in search_job_requirements API: {e}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Internal server error"

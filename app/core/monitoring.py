@@ -226,6 +226,13 @@ def monitor_endpoint(endpoint_name: str):
             
             with monitoring.trace_span(f"endpoint_{endpoint_name}"):
                 try:
+                    import inspect
+
+                    logger.info(f"[DECORATOR] func object: {func}")
+                    logger.info(f"[DECORATOR] func type: {type(func)}")
+                    logger.info(f"[DECORATOR] func signature: {inspect.signature(func)}")
+                    logger.info(f"[DECORATOR] args received: {args}")
+                    logger.info(f"[DECORATOR] kwargs received: {kwargs}")
                     result = func(*args, **kwargs)
                     monitoring.record_metric(
                         name=f"endpoint_{endpoint_name}_calls",

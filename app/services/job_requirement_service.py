@@ -142,32 +142,21 @@ class JobRequirementService:
             
             record_business_metric("cache_miss", tags={"type": "job_requirement"})
             
-            job = await JobRequirementRepository.get_job_requirement(job_id)
+            repo = JobRequirementRepository()
+            job = await repo.get_job_requirement(job_id)
             if not job:
                 raise HTTPException(
                     status_code=status.HTTP_404_NOT_FOUND,
                     detail="Job requirement not found"
                 )
             
-            # Check authorization if user_id provided
-            if user_id and str(job.user_id) != user_id:
-                # Check if user has access to company branch
-                if not await JobRequirementService._validate_user_company_access(
-                    user_id, str(job.company_branch_id)
-                ):
-                    raise HTTPException(
-                        status_code=status.HTTP_403_FORBIDDEN,
-                        detail="Access denied"
-                    )
-            
-            # Cache the result
             if is_redis_available():
                 try:
                     redis_client = get_redis()
                     import json
                     await redis_client.setex(
                         cache_key,
-                        3600,  # 1 hour TTL
+                        3600,
                         json.dumps(JobRequirementService._to_response(job).dict())
                     )
                 except Exception as e:
@@ -188,6 +177,60 @@ class JobRequirementService:
         finally:
             end_trace(trace, success=True)
     
+    # @classmethod
+    # @monitor_service_call("search_job_requirements")
+    async def search_job_requirements(
+        self,
+        search_term: Optional[str],
+        programming_languages: Optional[List[str]],
+        skills: Optional[List[str]],
+        experience_level: Optional[str],
+        skip: int,
+        limit: int,
+    ) -> JobRequirementListResponse:
+        trace = start_trace("search_job_requirements")
+        logger.info(
+            "[API] Calling Service.search_job_requirements with kwargs: "
+            f"{dict(
+                search_term=search_term,
+                programming_languages=programming_languages,
+                skills=skills,
+                experience_level=experience_level,
+                skip=skip,
+                limit=limit,
+            )}"
+        )
+        
+        try:
+            repository = JobRequirementRepository()
+            jobs, total = await repository.search_job_requirements(
+                search_term=search_term,
+                programming_languages=programming_languages,
+                skills=skills,
+                experience_level=experience_level,
+                skip=skip,
+                limit=limit
+            )
+            
+            response_items = [JobRequirementResponse.model_validate(job) for job in jobs]
+            
+            return JobRequirementListResponse(
+                items=response_items,
+                total=total,
+                skip=skip,
+                limit=limit
+            )
+
+        except Exception as e:
+            end_trace(trace, success=False)
+            logger.error(f"Error searching job requirements: {e}", exc_info=True)
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Failed to search job requirements"
+            )
+        finally:
+            end_trace(trace, success=True)
+
     @staticmethod
     @monitor_service_call("update_job_requirement")
     async def update_job_requirement(

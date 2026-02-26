@@ -53,5 +53,5 @@ class JobRequirementResponse(BaseModel):
 class JobRequirementListResponse(BaseModel):
     job_requirements: list[JobRequirementResponse]
     total: int
-    page: int
-    size: int
+    skip: int
+    limit: int

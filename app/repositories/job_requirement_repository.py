@@ -33,6 +33,56 @@ class JobRequirementRepository:
         except Exception:
             return None
 
+    async def search_job_requirements(
+        self,
+        search_term: Optional[str] = None,
+        programming_languages: Optional[List[str]] = None,
+        skills: Optional[List[str]] = None,
+        experience_level: Optional[str] = None,
+        skip: int = 0,
+        limit: int = 20,
+    ) -> Tuple[List[JobRequirement], int]:
+        pipeline = []
+
+        match_stage = {}
+        
+        if search_term:
+            match_stage["$text"] = {"$search": search_term}
+        
+        if programming_languages:
+            match_stage["programming_languages"] = {"$in": programming_languages}
+        if skills:
+            match_stage["skills_required"] = {"$in": skills}
+        if experience_level:
+            match_stage["experience_level"] = experience_level
+            
+        match_stage["is_active"] = True
+        if match_stage:
+            pipeline.append({"$match": match_stage})
+
+        pipeline.append({
+            "$facet": {
+                "data": [
+                    {"$skip": skip},
+                    {"$limit": limit}
+                ],
+                "count": [
+                    {"$count": "total"}
+                ]
+            }
+        })
+
+        result = await JobRequirement.aggregate(pipeline).to_list(length=1)
+        
+        if not result:
+            return [], 0
+
+        facet_result = result[0]
+        jobs = [JobRequirement(**item) for item in facet_result.get("data", [])]
+        total = facet_result.get("count", [{}])[0].get("total", 0)
+
+        return jobs, total
+
     async def update_job_requirement(
         self, 
         job_id: str, 
