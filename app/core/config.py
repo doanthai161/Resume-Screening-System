@@ -17,10 +17,18 @@ class Settings(BaseSettings):
     PORT: int = 8000
 
     WORKERS: int = Field(default=1, description="Number of worker processes")
-    RELOAD: bool = Field(default=True, description="Enable auto-reload in development")
-    
-    PROJECT_ROOT: Path = Field(default=Path(__file__).parent.parent.parent, description="Project root directory")
-    
+    @computed_field
+    @property
+    def RELOAD(self) -> bool:
+        return self.ENVIRONMENT == "development"
+
+    @computed_field
+    @property
+    def PROJECT_ROOT(self) -> Path:
+        if self.PROJECT_ROOT_DIR:
+            return self.PROJECT_ROOT_DIR
+        return Path(__file__).parent.parent.parent
+
     MONGODB_URI: str = Field(default="mongodb://localhost:27017", description="MongoDB connection URI")
     MONGODB_DB_NAME: str = Field(default="resume_screening", description="MongoDB database name")
     MONGODB_SERVER_SELECTION_TIMEOUT: int = Field(default=5000, description="MongoDB server selection timeout in ms")
@@ -57,7 +65,9 @@ class Settings(BaseSettings):
     REDIS_SOCKET_TIMEOUT: int = Field(default=5, description="Redis socket timeout in seconds")
     REDIS_SOCKET_CONNECT_TIMEOUT: int = Field(default=5, description="Redis connection timeout in seconds")
     REDIS_CACHE_TTL: int = Field(default=3600, description="Default Redis cache TTL in seconds (1 hour)")
-    
+
+    PROJECT_ROOT_DIR: Optional[Path] = Field(default=None, description="Override for project root, typically in Docker")
+
     SECRET_KEY: SecretStr = Field(
         default_factory=lambda: SecretStr(secrets.token_urlsafe(32)),
         min_length=32,
