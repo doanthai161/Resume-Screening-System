@@ -145,13 +145,13 @@ async def register(
             )
             await email_otp.insert()
         
-        # background_tasks.add_task(
-        #     send_otp_email,
-        #     email=data.email,
-        #     otp=otp_code,
-        #     otp_type="registration",
-        #     full_name=data.full_name
-        # )
+        background_tasks.add_task(
+            send_otp_email,
+            email=data.email,
+            otp=otp_code,
+            otp_type="registration",
+            full_name=data.full_name
+        )
         print(otp_code, " :OTP ")
         
         background_tasks.add_task(
