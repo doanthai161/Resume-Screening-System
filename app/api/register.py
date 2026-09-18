@@ -1,4 +1,6 @@
-from fastapi import APIRouter, Depends, HTTPException, status, FastAPI, BackgroundTasks, Request
+from fastapi import APIRouter, Depends, HTTPException, status, BackgroundTasks, Request
+from typing import Optional, Dict
+
 from app.schemas.user import (
     AccessToken,
     LoginRequest,
@@ -7,47 +9,20 @@ from app.schemas.user import (
     VerifyOTPResponse,
     VerifyOTPRegisterRequest,
 )
-from app.models.user import User
-from app.core.security import (
-    blacklist_token,
-    create_access_token,
-    get_password_hash,
-    get_current_user,
-    verify_password,
-    CurrentUser,
-    require_permission,
-    decode_jwt_token,
-    password_strength_check,
-    create_token_pair
-)
-from app.logs.logging_config import logger
-from app.dependencies.error_code import ErrorCode
-from typing import Optional, Dict
 from app.schemas.email_otp import RequestOTPRequest
-from app.core.email_otp import send_otp_email
-from app.models.email_otp import EmailOTP
-from app.utils.otp import generate_otp
+from app.schemas.response import ApiResponse
+from app.core.security import get_current_user, CurrentUser, get_token_from_request, blacklist_token
+from app.core.errors import CustomError, ErrorCodes
+from app.logs.logging_config import logger
 from app.core.rate_limiter import limiter
-from slowapi.errors import RateLimitExceeded
-from slowapi import _rate_limit_exceeded_handler
-from app.utils.time import now_utc, ensure_utc
-from datetime import datetime, timedelta, timezone
-from app.models.actor import Actor
-from app.models.user_actor import UserActor
-from app.core.config import settings
-from bson import ObjectId
-from app.repositories.user_repository import UserRepository
-from app.middleware.audit_log import log_security_event, log_audit_action
 from app.models.audit_log import AuditEventType
+
+# Import the new AuthService
+from app.services.auth_service import AuthService, log_security_event
 
 router = APIRouter()
 
-app = FastAPI()
-
-app.state.limiter = limiter
-app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
-
-@router.post("/register", status_code=status.HTTP_201_CREATED, response_model=UserResponse)
+@router.post("/register", status_code=status.HTTP_201_CREATED, response_model=ApiResponse[UserResponse])
 @limiter.limit("3/minute")
 async def register(
     data: RegisterRequest,
@@ -55,128 +30,9 @@ async def register(
     background_tasks: BackgroundTasks
 ):
     try:
-        password_check = password_strength_check(data.password)
-        if not password_check["is_valid"]:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail={
-                    "message": "Password does not meet requirements",
-                    "issues": password_check["issues"]
-                }
-            )
+        user = await AuthService.register(data, request, background_tasks)
         
-        existing_user = await UserRepository.get_user_by_email(data.email)
-        if existing_user:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=ErrorCode.EMAIL_ALREADY_REGISTERED,
-            )
-        
-        if data.phone_number:
-            existing_phone_user = await User.find_one({"phone_number": data.phone_number})
-            if existing_phone_user:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail=ErrorCode.PHONE_ALREADY_REGISTERED,
-                )
-        
-        user_data = {
-            "email": data.email,
-            "full_name": data.full_name,
-            "password": data.password,
-            "phone_number": data.phone_number,
-            "address": data.address,
-            "is_active": False,
-            "is_verified": False,
-        }
-        
-        user = await UserRepository.create_user(user_data)
-        
-        default_actor = await Actor.find_one(Actor.name == settings.CANDIDATE_ROLE_NAME)
-        if not default_actor:
-            logger.error(f"Default actor '{settings.CANDIDATE_ROLE_NAME}' not found.")
-            background_tasks.add_task(
-                logger.error, 
-                f"Default actor '{settings.CANDIDATE_ROLE_NAME}' not found. User {data.email} registered without role assignment."
-            )
-        else:
-            try:
-                user_actor = UserActor(
-                    user_id=ObjectId(user.id),
-                    actor_id=ObjectId(default_actor.id),
-                    created_by=ObjectId(user.id),
-                    created_at=now_utc()
-                )
-                await user_actor.insert()
-                background_tasks.add_task(
-                    logger.info, 
-                    f"Assigned default actor '{settings.CANDIDATE_ROLE_NAME}' to user '{data.email}'."
-                )
-            except Exception as e:
-                logger.error(f"Failed to assign default role to user {data.email}: {e}")
-                background_tasks.add_task(
-                    logger.error, 
-                    f"Failed to assign default role to user {data.email}: {e}"
-                )
-        otp_code = generate_otp()
-        expires_at = now_utc() + timedelta(minutes=settings.OTP_EXPIRY_MINUTES)
-        
-        existing_otp = await EmailOTP.find_one({
-            "email": data.email,
-            "otp_type": "registration",
-            "is_used": False
-        })
-        
-        if existing_otp:
-            existing_otp.otp_code = otp_code
-            existing_otp.expires_at = expires_at
-            existing_otp.attempts = 0
-            existing_otp.is_used = False
-            existing_otp.updated_at = now_utc()
-            await existing_otp.save()
-        else:
-            email_otp = EmailOTP(
-                email=data.email,
-                otp_code=otp_code,
-                otp_type="registration",
-                expires_at=expires_at,
-                created_at=now_utc(),
-                updated_at=now_utc()
-            )
-            await email_otp.insert()
-        
-        background_tasks.add_task(
-            send_otp_email,
-            email=data.email,
-            otp=otp_code,
-            otp_type="registration",
-            full_name=data.full_name
-        )
-        print(otp_code, " :OTP ")
-        
-        background_tasks.add_task(
-            logger.info,
-            f"User registered: {data.email}. OTP sent."
-        )
-        
-        background_tasks.add_task(
-            log_security_event,
-            event_type=AuditEventType.USER_REGISTER,
-            event_name="User Registered",
-            description="User registered via email",
-            user_id=str(user.id),
-            email=data.email,
-            ip_address=request.client.host if request.client else None,
-            user_agent=request.headers.get("user-agent"),
-            details={
-                "email": data.email,
-                "registration_method": "email",
-                "has_phone": bool(data.phone_number)
-            },
-            success=True
-        )
-        
-        return UserResponse(
+        user_response = UserResponse(
             id=str(user.id),
             email=user.email,
             full_name=user.full_name,
@@ -187,23 +43,24 @@ async def register(
             created_at=user.created_at,
             message="Registration successful. Please check your email for OTP verification."
         )
+        return ApiResponse.ok(user_response)
         
+    except CustomError:
+        raise
     except HTTPException:
         raise
     except ValueError as e:
         logger.error(f"Registration validation error for {data.email}: {e}")
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=str(e)
-        )
+        raise CustomError(ErrorCodes.VALIDATION, str(e), status_code=status.HTTP_400_BAD_REQUEST)
     except Exception as e:
         logger.error(f"Registration error for {data.email}: {e}", exc_info=True)
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Registration failed. Please try again later."
+        raise CustomError(
+            ErrorCodes.INTERNAL, 
+            "Registration failed. Please try again later.", 
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
         )
 
-@router.post("/verify-otp", response_model=VerifyOTPResponse)
+@router.post("/verify-otp", response_model=ApiResponse[VerifyOTPResponse])
 @limiter.limit("5/minute")
 async def verify_otp(
     data: VerifyOTPRegisterRequest,
@@ -211,96 +68,12 @@ async def verify_otp(
     background_tasks: BackgroundTasks
 ):
     try:
-        otp_record = await EmailOTP.find_one({
-            "email": data.email,
-            "otp_type": "registration",
-            "is_used": False
-        })
+        token_pair, user = await AuthService.verify_otp(data, request, background_tasks)
         
-        
-        if not otp_record:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=ErrorCode.OTP_NOT_FOUND,
-            )
-        
-        if otp_record.is_used:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=ErrorCode.OTP_ALREADY_USED,
-            )
-        
-        if otp_record.is_expired:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=ErrorCode.OTP_EXPIRED,
-            )
-        
-        if not otp_record.can_attempt:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=ErrorCode.OTP_MAX_ATTEMPTS,
-            )
-        
-        if otp_record.otp_code != data.otp:
-            otp_record.increment_attempt()
-            await otp_record.save()
-            
-            remaining_attempts = otp_record.max_attempts - otp_record.attempts
-            
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail={
-                    "message": ErrorCode.INVALID_OTP,
-                    "remaining_attempts": remaining_attempts
-                }
-            )
-        
-        otp_record.mark_as_used()
-        await otp_record.save()
-        
-        user = await UserRepository.get_user_by_email(data.email)
-        if not user:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=ErrorCode.USER_NOT_FOUND,
-            )
-        
-        success = await UserRepository.verify_user(str(user.id))
-        if not success:
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail="Failed to verify user"
-            )
-        
-        token_pair = create_access_token({
-            "sub": user.email,
-            "email": user.email,
-            "user_id": str(user.id),
-            "scopes": [],
-        })
-        
-        background_tasks.add_task(
-            log_security_event,
-            event_type=AuditEventType.USER_EMAIL_VERIFY,
-            event_name= "rerify_otp",
-            user_id=str(user.id),
-            email=data.email,
-            ip_address=request.client.host if request.client else None,
-            user_agent=request.headers.get("user-agent"),
-            details={"verification_method": "otp"},
-            success=True
-        )
-        
-        background_tasks.add_task(
-            logger.info,
-            f"User email verified: {data.email}"
-        )
-        
-        return VerifyOTPResponse(
-            token= AccessToken(
+        response_data = VerifyOTPResponse(
+            token=AccessToken(
                 access_token=token_pair.access_token if hasattr(token_pair, 'access_token') else token_pair,
-                token_type= "bearer"
+                token_type="bearer"
             ),
             success=True,
             user=UserResponse(
@@ -310,22 +83,23 @@ async def verify_otp(
                 message="Email verified successfully",
                 phone_number=user.phone_number,
                 address=user.address,
-                # is_active=True,
-                # is_verified=True,
-                # created_at=user.created_at
             )
         )
+        return ApiResponse.ok(response_data)
         
+    except CustomError:
+        raise
     except HTTPException:
         raise
     except Exception as e:
         logger.error(f"OTP verification error for {data.email}: {e}", exc_info=True)
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="OTP verification failed"
+        raise CustomError(
+            ErrorCodes.INTERNAL, 
+            "OTP verification failed", 
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
         )
 
-@router.post("/resend-otp", status_code=status.HTTP_200_OK)
+@router.post("/resend-otp", status_code=status.HTTP_200_OK, response_model=ApiResponse[Dict])
 @limiter.limit("3/minute")
 async def resend_otp(
     data: RequestOTPRequest,
@@ -333,95 +107,28 @@ async def resend_otp(
     background_tasks: BackgroundTasks
 ):
     try:
-        user = await UserRepository.get_user_by_email(data.email)
-        if not user:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=ErrorCode.USER_NOT_FOUND,
-            )
+        from app.core.config import settings
+        await AuthService.resend_otp(data, request, background_tasks)
         
-        if user.is_verified:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="User already verified"
-            )
-        
-        otp_code = generate_otp()
-        print(otp_code)
-        expires_at = now_utc() + timedelta(minutes=settings.OTP_EXPIRY_MINUTES)
-        
-        existing_otp = await EmailOTP.find_one({
-            "email": data.email,
-            "otp_type": "registration",
-            "is_used": False
-        })
-        
-        if existing_otp:
-            time_since_creation = now_utc() - ensure_utc(existing_otp.created_at)
-            if time_since_creation < timedelta(seconds=30):  # 30 seconds cooldown
-                raise HTTPException(
-                    status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-                    detail="Please wait before requesting another OTP"
-                )
-            
-            existing_otp.otp_code = otp_code
-            existing_otp.expires_at = expires_at
-            existing_otp.attempts = 0
-            existing_otp.is_used = False
-            existing_otp.updated_at = now_utc()
-            await existing_otp.save()
-        else:
-            email_otp = EmailOTP(
-                email=data.email,
-                otp_code=otp_code,
-                otp_type="registration",
-                expires_at=expires_at,
-                created_at=now_utc(),
-                updated_at=now_utc()
-            )
-            await email_otp.insert()
-        
-        # background_tasks.add_task(
-        #     send_otp_email,
-        #     email=data.email,
-        #     otp=otp_code,
-        #     otp_type="registration",
-        #     full_name=user.full_name
-        # )
-        
-        background_tasks.add_task(
-            logger.info,
-            f"OTP resent to: {data.email}"
-        )
-        
-        background_tasks.add_task(
-            log_security_event,
-            event_type=AuditEventType.OTP_RESENT,
-            event_name= "resend otp",
-            user_id=str(user.id),
-            email=data.email,
-            ip_address=request.client.host if request.client else None,
-            user_agent=request.headers.get("user-agent"),
-            details={"otp_type": "registration"},
-            success=True
-        )
-        
-        return {
+        return ApiResponse.ok({
             "message": "OTP sent successfully",
             "email": data.email,
             "expires_in_minutes": settings.OTP_EXPIRY_MINUTES
-        }
+        })
         
+    except CustomError:
+        raise
     except HTTPException:
         raise
     except Exception as e:
         logger.error(f"Resend OTP error for {data.email}: {e}", exc_info=True)
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to resend OTP"
+        raise CustomError(
+            ErrorCodes.INTERNAL, 
+            "Failed to resend OTP", 
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
         )
 
-@router.post("/login", response_model=AccessToken)
+@router.post("/login", response_model=ApiResponse[AccessToken])
 @limiter.limit("5/minute")
 async def login(
     data: LoginRequest,
@@ -429,88 +136,10 @@ async def login(
     background_tasks: BackgroundTasks
 ):
     try:
-        user = await UserRepository.authenticate_user(data.email, data.password)
+        from app.core.config import settings
+        token_pair, user = await AuthService.login(data, request, background_tasks)
         
-        if not user:
-            background_tasks.add_task(
-                log_security_event,
-                event_type=AuditEventType.USER_LOGIN_FAILED,
-                event_name="check existing user in login",
-                email=data.email,
-                ip_address=request.client.host if request.client else None,
-                user_agent=request.headers.get("user-agent"),
-                details={"reason": "invalid_credentials"},
-                success=False
-            )
-            
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail=ErrorCode.INVALID_CREDENTIALS,
-            )
-        
-        if not user.is_active:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail=ErrorCode.USER_INACTIVE,
-            )
-        
-        if not user.is_verified:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Please verify your email first",
-            )
-        
-        actor_links = await UserActor.find(
-            UserActor.user_id == user.id
-        ).to_list()
-        
-        actor_ids = list({link.actor_id for link in actor_links})
-        actors = []
-        if actor_ids:
-            actors = await Actor.find(
-                {"_id": {"$in": actor_ids}, "is_active": True}
-            ).to_list()
-        
-        permissions = []
-        active_actor_ids = [actor.id for actor in actors]
-        if active_actor_ids:
-            from app.models.actor_permission import ActorPermission
-            from app.models.permission import Permission
-            
-            perm_links = await ActorPermission.find(
-                {"actor_id": {"$in": active_actor_ids}}
-            ).to_list()
-            permission_ids = list({link.permission_id for link in perm_links})
-            if permission_ids:
-                permissions = await Permission.find(
-                    {"_id": {"$in": permission_ids}, "is_active": True}
-                ).to_list()
-        
-        scopes = [f"role:{actor.name}" for actor in actors]
-        scopes.extend([f"perm:{perm.name}" for perm in permissions])
-        
-        token_pair = create_token_pair(
-            user=user,
-            scopes=scopes
-        )
-        background_tasks.add_task(
-            log_security_event,
-            event_type=AuditEventType.USER_LOGIN,
-            event_name = "login",
-            user_id=str(user.id),
-            email=data.email,
-            ip_address=request.client.host if request.client else None,
-            user_agent=request.headers.get("user-agent"),
-            details={"login_method": "password"},
-            success=True
-        )
-        
-        background_tasks.add_task(
-            logger.info,
-            f"User logged in: {data.email}"
-        )
-        
-        return AccessToken(
+        response_data = AccessToken(
             access_token=token_pair.access_token,
             token_type=token_pair.token_type,
             expires_in=settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60,
@@ -528,17 +157,17 @@ async def login(
                 created_at=user.created_at
             )
         )
+        return ApiResponse.ok(response_data)
         
+    except CustomError:
+        raise
     except HTTPException:
         raise
     except Exception as e:
         logger.error(f"Login error for {data.email}: {e}", exc_info=True)
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Login failed"
-        )
+        raise CustomError(ErrorCodes.INTERNAL, "Login failed", status_code=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
-@router.post("/logout", status_code=status.HTTP_200_OK)
+@router.post("/logout", status_code=status.HTTP_200_OK, response_model=ApiResponse[Dict])
 async def logout(
     request: Request,
     current_user: CurrentUser = Depends(get_current_user),
@@ -554,7 +183,7 @@ async def logout(
                     log_security_event,
                     event_type=AuditEventType.USER_LOGOUT,
                     user_id=str(current_user.user.id),
-                    event_name = "logout",
+                    event_name="logout",
                     email=current_user.user.email,
                     ip_address=request.client.host if request.client else None,
                     user_agent=request.headers.get("user-agent"),
@@ -563,78 +192,30 @@ async def logout(
             
             logger.info(f"User logged out: {current_user.user.email}")
         
-        return {"message": "Logged out successfully"}
+        return ApiResponse.ok({"message": "Logged out successfully"})
         
     except Exception as e:
         logger.error(f"Logout error for user {current_user.user.email}: {e}")
-        return {"message": "Logged out successfully"}
+        return ApiResponse.ok({"message": "Logged out successfully"})
 
-@router.post("/refresh", response_model=AccessToken)
+@router.post("/refresh", response_model=ApiResponse[AccessToken])
 async def refresh_token(
     request: Request,
     background_tasks: BackgroundTasks
 ):
     try:
-        from app.core.security import (
-            get_token_from_request,
-            decode_jwt_token,
-            is_token_blacklisted,
-            blacklist_token,
-            create_access_token,
-            create_token_pair
-        )
-        
+        from app.core.config import settings
         token = await get_token_from_request(request)
         if not token:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail=ErrorCode.INVALID_CREDENTIALS,
+            raise CustomError(
+                ErrorCodes.UNAUTHORIZED, 
+                "No token provided", 
+                status_code=status.HTTP_401_UNAUTHORIZED
             )
+            
+        token_pair, user = await AuthService.refresh_token(token, request, background_tasks)
         
-        token_payload = decode_jwt_token(token)
-        if not token_payload or token_payload.type != "refresh":
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail=ErrorCode.INVALID_TOKEN_TYPE,
-            )
-        
-        if await is_token_blacklisted(token):
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail=ErrorCode.TOKEN_EXPIRED,
-            )
-        
-        user = await UserRepository.get_user_by_email(token_payload.email)
-        if not user or not user.is_active:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail=ErrorCode.USER_NOT_FOUND,
-            )
-        
-        await blacklist_token(token)
-        
-        token_pair = create_token_pair(
-            user=user,
-            scopes=token_payload.scopes or []
-        )
-        
-        background_tasks.add_task(
-            logger.info,
-            f"Token refreshed for user: {user.email}"
-        )
-        
-        background_tasks.add_task(
-            log_security_event,
-            event_type=AuditEventType.REFRESH_TOKEN,
-            event_name = "refresh_token",
-            user_id=str(user.id),
-            email=user.email,
-            ip_address=request.client.host if request.client else None,
-            user_agent=request.headers.get("user-agent"),
-            success=True
-        )
-        
-        return AccessToken(
+        response_data = AccessToken(
             access_token=token_pair.access_token,
             token_type=token_pair.token_type,
             expires_in=settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60,
@@ -651,49 +232,16 @@ async def refresh_token(
                 created_at=user.created_at
             )
         )
+        return ApiResponse.ok(response_data)
         
+    except CustomError:
+        raise
     except HTTPException:
         raise
     except Exception as e:
         logger.error(f"Token refresh error: {e}", exc_info=True)
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Token refresh failed"
+        raise CustomError(
+            ErrorCodes.INTERNAL, 
+            "Token refresh failed", 
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
         )
-
-async def get_token_from_request(request: Request) -> Optional[str]:
-    """Extract token from request"""
-    auth_header = request.headers.get("Authorization")
-    if auth_header and auth_header.startswith("Bearer "):
-        return auth_header[7:]
-    return None
-
-async def log_security_event(
-    event_type: AuditEventType,
-    event_name: str,
-    user_id: Optional[str] = None,
-    description: Optional[str] = None,
-    email: Optional[str] = None,
-    ip_address: Optional[str] = None,
-    user_agent: Optional[str] = None,
-    details: Optional[Dict] = None,
-    success: bool = True
-):
-    try:
-        from app.services.audit_log_service import AuditLogService
-        
-        await AuditLogService.log_security_event(
-            event_type=event_type,
-            user_id=user_id,
-            event_name=event_name,
-            user_email=email,
-            user_ip=ip_address,
-            user_agent=user_agent,
-            details=details or {},
-            success=success
-        )
-
-    except Exception as e:
-        from app.logs.logging_config import logger
-        logger.error(f"Failed to log security event: {e}", exc_info=True)
-        print(f"ERROR in log_security_event: {e}")

@@ -1,8 +1,6 @@
 from typing import List, Optional
-from fastapi import APIRouter, Depends, HTTPException, status, Query, Request
+from fastapi import APIRouter, Depends, status, Query, Request
 from fastapi.responses import JSONResponse, StreamingResponse
-from slowapi import Limiter
-from slowapi.util import get_remote_address
 import logging
 
 from app.services.job_requirement_service import JobRequirementService
@@ -12,17 +10,19 @@ from app.schemas.job_requirement import (
     JobRequirementResponse,
     JobRequirementListResponse
 )
+from app.schemas.response import ApiResponse
 from app.core.security import get_current_user, CurrentUser, require_permission
 from app.models.user import User
+from app.core.rate_limiter import limiter
+from app.core.errors import CustomError, ErrorCodes
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
-limiter = Limiter(key_func=get_remote_address)
 
 
 @router.post(
     "/",
-    response_model=JobRequirementResponse,
+    response_model=ApiResponse[JobRequirementResponse],
     status_code=status.HTTP_201_CREATED,
     summary="Create a new job requirement",
     description="Create a new job requirement for screening resumes"
@@ -41,21 +41,22 @@ async def create_job_requirement(
             user_id=str(current_user.user_id),
             job_data=job_data
         )
-        return job
+        return ApiResponse.ok(job)
         
-    except HTTPException:
+    except CustomError:
         raise
     except Exception as e:
         logger.error(f"Unexpected error in create_job_requirement API: {e}", exc_info=True)
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Internal server error"
+        raise CustomError(
+            ErrorCodes.INTERNAL,
+            "Internal server error",
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
         )
 
 
 @router.get(
     "/search",
-    response_model=JobRequirementListResponse,
+    response_model=ApiResponse[JobRequirementListResponse],
     summary="Search job requirements",
     description="Search job requirements by text and filters. If no query is provided, returns all jobs."
 )
@@ -73,11 +74,11 @@ async def search_job_requirements(
     try:
         user_id = str(current_user.user_id) if current_user else None
         logger.info(
-        "[API] search_job_requirements called | "
-        f"q={q}, programming_languages={programming_languages}, "
-        f"skills={skills}, experience_level={experience_level}, "
-        f"skip={skip}, limit={limit}"
-    )
+            "[API] search_job_requirements called | "
+            f"q={q}, programming_languages={programming_languages}, "
+            f"skills={skills}, experience_level={experience_level}, "
+            f"skip={skip}, limit={limit}"
+        )
 
         service = JobRequirementService()
         response = await service.search_job_requirements(
@@ -89,20 +90,21 @@ async def search_job_requirements(
             limit=limit
         )
         
-        return response
+        return ApiResponse.ok(response)
         
-    except HTTPException:
+    except CustomError:
         raise
     except Exception as e:
         logger.error(f"Unexpected error in search_job_requirements API: {e}", exc_info=True)
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Internal server error"
+        raise CustomError(
+            ErrorCodes.INTERNAL,
+            "Internal server error",
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
         )
 
 @router.get(
     "/{job_id}",
-    response_model=JobRequirementResponse,
+    response_model=ApiResponse[JobRequirementResponse],
     summary="Get job requirement by ID",
     description="Retrieve a specific job requirement by its ID"
 )
@@ -118,21 +120,22 @@ async def get_job_requirement(
             job_id=job_id,
             user_id=user_id
         )
-        return job
+        return ApiResponse.ok(job)
         
-    except HTTPException:
+    except CustomError:
         raise
     except Exception as e:
         logger.error(f"Unexpected error in get_job_requirement API: {e}", exc_info=True)
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Internal server error"
+        raise CustomError(
+            ErrorCodes.INTERNAL,
+            "Internal server error",
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
         )
 
 
 @router.put(
     "/{job_id}",
-    response_model=JobRequirementResponse,
+    response_model=ApiResponse[JobRequirementResponse],
     summary="Update job requirement",
     description="Update an existing job requirement"
 )
@@ -151,15 +154,16 @@ async def update_job_requirement(
             user_id=str(current_user.user_id),
             update_data=update_data
         )
-        return job
+        return ApiResponse.ok(job)
         
-    except HTTPException:
+    except CustomError:
         raise
     except Exception as e:
         logger.error(f"Unexpected error in update_job_requirement API: {e}", exc_info=True)
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Internal server error"
+        raise CustomError(
+            ErrorCodes.INTERNAL,
+            "Internal server error",
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
         )
 
 
@@ -173,7 +177,7 @@ async def delete_job_requirement(
     request: Request,
     job_id: str,
     hard_delete: bool = Query(False, description="Perform hard delete (admin only)"),
-        current_user: CurrentUser = Depends(
+    current_user: CurrentUser = Depends(
         require_permission("job_requirements:delete")
     ),
 ):
@@ -184,23 +188,22 @@ async def delete_job_requirement(
             hard_delete=hard_delete
         )
         
-        return JSONResponse(
-            content={"message": "Job requirement deleted successfully"},
-            status_code=status.HTTP_200_OK
-        )
-    except HTTPException:
+        return ApiResponse.ok({"message": "Job requirement deleted successfully"})
+        
+    except CustomError:
         raise
     except Exception as e:
         logger.error(f"Unexpected error in delete_job_requirement API: {e}", exc_info=True)
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Internal server error"
+        raise CustomError(
+            ErrorCodes.INTERNAL,
+            "Internal server error",
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
         )
 
 
 @router.get(
     "/",
-    response_model=JobRequirementListResponse,
+    response_model=ApiResponse[JobRequirementListResponse],
     summary="List job requirements",
     description="Get a paginated list of job requirements with optional filters"
 )
@@ -215,32 +218,29 @@ async def list_job_requirements(
 ):
     try:
         user_id = str(current_user.user_id) if current_user else None
-        jobs, total = await JobRequirementService.list_job_requirements(
+        jobs_response = await JobRequirementService.list_job_requirements(
             user_id=user_id,
             company_branch_id=company_branch_id,
             is_open=is_open,
-            skip=skip,
-            limit=limit
+            page=(skip // limit) + 1,
+            size=limit
         )
         
-        return JobRequirementListResponse(
-            items=jobs,
-            total=total,
-            skip=skip,
-            limit=limit
-        )
-    except HTTPException:
+        return ApiResponse.ok(jobs_response)
+        
+    except CustomError:
         raise
     except Exception as e:
         logger.error(f"Unexpected error in list_job_requirements API: {e}", exc_info=True)
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Internal server error"
+        raise CustomError(
+            ErrorCodes.INTERNAL,
+            "Internal server error",
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
         )
 
 
 @router.get(
-    "/export",
+    "/export/jobs",
     summary="Export job requirements",
     description="Export job requirements to CSV, Excel, or JSON format"
 )
@@ -264,11 +264,12 @@ async def export_job_requirements(
             media_type=export_result["content_type"],
             headers={"Content-Disposition": f"attachment; filename={export_result['filename']}"}
         )
-    except HTTPException:
+    except CustomError:
         raise
     except Exception as e:
         logger.error(f"Unexpected error in export_job_requirements API: {e}", exc_info=True)
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Internal server error"
+        raise CustomError(
+            ErrorCodes.INTERNAL,
+            "Internal server error",
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
         )

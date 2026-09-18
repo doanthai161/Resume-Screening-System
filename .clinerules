@@ -1,0 +1,156 @@
+# AI AGENT INSTRUCTIONS: SYSTEM CODING STANDARDS & ANTI-PATTERNS
+
+> System Directive: You are an expert Python Backend Engineer AI. When generating, refactoring, or reviewing code for this project, you MUST strictly adhere to the following rules. Treat "MUST AVOID" (Anti-patterns) as hard constraints. Our stack is Python, FastAPI, MongoDB, Beanie ODM (Motor Async), and Pydantic.
+
+---
+
+## 1. DATABASE & DATA ACCESS (MongoDB / Beanie ODM)
+
+### [MUST DO] (Agent MUST implement)
+- **Multi-tenant Architecture**: This is a multi-tenant SaaS. You MUST ensure proper context injection by always filtering documents by `tenant_id` (e.g., `await Model.find(Model.tenant_id == current_user.tenant_id)`).
+- **Beanie ODM Syntax**: Use Beanie's query builders (`find()`, `find_one()`, `insert()`, `update()`) instead of raw PyMongo queries whenever possible.
+- **Indexing**: Automatically propose/add indexes in the `Settings` inner class for fields frequently used in search, match, or sort operations.
+- **Pagination**: Any API returning a list MUST include `skip` and `limit` (or Cursor-based pagination).
+- **Security**: Always use parameterized queries via Beanie ODM to prevent NoSQL Injection.
+
+### [MUST AVOID] (Agent MUST NOT generate)
+- **N+1 Query**: NEVER write database queries inside loops. You must use Beanie's `fetch_links` for relationships, or use `$in` to fetch data in bulk.
+- **SELECT ***: Do not fetch all fields if not needed. Use Beanie's `.project()` to only select the exact fields required to save memory.
+- **Long-running Transactions**: Do not place 3rd-party API calls (External HTTP) or heavy file processing inside a DB Transaction block/session (`async with client.start_session()`).
+
+---
+
+## 2. CACHING STRATEGY (Redis)
+
+### [MUST DO] (Agent MUST implement)
+- **Cache-Aside Pattern**: Prioritize this flow: Read Cache -> If Miss -> Read DB -> Write to Cache -> Return.
+- **TTL (Time-To-Live)**: EVERY key stored in the cache MUST have a TTL to prevent memory leaks and stale data.
+- **Granularity**: Store small, fragmented data (e.g., `user:101:profile`) instead of storing massive objects that require heavy parsing.
+- **Connection Resilience**: ALWAYS configure Redis connections with `socket_keepalive=True` and `health_check_interval=10` (or similar) to prevent Docker/OS from dropping idle TCP connections.
+- **Logical Separation**: Isolate different types of data into different logical databases (e.g., Cache in `db=0`, Rate Limit in `db=1`, Celery in `db=2`) to allow safe cache clearing (`FLUSHDB`) without affecting critical limits.
+- **Deferred DB Connection**: When implementing Response Caching at the Router level, DO NOT inject `AsyncSession` or Service dependencies in the route signature if the cache hit can bypass the DB completely. Instead, use `async with AsyncSessionLocal() as db:` ONLY inside the cache-miss block to avoid DB cold starts.
+
+### [MUST AVOID] (Agent MUST NOT generate)
+- **Cache Stampede (Thundering Herd)**: Avoid simultaneous cache expiration that causes thousands of requests to hit the DB at once. Add Jitter/Randomness to the TTL.
+- **Caching Highly Dynamic Data**: Do not use caching for financial transactions or real-time balances unless utilizing atomic Redis structures.
+
+### Connection Pool
+- Each Redis DB must use one module-level `ConnectionPool` singleton **per worker process**. Do not create a new pool per request.
+- `max_connections=15` per pool. When estimating the Redis connection limit, use: `workers x redis_pools_per_worker x max_connections`.
+- If a new Redis DB is added, create a dedicated pool/client following the same pattern in [src/config/redis.py](src/config/redis.py).
+- Close the client first with `aclose()`, then close the pool. Do not close them in the opposite order.
+
+### Consistency / Atomicity
+- **Counters**: use atomic commands such as `INCR` / `DECR`. Do not use `GET` + `SET`.
+- **Counters with TTL**: ensure `INCR + EXPIRE` cannot accidentally leave a key without TTL. Use Lua scripts or transactions/pipelines when strict atomicity is required.
+- **Set-if-not-exists**: use `SET key value NX EX <ttl>`. Do not use `SETNX` followed by a separate `EXPIRE`.
+- **Check-then-act logic**: wrap the operation in a Lua script (`redis.eval`) or a transaction (`MULTI/EXEC`) to guarantee atomicity.
+- **No local in-memory cache**: do not use `dict`, `lru_cache`, or other local in-memory caches for runtime data that must stay consistent across workers. Shared state such as rate limits, locks, and counters must live in Redis. For business data, the database remains the source of truth; Redis is only a cache layer.
+- **Distributed locks**: acquire locks with `SET key unique_value NX EX <ttl>`. When releasing a lock, delete it only if the current value matches `unique_value`, preferably via Lua script or a reliable lock library. Do not implement locks with `GET` + `SET`.
+---
+
+## 3. MESSAGE QUEUE & EVENT STREAMING
+
+### [MUST DO] (Agent MUST implement)
+- **Idempotency**: Consumer logic MUST be idempotent. Automatically generate duplicate-check logic (e.g., verifying `message_id` in the DB before processing).
+- **Dead Letter Queue (DLQ)**: When a Consumer encounters an exception, log the error and push the message to a DLQ after retries fail, without blocking subsequent messages.
+
+### [MUST AVOID] (Agent MUST NOT generate)
+- **Blind Auto-Commit**: Do not auto-commit in critical business flows. Commit ONLY AFTER the DB logic is successfully processed.
+
+---
+
+## 4. CODE LOGIC & ARCHITECTURE
+
+### [MUST DO] (Agent MUST implement)
+- **SOLID & DRY**: Extract complex logic into separate functions/services. A single function should generally not exceed 50 lines of code.
+- **Graceful Error Handling (Python/FastAPI)**:
+  // Agent MUST generate error handling like this:
+  ```python
+  try:
+      # business logic
+  except Exception as e:
+      logger.error(f"[Context/Action] Failed to execute: {str(e)}", extra={"input": payload})
+      raise CustomError(ERROR_CODES.INTERNAL, "Something went wrong")
+  ```
+- **Strict Typing**: Always use Python Type Hints (`-> list[str]`, `dict | None`). 
+- **Error Codes Enum**: All business errors MUST be defined in an `ErrorCodes` (str, Enum) class.
+  ```python
+  class ErrorCodes(str, Enum):
+      TOKEN_EXHAUSTED = "TOKEN_EXHAUSTED"
+      PERMISSION_DENIED = "PERMISSION_DENIED"
+  ```
+- **Immutability**: Use `dataclass(frozen=True)` or `Final` typing for immutable objects. Do not mutate parameters passed into a function.
+
+### [MUST AVOID] (Agent MUST NOT generate)
+- **Magic Strings/Numbers**: DO NOT hardcode. Automatically extract fixed values into constants or `Enum`.
+- **Swallow Exceptions**: Do not generate code like `except Exception: pass`. You must log and handle/throw the error.
+- **God Classes**: Do not cram routing, validation, business logic, and DB calls into a single router file. Use the Repository/Service/Router pattern.
+
+---
+
+## 5. API DESIGN (RESTful FastAPI)
+
+### [MUST DO] (Agent MUST implement)
+- **Standard HTTP Codes**: Strictly apply: 200 (OK), 201 (Created), 400 (Bad Request), 401 (Unauthorized), 403 (Forbidden), 404 (Not Found), 500 (Server Error).
+- **Standard Response Format**: Automatically wrap returned data using the `ApiResponse` schema:
+  `return ApiResponse.ok(data)`
+- **Response Models**: Every response MUST have a specific Pydantic schema defined in `response_model` within the route decorator. Do not return Beanie Document models directly without validation. Never expose sensitive fields.
+- **Resource Naming**: Use plural nouns for REST endpoints (e.g., `GET /users`, `POST /orders`).
+
+### [MUST AVOID] (Agent MUST NOT generate)
+- **Verbs in URLs**: Do not generate APIs like `POST /update_user` or `GET /get_cart`.
+- **200 OK for Errors**: Do not return HTTP Status 200 if the actual logic failed (e.g., validation failed, record not found). Raise `HTTPException` or `CustomError`.
+
+---
+
+## 6. SECURITY
+
+### [MUST DO] (Agent MUST implement)
+- **Input Validation**: ALWAYS use **Pydantic Models** (`BaseModel`) for all API requests (Body, Query, Params) before processing business logic.
+- **Env Variables**: All connection strings, secrets, and keys must be called via the Pydantic Settings config (e.g., `from src.config.settings import settings; settings.DATABASE_URL`).
+
+### [MUST AVOID] (Agent MUST NOT generate)
+- **Hardcoded Secrets**: STRICTLY FORBIDDEN to generate code containing raw passwords, JWT Secrets, or API Keys directly in the source code files.
+- **PII Logging**: STRICTLY FORBIDDEN to log sensitive information such as Passwords, Tokens, or Credit Card numbers to the console or log files.
+
+---
+
+## 7. EXECUTION DIRECTIVES FOR AI AGENT
+
+1. Analyze before code: Thoroughly read the existing codebase to reuse available utility functions, error handlers, BaseModels, or loggers before creating new ones.
+2. Comment rule: Add brief, concise comments explaining the "WHY" behind complex logic (Regex, specific algorithms, SQL joins, or workarounds).
+3. Refactoring: If asked to "Refactor the following code", the Agent MUST cross-reference the provided code with this document to identify Anti-patterns and automatically fix them.
+
+---
+
+## 8. MULTI-TENANT & RBAC SPECIFICS
+
+### [MUST DO] (Agent MUST implement)
+- **Multi-tenant Isolation**: ALWAYS determine `tenant_id` from the JWT token (e.g., `current_user.tenant_id`). Do not cross-query between tenant-specific data without checking `tenant_id`.
+- **Tenant Context Injection**: Repository queries MUST filter by `tenant_id` context. 
+  - Valid: `await Chatbot.find(Chatbot.tenant_id == current_user.tenant_id)`
+  - Invalid: `await Chatbot.get(chatbot_id)` (without checking tenant ownership).
+- **Stateless RBAC**: Embed permissions in JWT payload during login to reduce DB queries. Compare `permissions_version` in the JWT with the DB. If they differ, raise 401 to force re-login.
+- **Billing Token Consumption**: When deducting tokens, use an atomic UPDATE condition with Beanie/Motor:
+  ```python
+  await TenantSubscription.find(
+      TenantSubscription.tenant_id == tenant_id,
+      TenantSubscription.tokens_consumed + tokens_used <= TenantSubscription.tokens_included
+  ).update({"$inc": {"tokens_consumed": tokens_used}})
+  ```
+- **Audit Logging**: Admin CRUD actions MUST be recorded asynchronously in `audit_logs` (event_type, actor_id, metadata).
+- **Analytics Events Async**: Saving analytics MUST NOT block the main transaction. Use fire-and-forget (`asyncio.create_task`) or push to a message queue.
+
+## Access Token & Refresh Token Rules
+
+- Business APIs MUST use access tokens, for example: `/me`, `/users`, `/roles`, chatbot, conversation, document, billing, and monitoring APIs.
+- Refresh tokens MUST only be used for token renewal endpoints such as `/auth/refresh`; logout may accept a refresh token in the body only to revoke it.
+- Do not accept refresh tokens as `Authorization: Bearer` credentials for business APIs. Current-user dependencies MUST reject tokens with `type = refresh`.
+- Never trust `user_id` sent by the client in body/query/path for personal actions. Personal APIs MUST resolve the user from `current_user.id` in the access token, for example `/auth/me`.
+- If an endpoint must include `user_id` in the URL, the service layer MUST cross-check permissions: `user_id == current_user.id` or the current user has the required admin permission.
+- `tenant_admin` can only operate on users in `current_user.tenant_id`; if the client sends another tenant ID, return 403 instead of silently correcting it.
+- Access tokens MUST be validated through the shared helper, such as `get_valid_token_payload(..., TOKEN_TYPE_ACCESS)`, before building `CurrentUser`.
+- Refresh tokens MUST be validated through the shared helper, such as `get_valid_token_payload(..., TOKEN_TYPE_REFRESH)`, and must still check revoked tokens, blocked sessions, and required payload claims.
+- When `permissions_version` changes, old access tokens MUST be rejected. Refresh tokens may be used to issue a new access token with the latest role/permissions from the database.
+- Do not log access tokens, refresh tokens, or JWT payloads containing sensitive data.

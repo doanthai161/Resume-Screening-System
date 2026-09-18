@@ -49,6 +49,9 @@ class UserResponse(BaseModel):
     full_name: Optional[str]= None
     phone_number: Optional[str] =None
     address: Optional[str]= None
+    is_active: Optional[bool] = None
+    is_verified: Optional[bool] = None
+    created_at: Optional[datetime] = None
     message:Optional[str]= None
 
 class UserListRespponse(BaseModel):

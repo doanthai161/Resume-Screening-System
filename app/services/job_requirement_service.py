@@ -2,6 +2,7 @@ from typing import List, Optional, Dict, Any
 from datetime import datetime
 import logging
 from fastapi import HTTPException, status
+from app.core.errors import CustomError, ErrorCodes
 from bson import ObjectId
 from pymongo.errors import DuplicateKeyError
 
@@ -44,42 +45,47 @@ class JobRequirementService:
             #     )
             
             if job_data.expiration_time and job_data.expiration_time < datetime.now():
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="Expiration time cannot be in the past"
+                raise CustomError(
+                    ErrorCodes.BAD_REQUEST,
+                    "Expiration time cannot be in the past",
+                    status_code=status.HTTP_400_BAD_REQUEST
                 )
             
             if (job_data.salary_min and job_data.salary_max and 
                 job_data.salary_min > job_data.salary_max):
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="Minimum salary cannot be greater than maximum salary"
+                raise CustomError(
+                    ErrorCodes.BAD_REQUEST,
+                    "Minimum salary cannot be greater than maximum salary",
+                    status_code=status.HTTP_400_BAD_REQUEST
                 )
             
             if not job_data.programming_languages:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="At least one programming language is required"
+                raise CustomError(
+                    ErrorCodes.BAD_REQUEST,
+                    "At least one programming language is required",
+                    status_code=status.HTTP_400_BAD_REQUEST
                 )
             
             if not job_data.skills_required:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="At least one skill is required"
+                raise CustomError(
+                    ErrorCodes.BAD_REQUEST,
+                    "At least one skill is required",
+                    status_code=status.HTTP_400_BAD_REQUEST
                 )
             
             try:
-                repo = JobRequirementRepository()
-                job = await repo.create_job_requirement(job_data)
+                job = await JobRequirementRepository.create_job_requirement(job_data)
             except DuplicateKeyError:
-                raise HTTPException(
-                    status_code=status.HTTP_409_CONFLICT,
-                    detail="A similar job requirement already exists"
+                raise CustomError(
+                    ErrorCodes.CONFLICT,
+                    "A similar job requirement already exists",
+                    status_code=status.HTTP_409_CONFLICT
                 )
             except ValueError as e:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail=str(e)
+                raise CustomError(
+                    ErrorCodes.BAD_REQUEST,
+                    str(e),
+                    status_code=status.HTTP_400_BAD_REQUEST
                 )
             
             record_business_metric(
@@ -101,10 +107,11 @@ class JobRequirementService:
         except Exception as e:
             end_trace(trace, success=False)
             logger.error(f"Error creating job requirement: {e}", exc_info=True)
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail="Failed to create job requirement"
-            )
+            raise CustomError(
+                    ErrorCodes.INTERNAL,
+                    "Failed to create job requirement",
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
+                )
         finally:
             end_trace(trace, success=True)
     
@@ -131,23 +138,24 @@ class JobRequirementService:
                             if not await JobRequirementService._validate_user_company_access(
                                 user_id, cached_data.get("company_branch_id")
                             ):
-                                raise HTTPException(
-                                    status_code=status.HTTP_403_FORBIDDEN,
-                                    detail="Access denied"
-                                )
+                                raise CustomError(
+                    ErrorCodes.FORBIDDEN,
+                    "Access denied",
+                    status_code=status.HTTP_403_FORBIDDEN
+                )
                         
                         return JobRequirementResponse(**cached_data)
                 except Exception as e:
                     logger.warning(f"Cache error for job {job_id}: {e}")
             
             record_business_metric("cache_miss", tags={"type": "job_requirement"})
-            
-            repo = JobRequirementRepository()
-            job = await repo.get_job_requirement(job_id)
+
+            job = await JobRequirementRepository.get_job_requirement(job_id)
             if not job:
-                raise HTTPException(
-                    status_code=status.HTTP_404_NOT_FOUND,
-                    detail="Job requirement not found"
+                raise CustomError(
+                    ErrorCodes.NOT_FOUND,
+                    "Job requirement not found",
+                    status_code=status.HTTP_404_NOT_FOUND
                 )
             
             if is_redis_available():
@@ -170,67 +178,14 @@ class JobRequirementService:
         except Exception as e:
             end_trace(trace, success=False)
             logger.error(f"Error getting job requirement {job_id}: {e}", exc_info=True)
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail="Failed to get job requirement"
-            )
+            raise CustomError(
+                    ErrorCodes.INTERNAL,
+                    "Failed to get job requirement",
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
+                )
         finally:
             end_trace(trace, success=True)
     
-    # @classmethod
-    # @monitor_service_call("search_job_requirements")
-    async def search_job_requirements(
-        self,
-        search_term: Optional[str],
-        programming_languages: Optional[List[str]],
-        skills: Optional[List[str]],
-        experience_level: Optional[str],
-        skip: int,
-        limit: int,
-    ) -> JobRequirementListResponse:
-        trace = start_trace("search_job_requirements")
-        logger.info(
-            "[API] Calling Service.search_job_requirements with kwargs: "
-            f"{dict(
-                search_term=search_term,
-                programming_languages=programming_languages,
-                skills=skills,
-                experience_level=experience_level,
-                skip=skip,
-                limit=limit,
-            )}"
-        )
-        
-        try:
-            repository = JobRequirementRepository()
-            jobs, total = await repository.search_job_requirements(
-                search_term=search_term,
-                programming_languages=programming_languages,
-                skills=skills,
-                experience_level=experience_level,
-                skip=skip,
-                limit=limit
-            )
-            
-            response_items = [JobRequirementResponse.model_validate(job) for job in jobs]
-            
-            return JobRequirementListResponse(
-                items=response_items,
-                total=total,
-                skip=skip,
-                limit=limit
-            )
-
-        except Exception as e:
-            end_trace(trace, success=False)
-            logger.error(f"Error searching job requirements: {e}", exc_info=True)
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail="Failed to search job requirements"
-            )
-        finally:
-            end_trace(trace, success=True)
-
     @staticmethod
     @monitor_service_call("update_job_requirement")
     async def update_job_requirement(
@@ -245,37 +200,42 @@ class JobRequirementService:
             # Get existing job
             job = await JobRequirementRepository.get_job_requirement(job_id)
             if not job:
-                raise HTTPException(
-                    status_code=status.HTTP_404_NOT_FOUND,
-                    detail="Job requirement not found"
+                raise CustomError(
+                    ErrorCodes.NOT_FOUND,
+                    "Job requirement not found",
+                    status_code=status.HTTP_404_NOT_FOUND
                 )
             
             # Check ownership
             if str(job.user_id) != user_id:
-                raise HTTPException(
-                    status_code=status.HTTP_403_FORBIDDEN,
-                    detail="Only the creator can update this job requirement"
+                raise CustomError(
+                    ErrorCodes.FORBIDDEN,
+                    "Only the creator can update this job requirement",
+                    status_code=status.HTTP_403_FORBIDDEN
                 )
             
             # Check if job is still active
             if not job.is_active:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="Cannot update an inactive job requirement"
+                raise CustomError(
+                    ErrorCodes.BAD_REQUEST,
+                    "Cannot update an inactive job requirement",
+                    status_code=status.HTTP_400_BAD_REQUEST
                 )
             
             # Validate updates
             if update_data.expiration_time and update_data.expiration_time < datetime.now():
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="Expiration time cannot be in the past"
+                raise CustomError(
+                    ErrorCodes.BAD_REQUEST,
+                    "Expiration time cannot be in the past",
+                    status_code=status.HTTP_400_BAD_REQUEST
                 )
             
             if (update_data.salary_min and update_data.salary_max and 
                 update_data.salary_min > update_data.salary_max):
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="Minimum salary cannot be greater than maximum salary"
+                raise CustomError(
+                    ErrorCodes.BAD_REQUEST,
+                    "Minimum salary cannot be greater than maximum salary",
+                    status_code=status.HTTP_400_BAD_REQUEST
                 )
             
             # Update the job
@@ -284,9 +244,10 @@ class JobRequirementService:
             )
             
             if not updated_job:
-                raise HTTPException(
-                    status_code=status.HTTP_404_NOT_FOUND,
-                    detail="Job requirement not found after update"
+                raise CustomError(
+                    ErrorCodes.NOT_FOUND,
+                    "Job requirement not found after update",
+                    status_code=status.HTTP_404_NOT_FOUND
                 )
             
             # Record business metric
@@ -306,10 +267,11 @@ class JobRequirementService:
         except Exception as e:
             end_trace(trace, success=False)
             logger.error(f"Error updating job requirement {job_id}: {e}", exc_info=True)
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail="Failed to update job requirement"
-            )
+            raise CustomError(
+                    ErrorCodes.INTERNAL,
+                    "Failed to update job requirement",
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
+                )
         finally:
             end_trace(trace, success=True)
     
@@ -327,25 +289,28 @@ class JobRequirementService:
             # Get job to check ownership
             job = await JobRequirementRepository.get_job_requirement(job_id)
             if not job:
-                raise HTTPException(
-                    status_code=status.HTTP_404_NOT_FOUND,
-                    detail="Job requirement not found"
+                raise CustomError(
+                    ErrorCodes.NOT_FOUND,
+                    "Job requirement not found",
+                    status_code=status.HTTP_404_NOT_FOUND
                 )
             
             # Check ownership
             if str(job.user_id) != user_id:
-                raise HTTPException(
-                    status_code=status.HTTP_403_FORBIDDEN,
-                    detail="Only the creator can delete this job requirement"
+                raise CustomError(
+                    ErrorCodes.FORBIDDEN,
+                    "Only the creator can delete this job requirement",
+                    status_code=status.HTTP_403_FORBIDDEN
                 )
             
             if hard_delete:
                 # Hard delete (admin only - implement admin check in production)
                 if not await JobRequirementService._is_admin(user_id):
-                    raise HTTPException(
-                        status_code=status.HTTP_403_FORBIDDEN,
-                        detail="Hard delete requires admin privileges"
-                    )
+                    raise CustomError(
+                    ErrorCodes.FORBIDDEN,
+                    "Hard delete requires admin privileges",
+                    status_code=status.HTTP_403_FORBIDDEN
+                )
                 
                 # Actually delete from database
                 await job.delete()
@@ -357,10 +322,11 @@ class JobRequirementService:
                 # Soft delete
                 success = await JobRequirementRepository.delete_job_requirement(job_id)
                 if not success:
-                    raise HTTPException(
-                        status_code=status.HTTP_404_NOT_FOUND,
-                        detail="Job requirement not found"
-                    )
+                    raise CustomError(
+                    ErrorCodes.NOT_FOUND,
+                    "Job requirement not found",
+                    status_code=status.HTTP_404_NOT_FOUND
+                )
                 action = "soft_deleted"
                 
                 # Invalidate related caches
@@ -385,10 +351,11 @@ class JobRequirementService:
         except Exception as e:
             end_trace(trace, success=False)
             logger.error(f"Error deleting job requirement {job_id}: {e}", exc_info=True)
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail="Failed to delete job requirement"
-            )
+            raise CustomError(
+                    ErrorCodes.INTERNAL,
+                    "Failed to delete job requirement",
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
+                )
         finally:
             end_trace(trace, success=True)
     
@@ -464,10 +431,10 @@ class JobRequirementService:
             response = JobRequirementListResponse(
                 job_requirements=job_responses,
                 total=total,
-                page=page,
-                size=size
+                skip=skip,
+                limit=size
             )
-            
+
             # Cache the result
             if is_redis_available() and jobs:
                 try:
@@ -492,10 +459,11 @@ class JobRequirementService:
         except Exception as e:
             end_trace(trace, success=False)
             logger.error(f"Error listing job requirements: {e}", exc_info=True)
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail="Failed to list job requirements"
-            )
+            raise CustomError(
+                    ErrorCodes.INTERNAL,
+                    "Failed to list job requirements",
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
+                )
         finally:
             end_trace(trace, success=True)
     
@@ -506,21 +474,18 @@ class JobRequirementService:
         programming_languages: Optional[List[str]] = None,
         skills: Optional[List[str]] = None,
         experience_level: Optional[str] = None,
-        page: int = 1,
-        size: int = 20
+        skip: int = 0,
+        limit: int = 20
     ) -> JobRequirementListResponse:
         """Search job requirements with filters"""
         trace = start_trace("search_job_requirements")
-        
+
         try:
-            # Validate pagination
-            if page < 1:
-                page = 1
-            if size < 1 or size > 100:
-                size = 20
-            
-            skip = (page - 1) * size
-            
+            if skip < 0:
+                skip = 0
+            if limit < 1 or limit > 100:
+                limit = 20
+
             # Search jobs
             jobs, total = await JobRequirementRepository.search_job_requirements(
                 search_term=search_term or "",
@@ -528,12 +493,12 @@ class JobRequirementService:
                 skills=skills,
                 experience_level=experience_level,
                 skip=skip,
-                limit=size
+                limit=limit
             )
-            
+
             # Convert to response models
             job_responses = [JobRequirementService._to_response(job) for job in jobs]
-            
+
             record_business_metric(
                 "job_requirement_searched",
                 value=len(job_responses),
@@ -542,21 +507,22 @@ class JobRequirementService:
                     "has_filters": bool(programming_languages or skills or experience_level)
                 }
             )
-            
+
             return JobRequirementListResponse(
                 job_requirements=job_responses,
                 total=total,
-                page=page,
-                size=size
+                skip=skip,
+                limit=limit
             )
-            
+
         except Exception as e:
             end_trace(trace, success=False)
             logger.error(f"Error searching job requirements: {e}", exc_info=True)
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail="Failed to search job requirements"
-            )
+            raise CustomError(
+                    ErrorCodes.INTERNAL,
+                    "Failed to search job requirements",
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
+                )
         finally:
             end_trace(trace, success=True)
     
@@ -648,15 +614,17 @@ class JobRequirementService:
         
         try:
             if not job_ids:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="No job IDs provided"
+                raise CustomError(
+                    ErrorCodes.BAD_REQUEST,
+                    "No job IDs provided",
+                    status_code=status.HTTP_400_BAD_REQUEST
                 )
             
             if is_open is None and is_active is None:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="At least one status field (is_open or is_active) must be provided"
+                raise CustomError(
+                    ErrorCodes.BAD_REQUEST,
+                    "At least one status field (is_open or is_active) must be provided",
+                    status_code=status.HTTP_400_BAD_REQUEST
                 )
             
             updated_count = 0
@@ -722,10 +690,11 @@ class JobRequirementService:
         except Exception as e:
             end_trace(trace, success=False)
             logger.error(f"Error in bulk update: {e}", exc_info=True)
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail="Failed to bulk update job statuses"
-            )
+            raise CustomError(
+                    ErrorCodes.INTERNAL,
+                    "Failed to bulk update job statuses",
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
+                )
         finally:
             end_trace(trace, success=True)
     
@@ -750,9 +719,10 @@ class JobRequirementService:
             )
             
             if not jobs:
-                raise HTTPException(
-                    status_code=status.HTTP_404_NOT_FOUND,
-                    detail="No job requirements found to export"
+                raise CustomError(
+                    ErrorCodes.NOT_FOUND,
+                    "No job requirements found to export",
+                    status_code=status.HTTP_404_NOT_FOUND
                 )
             
             # Convert to response models
@@ -832,10 +802,11 @@ class JobRequirementService:
                     content_type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
                     
                 except ImportError:
-                    raise HTTPException(
-                        status_code=status.HTTP_400_BAD_REQUEST,
-                        detail="Excel export requires pandas and openpyxl packages"
-                    )
+                    raise CustomError(
+                    ErrorCodes.BAD_REQUEST,
+                    "Excel export requires pandas and openpyxl packages",
+                    status_code=status.HTTP_400_BAD_REQUEST
+                )
             else:  # json
                 import json
                 content = json.dumps(export_data, default=str, indent=2)
@@ -860,10 +831,11 @@ class JobRequirementService:
         except Exception as e:
             end_trace(trace, success=False)
             logger.error(f"Error exporting job requirements: {e}", exc_info=True)
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail="Failed to export job requirements"
-            )
+            raise CustomError(
+                    ErrorCodes.INTERNAL,
+                    "Failed to export job requirements",
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
+                )
         finally:
             end_trace(trace, success=True)
     

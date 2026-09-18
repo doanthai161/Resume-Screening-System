@@ -1,5 +1,5 @@
 from typing import List, Optional, Dict, Any, Tuple
-from datetime import datetime
+from datetime import datetime, timedelta
 from bson import ObjectId
 from pymongo.errors import DuplicateKeyError
 import logging
@@ -572,59 +572,42 @@ class UserCompanyRepository:
             async for doc in UserCompany.aggregate(pipeline):
                 role_counts[doc["_id"]] = doc["count"]
             
-            thirty_days_ago = now_utc().replace(hour=0, minute=0, second=0, microsecond=0)
-            thirty_days_ago = thirty_days_ago.replace(day=thirty_days_ago.day - 30)
-            
+            thirty_days_ago = now_utc() - timedelta(days=30)
+
             recent_assignments = await UserCompany.find({
                 "company_branch_id": ObjectId(company_branch_id),
                 "assigned_at": {"$gte": thirty_days_ago}
             }).count()
-            
-            seven_days_from_now = now_utc().replace(hour=23, minute=59, second=59, microsecond=999999)
-            seven_days_from_now = seven_days_from_now.replace(day=seven_days_from_now.day + 7)
-            
-            ending_soon = await UserCompany.find({
-                "company_branch_id": ObjectId(company_branch_id),
-                "is_active": True,
-                "end_date": {
-                    "$ne": None,
-                    "$lte": seven_days_from_now,
-                    "$gte": now_utc()
-                }
-            }).count()
-            
+
+            branch = await CompanyBranch.get(ObjectId(company_branch_id))
+
             stats = UserCompanyStats(
-                company_branch_id=company_branch_id,
-                total_assignments=active_count + inactive_count,
-                active_assignments=active_count,
-                inactive_assignments=inactive_count,
-                assignments_by_role=role_counts,
-                recent_assignments_30d=recent_assignments,
-                assignments_ending_soon=ending_soon,
-                calculated_at=datetime.now()
+                total_users=active_count + inactive_count,
+                active_users=active_count,
+                inactive_users=inactive_count,
+                total_branches=1,
+                active_branches=1 if branch and branch.is_active else 0,
+                inactive_branches=0 if branch and branch.is_active else 1
             )
-            
+
             await UserCompanyRepository._set_cache(
                 cache_key,
                 stats.model_dump(),
                 900
             )
             logger.debug(f"Cache set for branch stats: {company_branch_id}")
-            
+
             return stats
-            
+
         except Exception as e:
             logger.error(f"Error getting branch assignment stats: {e}")
             return UserCompanyStats(
-                company_branch_id=company_branch_id,
-                total_assignments=0,
-                active_assignments=0,
-                inactive_assignments=0,
-                assignments_by_role={},
-                recent_assignments_30d=0,
-                assignments_ending_soon=0,
-                calculated_at=datetime.now(),
-                error=str(e)
+                total_users=0,
+                active_users=0,
+                inactive_users=0,
+                total_branches=0,
+                active_branches=0,
+                inactive_branches=0
             )
     
     @staticmethod

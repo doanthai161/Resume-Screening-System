@@ -6,25 +6,6 @@ from app.utils.time import now_utc
 from typing import Optional, List
 
 
-class CategoryScores(Document):
-    skills: float = Field(0.0, ge=0.0, le=100.0)
-    experience: float = Field(0.0, ge=0.0, le=100.0)
-    education: float = Field(0.0, ge=0.0, le=100.0)
-    certifications: float = Field(0.0, ge=0.0, le=100.0)
-    overall_fit: float = Field(0.0, ge=0.0, le=100.0)
-
-    class Settings:
-        name = "category_scores"
-        indexes = [
-            [("skills", 1)],
-            [("experience", 1)],
-            [("education", 1)],
-            [("certifications", 1)],
-            [("overall_fit", 1)],
-        ]
-    class Config:
-        arbitrary_types_allowed = True
-
 class ScreeningResult(Document):
     """Kết quả đánh giá CV với Job Requirement"""
     resume_file_id: ObjectId = Field(..., description="ID file CV")

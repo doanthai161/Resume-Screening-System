@@ -8,11 +8,11 @@ import asyncio
 from functools import wraps
 from app.models.company_branch import CompanyBranch
 from app.models.company import Company
+from app.models.user_company import UserCompany
 from app.schemas.company_branch import CompanyBranchCreate, CompanyBranchUpdate
 from app.core.redis import get_redis, is_redis_available
 from app.core.monitoring import monitor_db_operation, monitor_cache_operation
 from app.utils.time import now_utc
-from app.utils.helpers import generate_cache_key, batch_process
 from beanie.exceptions import RevisionIdWasChanged
 
 logger = logging.getLogger(__name__)
@@ -25,50 +25,46 @@ class CompanyBranchRepository:
     USER_BRANCHES_CACHE_TTL = 1800
     PERMISSION_CACHE_TTL = 300
     STATS_CACHE_TTL = 600
-    NULL_CACHE_VALUE = "__NULL__" 
+    NULL_CACHE_VALUE = "__NULL__"
     NULL_CACHE_TTL = 60
-    
+
     @staticmethod
     def _get_cache_key(*parts: str) -> str:
         return f"{CompanyBranchRepository.CACHE_PREFIX}{':'.join(str(p) for p in parts)}"
-    
+
     @staticmethod
     def _get_branch_key(branch_id: str) -> str:
         return CompanyBranchRepository._get_cache_key("branch", branch_id)
-    
+
     @staticmethod
     def _get_branch_stats_key(branch_id: str) -> str:
         return CompanyBranchRepository._get_cache_key("stats", branch_id)
-    
+
     @staticmethod
     def _get_company_branches_key(company_id: str, active_only: bool = True) -> str:
         status = "active" if active_only else "all"
         return CompanyBranchRepository._get_cache_key("company", company_id, "branches", status)
-    
+
     @staticmethod
     def _get_user_branches_key(user_id: str, active_only: bool = True) -> str:
         status = "active" if active_only else "all"
         return CompanyBranchRepository._get_cache_key("user", user_id, "branches", status)
-    
+
     @staticmethod
     def _get_permissions_key(user_id: str, branch_id: str) -> str:
         return CompanyBranchRepository._get_cache_key("perms", user_id, branch_id)
-    
+
     @staticmethod
     def _get_company_stats_key(company_id: str) -> str:
         return CompanyBranchRepository._get_cache_key("company", company_id, "stats")
-    
-    @staticmethod
-    def _get_headquarters_key(company_id: str) -> str:
-        return CompanyBranchRepository._get_cache_key("hq", company_id)
-    
+
     @staticmethod
     def _get_search_key(search_term: str, filters: Dict[str, Any], skip: int, limit: int) -> str:
         filter_hash = hash(frozenset(filters.items()))
         return CompanyBranchRepository._get_cache_key(
             "search", search_term, filter_hash, skip, limit
         )
-    
+
     @staticmethod
     def cache_result(ttl: int = 300, key_func=None):
         def decorator(func):
@@ -76,37 +72,36 @@ class CompanyBranchRepository:
             async def wrapper(*args, **kwargs):
                 if not is_redis_available():
                     return await func(*args, **kwargs)
-                
+
                 cache_key = key_func(*args, **kwargs) if key_func else None
                 if cache_key is None:
-                    cls = args[0] if args else None
                     func_name = func.__name__
-                    arg_str = str(args[1:] if cls else args) + str(kwargs)
+                    arg_str = str(args) + str(kwargs)
                     cache_key = CompanyBranchRepository._get_cache_key(
                         "func", func_name, hash(arg_str)
                     )
-                
+
                 cached = await CompanyBranchRepository._get_cached(cache_key)
                 if cached is not None:
                     logger.debug(f"Cache hit for {func.__name__}")
                     return cached
-                
+
                 result = await func(*args, **kwargs)
-                
+
                 if result is not None:
-                    await CompanyBranchRepository._set_cached(
+                    await CompanyBranchRepository._set_cache(
                         cache_key, result, ttl
                     )
-                
+
                 return result
             return wrapper
         return decorator
-    
+
     @staticmethod
     async def _get_cached(key: str) -> Optional[Any]:
         if not is_redis_available():
             return None
-        
+
         try:
             redis_client = get_redis()
             cached = await redis_client.get(key)
@@ -115,18 +110,17 @@ class CompanyBranchRepository:
         except Exception as e:
             logger.debug(f"Cache get error for key {key}: {e}")
         return None
-    
+
     @staticmethod
     async def _set_cache(key: str, data: Any, ttl: Optional[int] = None) -> None:
         if not is_redis_available():
             return
         try:
             redis_client = get_redis()
-            import json
-            
+
             if data is None:
                 value_to_store = CompanyBranchRepository.NULL_CACHE_VALUE
-                effective_ttl = CompanyBranchRepository.NULL_CACHE_TTL 
+                effective_ttl = CompanyBranchRepository.NULL_CACHE_TTL
             elif isinstance(data, str):
                 value_to_store = data
                 effective_ttl = ttl
@@ -135,29 +129,29 @@ class CompanyBranchRepository:
                 effective_ttl = ttl
 
             await redis_client.setex(
-                key, 
-                effective_ttl or CompanyBranchRepository.BRANCH_CACHE_TTL, 
+                key,
+                effective_ttl or CompanyBranchRepository.BRANCH_CACHE_TTL,
                 value_to_store
             )
         except Exception as e:
             logger.warning(f"Cache set error for key {key}: {e}")
-    
+
     @staticmethod
     async def _delete_cached(*keys: str) -> None:
         if not is_redis_available() or not keys:
             return
-        
+
         try:
             redis_client = get_redis()
             await redis_client.delete(*keys)
         except Exception as e:
             logger.debug(f"Cache delete error: {e}")
-    
+
     @staticmethod
     async def _invalidate_pattern(pattern: str) -> None:
         if not is_redis_available():
             return
-        
+
         try:
             redis_client = get_redis()
             keys = await redis_client.keys(pattern)
@@ -165,7 +159,7 @@ class CompanyBranchRepository:
                 await redis_client.delete(*keys)
         except Exception as e:
             logger.debug(f"Pattern delete error: {e}")
-    
+
     @staticmethod
     def _branch_base_pipeline() -> List[Dict]:
         return [
@@ -184,31 +178,18 @@ class CompanyBranchRepository:
                 }
             }
         ]
-    
+
+    BRANCH_FIELDS = [
+        "_id", "company_id", "bussiness_type", "branch_name", "phone_number",
+        "address", "city", "description", "company_type", "company_industry",
+        "country", "company_size", "working_days", "overtime_policy",
+        "is_active", "created_by", "updated_by", "created_at", "updated_at",
+    ]
+
     @staticmethod
-    def _with_user_member_pipeline(user_id: str) -> List[Dict]:
-        user_oid = ObjectId(user_id)
-        return [
-            {
-                "$addFields": {
-                    "user_member": {
-                        "$arrayElemAt": [
-                            {
-                                "$filter": {
-                                    "input": "$company.members",
-                                    "as": "member",
-                                    "cond": {
-                                        "$eq": ["$$member.user_id", user_oid]
-                                    }
-                                }
-                            },
-                            0
-                        ]
-                    }
-                }
-            }
-        ]
-    
+    def _branch_project_stage() -> Dict:
+        return {"$project": {field: 1 for field in CompanyBranchRepository.BRANCH_FIELDS}}
+
     @staticmethod
     async def _aggregate_branch(
         pipeline: List[Dict],
@@ -218,16 +199,16 @@ class CompanyBranchRepository:
             result = await CompanyBranch.aggregate(pipeline).to_list(length=1)
             if not result:
                 return None
-            
+
             data = result[0]
             if return_model:
                 return CompanyBranch.model_validate(data)
-            
+
             return data
         except Exception as e:
             logger.error(f"Aggregation error: {e}", exc_info=True)
             return None
-    
+
     @staticmethod
     @monitor_db_operation("branch_create")
     async def create_company_branch(
@@ -242,27 +223,24 @@ class CompanyBranchRepository:
             branch_dict["is_active"] = True
             branch_dict["created_at"] = now_utc()
             branch_dict["updated_at"] = now_utc()
-            
-            existing_branches_count = await CompanyBranch.find(
-                CompanyBranch.company_id == ObjectId(company_id)
-            ).count()
-            branch_dict["is_headquarters"] = existing_branches_count == 0
-            
+
             branch = CompanyBranch(**branch_dict)
             await branch.insert()
-            
+
             company = await Company.find_one({"_id": ObjectId(company_id)})
             if not company:
                 raise ValueError(f"Company with id {company_id} not found.")
-            
+
             company.branch_ids.append(branch.id)
             company.updated_at = now_utc()
-            
+
             await company.save()
-            
+
+            await CompanyBranchRepository._invalidate_branch_creation(branch)
+
             logger.info(f"Company branch created: {branch.id} for company {company_id}")
             return branch
-            
+
         except DuplicateKeyError as e:
             logger.error(f"Duplicate key error while creating branch: {e}")
             raise ValueError("A branch with these details already exists.")
@@ -272,11 +250,11 @@ class CompanyBranchRepository:
         except Exception as e:
             logger.error(f"Error creating branch in repository: {e}", exc_info=True)
             raise
-    
+
     @staticmethod
     @monitor_db_operation("branch_get")
     @monitor_cache_operation("branch_get")
-    @cache_result(ttl=BRANCH_CACHE_TTL, key_func=lambda self, branch_id: 
+    @cache_result(ttl=BRANCH_CACHE_TTL, key_func=lambda branch_id:
                   CompanyBranchRepository._get_branch_key(branch_id))
     async def get_company_branch(branch_id: str) -> Optional[CompanyBranch]:
         pipeline = [
@@ -286,32 +264,11 @@ class CompanyBranchRepository:
                 }
             },
             *CompanyBranchRepository._branch_base_pipeline(),
-            {
-                "$project": {
-                    "_id": 1,
-                    "company_id": 1,
-                    "branch_name": 1,
-                    "bussiness_type": 1,
-                    "phone_number": 1,
-                    "address": 1,
-                    "description": 1,
-                    "company_type": 1,
-                    "company_industry": 1,
-                    "country": 1,
-                    "company_size": 1,
-                    "working_days": 1,
-                    "overtime_policy": 1,
-                    "is_headquarters": 1,
-                    "is_active": 1,
-                    "created_by": 1,
-                    "created_at": 1,
-                    "updated_at": 1,
-                }
-            }
+            CompanyBranchRepository._branch_project_stage()
         ]
-        
+
         return await CompanyBranchRepository._aggregate_branch(pipeline)
-    
+
     @staticmethod
     @monitor_db_operation("branch_update")
     async def update_company_branch(
@@ -320,242 +277,135 @@ class CompanyBranchRepository:
         updated_by: str
     ) -> Optional[CompanyBranch]:
         try:
-            pipeline = [
-                {
-                    "$match": {
-                        "_id": ObjectId(branch_id),
-                        "is_active": True
-                    }
-                },
-                *CompanyBranchRepository._branch_base_pipeline(),
-                *CompanyBranchRepository._with_user_member_pipeline(updated_by),
-                {
-                    "$project": {
-                        "branch": "$$ROOT",
-                        "has_permission": {
-                            "$or": [
-                                {"$eq": ["$user_member.role", "owner"]},
-                                {"$in": ["manage_branches", "$user_member.permissions"]}
-                            ]
-                        },
-                        "current_is_headquarters": "$is_headquarters"
-                    }
-                }
-            ]
-            
-            result = await CompanyBranch.aggregate(pipeline).to_list(length=1)
-            if not result or not result[0].get("has_permission"):
+            from app.repositories.company_repository import CompanyRepository
+
+            branch = await CompanyBranch.get(ObjectId(branch_id))
+            if not branch or not branch.is_active:
+                return None
+
+            role = await CompanyRepository.get_user_company_role(updated_by, str(branch.company_id))
+            if role not in ["owner", "admin"]:
                 raise ValueError("User does not have permission to update this branch")
-            
-            branch_data = result[0]["branch"]
-            
-            if (update_data.is_headquarters is not None and 
-                not update_data.is_headquarters and 
-                result[0]["current_is_headquarters"]):
-                
-                hq_count = await CompanyBranch.find({
-                    "company_id": branch_data["company_id"],
-                    "is_headquarters": True,
-                    "is_active": True,
-                    "_id": {"$ne": ObjectId(branch_id)}
-                }).count()
-                
-                if hq_count == 0:
-                    raise ValueError("Cannot remove headquarters status from the only headquarters")
-            
+
             update_dict = update_data.model_dump(exclude_unset=True)
+            update_dict["updated_by"] = ObjectId(updated_by)
             update_dict["updated_at"] = now_utc()
-            
+
             await CompanyBranch.find_one({"_id": ObjectId(branch_id)}).update({
                 "$set": update_dict
             })
-            
+
             updated_branch = await CompanyBranchRepository.get_company_branch(branch_id)
-            
+
             await CompanyBranchRepository._invalidate_branch_update(updated_branch)
-            
+
             return updated_branch
-            
+
+        except ValueError:
+            raise
         except Exception as e:
             logger.error(f"Error updating branch: {e}")
             raise
-    
+
     @staticmethod
     @monitor_db_operation("branch_get_permissions")
     @monitor_cache_operation("branch_get_permissions")
-    @cache_result(ttl=PERMISSION_CACHE_TTL, key_func=lambda self, user_id, branch_id: 
+    @cache_result(ttl=PERMISSION_CACHE_TTL, key_func=lambda user_id, branch_id:
                   CompanyBranchRepository._get_permissions_key(user_id, branch_id))
     async def get_user_branch_permissions(
         user_id: str,
         branch_id: str
     ) -> Dict[str, Any]:
-        pipeline = [
-            {
-                "$match": {
-                    "_id": ObjectId(branch_id),
-                    "is_active": True
-                }
-            },
-            *CompanyBranchRepository._branch_base_pipeline(),
-            {
-                "$match": {
-                    "company.is_active": True
-                }
-            },
-            *CompanyBranchRepository._with_user_member_pipeline(user_id),
-            {
-                "$project": {
-                    "has_access": {
-                        "$cond": [
-                            {"$ne": ["$user_member", None]},
-                            True,
-                            False
-                        ]
-                    },
-                    "role": "$user_member.role",
-                    "permissions": "$user_member.permissions",
-                    "branch_is_headquarters": "$is_headquarters",
-                    "user_member": 1
-                }
-            }
-        ]
-        
-        result = await CompanyBranchRepository._aggregate_branch(pipeline, return_model=False)
-        
-        if not result or not result.get("has_access"):
-            return {
-                "has_access": False,
-                "reason": "User not a member" if result else "Branch or company not found"
-            }
-        
-        role = result.get("role", "")
-        permissions = result.get("permissions", [])
-        can_manage = role == "owner" or "manage_branches" in permissions
-        
+        from app.repositories.user_company_repository import UserCompanyRepository
+        from app.repositories.company_repository import CompanyRepository
+
+        branch = await CompanyBranch.get(ObjectId(branch_id))
+        if not branch or not branch.is_active:
+            return {"has_access": False, "reason": "Branch not found"}
+
+        company = await Company.get(branch.company_id)
+        if not company or not company.is_active:
+            return {"has_access": False, "reason": "Company not found"}
+
+        if str(company.user_id) == user_id:
+            role = "owner"
+            permissions: List[str] = []
+        else:
+            role = await UserCompanyRepository.get_user_role_in_branch(user_id, branch_id)
+            permissions = await UserCompanyRepository.get_user_permissions_in_branch(user_id, branch_id)
+
+        if not role:
+            return {"has_access": False, "reason": "User not a member"}
+
+        can_manage = role in ["owner", "admin"] or "manage_branches" in permissions
+
         return {
             "has_access": True,
             "role": role,
             "company_permissions": permissions,
-            "branch_permissions": [],
+            "branch_permissions": permissions,
             "can_manage_branch": can_manage,
             "can_view_branch": True,
             "can_edit_branch": can_manage,
             "can_delete_branch": role == "owner",
-            "branch_is_headquarters": result.get("branch_is_headquarters", False),
             "user_id": user_id,
             "branch_id": branch_id
         }
-    
+
     @staticmethod
     @monitor_db_operation("branch_list_company")
     @monitor_cache_operation("branch_list_company")
-    @cache_result(ttl=BRANCH_LIST_CACHE_TTL, key_func=lambda self, company_id, active_only: 
+    @cache_result(ttl=BRANCH_LIST_CACHE_TTL, key_func=lambda company_id, active_only=True:
                   CompanyBranchRepository._get_company_branches_key(company_id, active_only))
     async def get_company_branches(
         company_id: str,
         active_only: bool = True
     ) -> List[CompanyBranch]:
-        pipeline = [
-            {
-                "$match": {
-                    "company_id": ObjectId(company_id)
-                }
-            }
-        ]
-        
+        query: Dict[str, Any] = {"company_id": ObjectId(company_id)}
         if active_only:
-            pipeline[0]["$match"]["is_active"] = True
-        
-        pipeline.extend([
-            *CompanyBranchRepository._branch_base_pipeline(),
-            {
-                "$sort": {"name": 1}
-            },
-            {
-                "$project": {
-                    "_id": 1,
-                    "name": 1,
-                    "description": 1,
-                    "address": 1,
-                    "city": 1,
-                    "country": 1,
-                    "email": 1,
-                    "phone": 1,
-                    "is_headquarters": 1,
-                    "is_active": 1,
-                    "company_id": 1,
-                    "created_at": 1,
-                    "updated_at": 1,
-                    "company_name": "$company.name"
-                }
-            }
-        ])
-        
+            query["is_active"] = True
+
         try:
-            branches = []
-            async for doc in CompanyBranch.aggregate(pipeline):
-                branch_data = {k: v for k, v in doc.items() if k != "company_name"}
-                branches.append(CompanyBranch(**branch_data))
+            branches = await CompanyBranch.find(query).sort("branch_name").to_list()
             return branches
         except Exception as e:
             logger.error(f"Error getting company branches: {e}")
             return []
-    
+
     @staticmethod
     @monitor_db_operation("branch_list_user")
     @monitor_cache_operation("branch_list_user")
-    @cache_result(ttl=USER_BRANCHES_CACHE_TTL, key_func=lambda self, user_id, active_only: 
+    @cache_result(ttl=USER_BRANCHES_CACHE_TTL, key_func=lambda user_id, active_only=True:
                   CompanyBranchRepository._get_user_branches_key(user_id, active_only))
     async def get_user_company_branches(
         user_id: str,
         active_only: bool = True
     ) -> List[CompanyBranch]:
-        pipeline = [
-            {
-                "$match": {
-                    "members.user_id": ObjectId(user_id),
-                    "is_active": True
-                }
-            },
-            {
-                "$lookup": {
-                    "from": "company_branches",
-                    "let": {"company_id": "$_id"},
-                    "pipeline": [
-                        {
-                            "$match": {
-                                "$expr": {
-                                    "$and": [
-                                        {"$eq": ["$company_id", "$$company_id"]},
-                                        {"$eq": ["$is_active", True]} if active_only else {}
-                                    ]
-                                }
-                            }
-                        },
-                        {
-                            "$sort": {"name": 1}
-                        }
-                    ],
-                    "as": "branches"
-                }
-            },
-            {
-                "$unwind": "$branches"
-            },
-            {
-                "$replaceRoot": {"newRoot": "$branches"}
-            }
-        ]
-        
         try:
-            branches = []
-            async for doc in Company.aggregate(pipeline):
-                branches.append(CompanyBranch(**doc))
+            owned_companies = await Company.find({"user_id": ObjectId(user_id)}).to_list()
+            owned_company_ids = [c.id for c in owned_companies]
+
+            assignments = await UserCompany.find({
+                "user_id": ObjectId(user_id),
+                "is_active": True
+            }).to_list()
+            assigned_branch_ids = [a.company_branch_id for a in assignments]
+
+            query: Dict[str, Any] = {
+                "$or": [
+                    {"company_id": {"$in": owned_company_ids}},
+                    {"_id": {"$in": assigned_branch_ids}}
+                ]
+            }
+            if active_only:
+                query["is_active"] = True
+
+            branches = await CompanyBranch.find(query).sort("branch_name").to_list()
             return branches
         except Exception as e:
             logger.error(f"Error getting user branches: {e}")
             return []
-    
+
     @staticmethod
     @monitor_db_operation("branch_search")
     @monitor_cache_operation("branch_search")
@@ -564,91 +414,45 @@ class CompanyBranchRepository:
         company_id: Optional[str] = None,
         city: Optional[str] = None,
         country: Optional[str] = None,
-        is_headquarters: Optional[bool] = None,
         is_active: bool = True,
         skip: int = 0,
         limit: int = 20
     ) -> Tuple[List[CompanyBranch], int]:
-        match_stage = {"is_active": is_active}
-        
+        match_stage: Dict[str, Any] = {"is_active": is_active}
+
         if company_id:
             match_stage["company_id"] = ObjectId(company_id)
-        
+
         if city:
             match_stage["city"] = {"$regex": city, "$options": "i"}
-        
+
         if country:
             match_stage["country"] = {"$regex": country, "$options": "i"}
-        
-        if is_headquarters is not None:
-            match_stage["is_headquarters"] = is_headquarters
-        
+
         if search_term:
             match_stage["$or"] = [
-                {"name": {"$regex": search_term, "$options": "i"}},
+                {"branch_name": {"$regex": search_term, "$options": "i"}},
                 {"description": {"$regex": search_term, "$options": "i"}},
                 {"address": {"$regex": search_term, "$options": "i"}},
-                {"email": {"$regex": search_term, "$options": "i"}},
-                {"phone": {"$regex": search_term, "$options": "i"}}
             ]
-        
-        pipeline = [
-            {"$match": match_stage},
-            *CompanyBranchRepository._branch_base_pipeline(),
-            {
-                "$facet": {
-                    "metadata": [
-                        {"$count": "total"}
-                    ],
-                    "branches": [
-                        {"$sort": {"name": 1}},
-                        {"$skip": skip},
-                        {"$limit": limit},
-                        {
-                            "$project": {
-                                "_id": 1,
-                                "name": 1,
-                                "description": 1,
-                                "address": 1,
-                                "city": 1,
-                                "country": 1,
-                                "email": 1,
-                                "phone": 1,
-                                "is_headquarters": 1,
-                                "is_active": 1,
-                                "company_id": 1,
-                                "created_at": 1,
-                                "updated_at": 1,
-                                "company_name": "$company.name"
-                            }
-                        }
-                    ]
-                }
-            }
-        ]
-        
+
         try:
-            result = await CompanyBranch.aggregate(pipeline).to_list(length=1)
-            if not result:
-                return [], 0
-            
-            data = result[0]
-            total = data["metadata"][0]["total"] if data["metadata"] else 0
-            
-            branches = []
-            for doc in data["branches"]:
-                branch_data = {k: v for k, v in doc.items() if k != "company_name"}
-                branches.append(CompanyBranch(**branch_data))
-            
+            total = await CompanyBranch.find(match_stage).count()
+            branches = await CompanyBranch.find(match_stage) \
+                .sort("branch_name") \
+                .skip(skip) \
+                .limit(limit) \
+                .to_list()
+
             return branches, total
         except Exception as e:
             logger.error(f"Error searching branches: {e}")
             return [], 0
-    
+
     @staticmethod
     @monitor_db_operation("branch_get_statistics")
     @monitor_cache_operation("branch_get_statistics")
-    @cache_result(ttl=STATS_CACHE_TTL, key_func=lambda self, branch_id: 
+    @cache_result(ttl=STATS_CACHE_TTL, key_func=lambda branch_id:
                   CompanyBranchRepository._get_branch_stats_key(branch_id))
     async def get_branch_statistics(branch_id: str) -> Dict[str, Any]:
         pipeline = [
@@ -675,37 +479,30 @@ class CompanyBranchRepository:
             {
                 "$project": {
                     "branch_id": {"$toString": "$_id"},
-                    "branch_name": "$name",
+                    "branch_name": "$branch_name",
                     "company_id": {"$toString": "$company_id"},
                     "company_name": "$company.name",
-                    "is_headquarters": "$is_headquarters",
                     "is_active": "$is_active",
                     "address": "$address",
                     "city": "$city",
                     "country": "$country",
-                    "contact_email": "$email",
-                    "contact_phone": "$phone",
+                    "contact_phone": "$phone_number",
                     "created_at": "$created_at",
                     "updated_at": "$updated_at",
                     "created_by_name": "$creator.full_name",
-                    "company_member_count": {
-                        "$size": {
-                            "$ifNull": ["$company.members", []]
-                        }
-                    },
                     "company_active": "$company.is_active",
                     "calculated_at": {"$literal": datetime.now().isoformat()}
                 }
             }
         ]
-        
+
         result = await CompanyBranchRepository._aggregate_branch(pipeline, return_model=False)
         return result or {"branch_id": branch_id, "error": "Branch not found"}
-    
+
     @staticmethod
     @monitor_db_operation("branch_get_company_statistics")
     @monitor_cache_operation("branch_get_company_statistics")
-    @cache_result(ttl=STATS_CACHE_TTL, key_func=lambda self, company_id: 
+    @cache_result(ttl=STATS_CACHE_TTL, key_func=lambda company_id:
                   CompanyBranchRepository._get_company_stats_key(company_id))
     async def get_company_branch_statistics(company_id: str) -> Dict[str, Any]:
         pipeline = [
@@ -719,9 +516,6 @@ class CompanyBranchRepository:
                 "$group": {
                     "_id": None,
                     "total_branches": {"$sum": 1},
-                    "headquarters_count": {
-                        "$sum": {"$cond": [{"$eq": ["$is_headquarters", True]}, 1, 0]}
-                    },
                     "cities": {
                         "$push": {
                             "$cond": [
@@ -760,10 +554,6 @@ class CompanyBranchRepository:
                 "$project": {
                     "company_id": {"$literal": company_id},
                     "total_branches": 1,
-                    "headquarters_count": 1,
-                    "regular_branches_count": {
-                        "$subtract": ["$total_branches", "$headquarters_count"]
-                    },
                     "branches_by_city": {
                         "$arrayToObject": {
                             "$map": {
@@ -809,14 +599,12 @@ class CompanyBranchRepository:
                 }
             }
         ]
-        
+
         try:
             result = await CompanyBranch.aggregate(pipeline).to_list(length=1)
             return result[0] if result else {
                 "company_id": company_id,
                 "total_branches": 0,
-                "headquarters_count": 0,
-                "regular_branches_count": 0,
                 "branches_by_city": {},
                 "branches_by_country": {},
                 "branches_created_last_30d": 0,
@@ -825,7 +613,7 @@ class CompanyBranchRepository:
         except Exception as e:
             logger.error(f"Error getting company stats: {e}")
             return {"company_id": company_id, "error": str(e)}
-    
+
     @staticmethod
     @monitor_db_operation("branch_bulk_update")
     async def bulk_update_branches(
@@ -834,69 +622,53 @@ class CompanyBranchRepository:
         updated_by: str
     ) -> Tuple[int, int]:
         try:
-            permission_pipeline = [
-                {
-                    "$match": {
-                        "_id": {"$in": [ObjectId(bid) for bid in branch_ids]}
-                    }
-                },
-                *CompanyBranchRepository._branch_base_pipeline(),
-                *CompanyBranchRepository._with_user_member_pipeline(updated_by),
-                {
-                    "$group": {
-                        "_id": None,
-                        "authorized_branches": {
-                            "$push": {
-                                "$cond": [
-                                    {
-                                        "$or": [
-                                            {"$eq": ["$user_member.role", "owner"]},
-                                            {"$in": ["manage_branches", "$user_member.permissions"]}
-                                        ]
-                                    },
-                                    {"$toString": "$_id"},
-                                    "$$REMOVE"
-                                ]
-                            }
-                        }
-                    }
-                }
-            ]
-            
-            result = await CompanyBranch.aggregate(permission_pipeline).to_list(length=1)
-            authorized_ids = result[0]["authorized_branches"] if result else []
-            
+            from app.repositories.company_repository import CompanyRepository
+
+            branches = await CompanyBranch.find({
+                "_id": {"$in": [ObjectId(bid) for bid in branch_ids]}
+            }).to_list()
+
+            authorized_ids = []
+            checked_companies: Dict[str, Optional[str]] = {}
+            for branch in branches:
+                company_id = str(branch.company_id)
+                if company_id not in checked_companies:
+                    checked_companies[company_id] = await CompanyRepository.get_user_company_role(
+                        updated_by, company_id
+                    )
+                if checked_companies[company_id] in ["owner", "admin"]:
+                    authorized_ids.append(str(branch.id))
+
             if not authorized_ids:
                 return 0, 0
-            
+
             update_dict = {
                 k: v for k, v in update_data.items()
-                if k not in {"_id", "company_id", "is_headquarters"}
+                if k not in {"_id", "company_id"}
             }
             update_dict["updated_at"] = now_utc()
-            
+
             result = await CompanyBranch.find({
                 "_id": {"$in": [ObjectId(bid) for bid in authorized_ids]}
             }).update_many({"$set": update_dict})
-            
+
             await CompanyBranchRepository._invalidate_bulk_update(authorized_ids)
-            
+
             return result.modified_count, len(authorized_ids)
-            
+
         except Exception as e:
             logger.error(f"Error in bulk update: {e}")
             return 0, 0
-    
+
     @staticmethod
     async def _invalidate_branch_creation(branch: CompanyBranch) -> None:
         keys_to_delete = [
             CompanyBranchRepository._get_company_branches_key(str(branch.company_id), True),
             CompanyBranchRepository._get_company_branches_key(str(branch.company_id), False),
             CompanyBranchRepository._get_company_stats_key(str(branch.company_id)),
-            CompanyBranchRepository._get_headquarters_key(str(branch.company_id)),
         ]
         await CompanyBranchRepository._delete_cached(*keys_to_delete)
-    
+
     @staticmethod
     async def _invalidate_branch_update(branch: CompanyBranch) -> None:
         keys_to_delete = [
@@ -906,55 +678,43 @@ class CompanyBranchRepository:
             CompanyBranchRepository._get_company_branches_key(str(branch.company_id), False),
             CompanyBranchRepository._get_company_stats_key(str(branch.company_id)),
         ]
-        
+
         await CompanyBranchRepository._invalidate_pattern(
             f"{CompanyBranchRepository.CACHE_PREFIX}perms:*:{branch.id}"
         )
-        
+
         await CompanyBranchRepository._delete_cached(*keys_to_delete)
-    
+
     @staticmethod
     async def _invalidate_bulk_update(branch_ids: List[str]) -> None:
         if not branch_ids:
             return
-        
-        pipeline = [
-            {
-                "$match": {
-                    "_id": {"$in": [ObjectId(bid) for bid in branch_ids]}
-                }
-            },
-            {
-                "$group": {
-                    "_id": "$company_id"
-                }
-            }
-        ]
-        
-        company_ids = []
-        async for doc in CompanyBranch.aggregate(pipeline):
-            company_ids.append(str(doc["_id"]))
-        
+
+        branches = await CompanyBranch.find({
+            "_id": {"$in": [ObjectId(bid) for bid in branch_ids]}
+        }).to_list()
+        company_ids = list({str(b.company_id) for b in branches})
+
         delete_tasks = []
         for branch_id in branch_ids:
-            delete_tasks.extend([
+            delete_tasks.append(
                 CompanyBranchRepository._delete_cached(
                     CompanyBranchRepository._get_branch_key(branch_id),
                     CompanyBranchRepository._get_branch_stats_key(branch_id)
                 )
-            ])
-        
+            )
+
         for company_id in company_ids:
-            delete_tasks.extend([
+            delete_tasks.append(
                 CompanyBranchRepository._delete_cached(
                     CompanyBranchRepository._get_company_branches_key(company_id, True),
                     CompanyBranchRepository._get_company_branches_key(company_id, False),
                     CompanyBranchRepository._get_company_stats_key(company_id)
                 )
-            ])
-        
+            )
+
         await asyncio.gather(*delete_tasks, return_exceptions=True)
-    
+
     @staticmethod
     async def clear_all_cache() -> None:
         await CompanyBranchRepository._invalidate_pattern(

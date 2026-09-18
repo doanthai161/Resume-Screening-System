@@ -1,32 +1,30 @@
-from typing import List, Optional
+from typing import List, Optional, Dict
 from fastapi import APIRouter, Depends, HTTPException, status, Request, BackgroundTasks
 from fastapi.responses import JSONResponse
-from slowapi import Limiter
-from slowapi.util import get_remote_address
-from slowapi.errors import RateLimitExceeded
 import logging
+import time
 
-from app.repositories.company_repository import CompanyRepository
 from app.schemas.company import (
     CompanyCreate,
     CompanyUpdate,
     CompanyResponse,
     CompanyListResponse,
 )
+from app.schemas.response import ApiResponse
 from app.core.security import get_current_user, require_permission, CurrentUser
 from app.models.user import User
 from app.core.monitoring import monitor_endpoint, record_response_time
 from app.middleware.audit_log import audit_log_action
+from app.core.rate_limiter import limiter
+from app.core.errors import CustomError, ErrorCodes
+from app.services.company_service import CompanyService
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
 
-limiter = Limiter(key_func=get_remote_address)
-
-
 @router.post(
     "/",
-    response_model=CompanyResponse,
+    response_model=ApiResponse[CompanyResponse],
     status_code=status.HTTP_201_CREATED,
     summary="Create a new company",
     description="Create a new company with the current user as owner"
@@ -42,27 +40,23 @@ async def create_company(
         require_permission("companies:create")
     ),
 ):
-    import time
     start_time = time.time()
     
     try:
-        company = await CompanyRepository.create_company(
-            company_data=company_data,
-            owner_id=str(current_user.id)
-        )
+        company = await CompanyService.create_company(company_data, str(current_user.id))
         
         background_tasks.add_task(
             logger.info,
             f"Company created: {company.id} - {company.name} by user {current_user.id}"
         )
         
-        return CompanyResponse(
+        response_data = CompanyResponse(
             id=str(company.id),
             name=company.name,
             description=company.description,
-            company_short_name= company.company_short_name,
-            tax_code = company.tax_code,
-            company_code= company.company_code,
+            company_short_name=company.company_short_name,
+            tax_code=company.tax_code,
+            company_code=company.company_code,
             industry=company.industry,
             website=company.website,
             email=company.email,
@@ -72,25 +66,23 @@ async def create_company(
             created_at=company.created_at,
             updated_at=company.updated_at
         )
+        return ApiResponse.ok(response_data)
         
-    except ValueError as e:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=str(e)
-        )
+    except CustomError:
+        raise
     except Exception as e:
         logger.error(f"Error creating company: {e}", exc_info=True)
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to create company"
+        raise CustomError(
+            ErrorCodes.INTERNAL,
+            "Failed to create company",
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
         )
     finally:
         record_response_time("create_company", time.time() - start_time)
 
-
 @router.get(
     "/",
-    response_model=CompanyListResponse,
+    response_model=ApiResponse[CompanyListResponse],
     summary="List all active companies",
     description="Get a paginated list of all companies that are currently active."
 )
@@ -103,55 +95,46 @@ async def list_companies(
     size: int = 10,
     current_user: CurrentUser = Depends(get_current_user)
 ):
-    import time
     start_time = time.time()
     
     try:
-        if page < 1: page = 1
-        if size < 1 or size > 100: size = 10
-
-        companies, total = await CompanyRepository.list_all_active_companies(
-            page=page,
-            size=size
-        )
+        companies, total = await CompanyService.list_companies(page, size)
         
         company_responses = []
         for company in companies:
             company_dict = company.model_dump()
-            company_dict['id'] = str(company.id) # Chuyển ObjectId thành string
-            company_dict['user_id'] = str(company.user_id) # Chuyển ObjectId thành string
+            company_dict['id'] = str(company.id)
+            company_dict['user_id'] = str(company.user_id)
             company_responses.append(CompanyResponse(**company_dict))
-
-        # company_responses = [
-        #     CompanyResponse(**{**company.model_dump(), "id": str(company.id), "user_id": str(company.user_id)})
-        #     for company in companies
-        # ]
-        
+            
         background_tasks.add_task(
             logger.info,
             f"User {current_user.email} listed {len(company_responses)} active companies."
         )
         
-        return CompanyListResponse(
-            companies=company_responses, # Sử dụng danh sách đã tạo
+        response_data = CompanyListResponse(
+            companies=company_responses,
             total=total,
             page=page,
             size=size
         )
+        return ApiResponse.ok(response_data)
         
+    except CustomError:
+        raise
     except Exception as e:
         logger.error(f"Error listing companies: {e}", exc_info=True)
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to list companies"
+        raise CustomError(
+            ErrorCodes.INTERNAL,
+            "Failed to list companies",
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
         )
     finally:
         record_response_time("list_companies", time.time() - start_time)
 
-
 @router.get(
     "/{company_id}",
-    response_model=CompanyResponse,
+    response_model=ApiResponse[CompanyResponse],
     summary="Get company by ID",
     description="Get company details by ID with authorization check"
 )
@@ -163,38 +146,28 @@ async def get_company(
     background_tasks: BackgroundTasks,
     current_user: User = Depends(get_current_user)
 ):
-    import time
     start_time = time.time()
     
     try:
-        company = await CompanyRepository.get_company(company_id)
-        if not company:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Company not found"
-            )
-        
-        user_companies = await CompanyRepository.get_user_companies(str(current_user.id))
-        has_access = any(str(c.id) == company_id for c in user_companies)
-        
-        if not has_access and not (current_user.is_superuser or "admin" in current_user.permissions):
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Access denied"
-            )
+        company = await CompanyService.get_company(
+            company_id=company_id,
+            user_id=str(current_user.id),
+            is_superuser=getattr(current_user, "is_superuser", False),
+            permissions=getattr(current_user, "permissions", [])
+        )
         
         background_tasks.add_task(
             logger.info,
             f"Company {company_id} retrieved by user {current_user.id}"
         )
         
-        return CompanyResponse(
+        response_data = CompanyResponse(
             id=str(company.id),
             name=company.name,
             description=company.description,
-            company_short_name= company.company_short_name,
-            tax_code = company.tax_code,
-            company_code= company.company_code,
+            company_short_name=company.company_short_name,
+            tax_code=company.tax_code,
+            company_code=company.company_code,
             industry=company.industry,
             website=company.website,
             email=company.email,
@@ -204,22 +177,23 @@ async def get_company(
             created_at=company.created_at,
             updated_at=company.updated_at
         )
+        return ApiResponse.ok(response_data)
         
-    except HTTPException:
+    except CustomError:
         raise
     except Exception as e:
         logger.error(f"Error getting company {company_id}: {e}", exc_info=True)
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to get company"
+        raise CustomError(
+            ErrorCodes.INTERNAL,
+            "Failed to get company",
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
         )
     finally:
         record_response_time("get_company", time.time() - start_time)
 
-
 @router.put(
     "/{company_id}",
-    response_model=CompanyResponse,
+    response_model=ApiResponse[CompanyResponse],
     summary="Update company",
     description="Update company details"
 )
@@ -235,34 +209,23 @@ async def update_company(
         require_permission("companies:edit")
     ),
 ):
-    import time
     start_time = time.time()
     
     try:
-        user_role = await CompanyRepository.get_user_company_role(
-            user_id=str(current_user.id),
-            company_id=company_id
-        )
-        
-        company = await CompanyRepository.update_company(company_id, update_data)
-        if not company:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Company not found"
-            )
+        company = await CompanyService.update_company(company_id, update_data, str(current_user.id))
         
         background_tasks.add_task(
             logger.info,
             f"Company {company_id} updated by user {current_user.id}"
         )
         
-        return CompanyResponse(
+        response_data = CompanyResponse(
             id=str(company.id),
             name=company.name,
             description=company.description,
-            company_short_name= company.company_short_name,
-            tax_code = company.tax_code,
-            company_code= company.company_code,
+            company_short_name=company.company_short_name,
+            tax_code=company.tax_code,
+            company_code=company.company_code,
             industry=company.industry,
             website=company.website,
             email=company.email,
@@ -272,21 +235,23 @@ async def update_company(
             created_at=company.created_at,
             updated_at=company.updated_at
         )
+        return ApiResponse.ok(response_data)
         
-    except HTTPException:
+    except CustomError:
         raise
     except Exception as e:
         logger.error(f"Error updating company {company_id}: {e}", exc_info=True)
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to update company"
+        raise CustomError(
+            ErrorCodes.INTERNAL,
+            "Failed to update company",
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
         )
     finally:
         record_response_time("update_company", time.time() - start_time)
 
-
 @router.delete(
     "/{company_id}",
+    response_model=ApiResponse[Dict],
     summary="Delete company",
     description="Soft delete a company"
 )
@@ -301,48 +266,30 @@ async def delete_company(
         require_permission("companies:delete")
     ),
 ):
-    import time
     start_time = time.time()
     
     try:
-        success = await CompanyRepository.delete_company(
-            company_id=company_id,
-            user_id=str(current_user.id)
-        )
-        
-        if not success:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Company not found or unauthorized"
-            )
+        await CompanyService.delete_company(company_id, str(current_user.id))
         
         background_tasks.add_task(
             logger.info,
             f"Company {company_id} deleted by user {current_user.id}"
         )
         
-        return JSONResponse(
-            content={
-                "success": True,
-                "message": "Company deleted successfully",
-                "company_id": company_id,
-                "timestamp": time.time()
-            },
-            status_code=status.HTTP_200_OK
-        )
+        return ApiResponse.ok({
+            "message": "Company deleted successfully",
+            "company_id": company_id,
+            "timestamp": time.time()
+        })
         
-    except HTTPException:
+    except CustomError:
         raise
-    except ValueError as e:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail=str(e)
-        )
     except Exception as e:
         logger.error(f"Error deleting company {company_id}: {e}", exc_info=True)
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to delete company"
+        raise CustomError(
+            ErrorCodes.INTERNAL,
+            "Failed to delete company",
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
         )
     finally:
         record_response_time("delete_company", time.time() - start_time)

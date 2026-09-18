@@ -191,10 +191,16 @@ class Settings(BaseSettings):
         
         return str(v)
     
-    @field_validator("UPLOAD_BASE_DIR", "LOG_FILE", mode="after")
+    @field_validator("UPLOAD_BASE_DIR", mode="after")
     @classmethod
     def create_directories(cls, v: Path) -> Path:
         v.mkdir(parents=True, exist_ok=True)
+        return v
+
+    @field_validator("LOG_FILE", mode="after")
+    @classmethod
+    def create_log_dir(cls, v: Path) -> Path:
+        v.parent.mkdir(parents=True, exist_ok=True)
         return v
     
     @field_validator("ENVIRONMENT")

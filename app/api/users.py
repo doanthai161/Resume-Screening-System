@@ -1,6 +1,8 @@
 from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, status, Query, Request
 from pydantic import EmailStr
+from app.schemas.response import ApiResponse
+from app.core.errors import CustomError, ErrorCodes
 from app.schemas.user import (
     UserCreate,
     UserUpdate,
@@ -20,11 +22,12 @@ from app.logs.logging_config import logger
 from app.core.rate_limiter import limiter
 from slowapi.errors import RateLimitExceeded
 from slowapi import _rate_limit_exceeded_handler
+from app.services.user_service import UserService
 from app.repositories.user_repository import UserRepository
 
 router = APIRouter()
 
-@router.post("/", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
+@router.post("/", response_model=ApiResponse[UserResponse], status_code=status.HTTP_201_CREATED)
 @limiter.limit("10/minute")
 async def create_user(
     request: Request,
@@ -32,21 +35,16 @@ async def create_user(
     current_user: CurrentUser = Depends(require_permission("user:create"))
 ):
     try:
-        user = await UserRepository.create_user(user_data)
-        return UserResponse.model_validate(user.dict(exclude={"hashed_password"}))
-    except ValueError as e:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=str(e)
-        )
+        user = await UserService.create_user(user_data)
+        data = UserResponse.model_validate(user.dict(exclude={"hashed_password"}))
+        return ApiResponse.ok(data)
+    except CustomError:
+        raise
     except Exception as e:
         logger.error(f"Error creating user: {e}", exc_info=True)
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to create user"
-        )
+        raise CustomError(ErrorCodes.INTERNAL, "Failed to create user", status_code=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
-@router.get("/", response_model=List[UserResponse])
+@router.get("/", response_model=ApiResponse[List[UserResponse]])
 async def list_users(
     page: int = Query(1, ge=1),
     size: int = Query(20, ge=1, le=100),
@@ -56,7 +54,7 @@ async def list_users(
     current_user: CurrentUser = Depends(require_permission("user:read"))
 ):
     try:
-        users, total = await UserRepository.list_users(
+        users, total = await UserService.list_users(
             page=page,
             size=size,
             filters=filters,
@@ -69,14 +67,11 @@ async def list_users(
             for user in users
         ]
         
-        return response_users
+        return ApiResponse.ok(response_users)
         
     except Exception as e:
         logger.error(f"Error listing users: {e}", exc_info=True)
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to list users"
-        )
+        raise CustomError(ErrorCodes.INTERNAL, "Failed to list users", status_code=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 @router.get("/{user_id}", response_model=UserResponse)
 async def get_user(
@@ -84,21 +79,11 @@ async def get_user(
     current_user: CurrentUser = Depends(require_permission("user:read"))
 ):
     try:
-        if user_id != str(current_user.user_id) and not current_user.is_superuser:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Not authorized to view this user"
-            )
-        
-        user = await UserRepository.get_user(user_id)
-        if not user:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="User not found"
-            )
-        
+        user = await UserService.get_user(user_id, current_user)
         return UserResponse.model_validate(user.dict(exclude={"hashed_password"}))
         
+    except CustomError:
+        raise
     except HTTPException:
         raise
     except Exception as e:
@@ -108,57 +93,24 @@ async def get_user(
             detail="Failed to get user"
         )
 
-@router.put("/{user_id}", response_model=UserResponse)
+@router.put("/{user_id}", response_model=ApiResponse[UserResponse])
 async def update_user(
     user_id: str,
     update_data: UserUpdate,
     current_user: CurrentUser = Depends(get_current_user)
 ):
     try:
-        existing_user = await UserRepository.get_user(user_id)
-        if not existing_user:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="User not found"
-            )
+        updated_user = await UserService.update_user(user_id, update_data, current_user)
+        data = UserResponse.model_validate(updated_user.dict(exclude={"hashed_password"}))
+        return ApiResponse.ok(data)
         
-        # Authorization checks
-        is_self = user_id == str(current_user.user_id)
-        
-        # Regular users can only update their own profile
-        if not is_self and not current_user.is_superuser:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Not authorized to update this user"
-            )
-        
-        # Non-admin users cannot update privileged fields
-        if not current_user.is_superuser:
-            privileged_fields = ["is_active", "is_verified", "is_superuser", "role"]
-            for field in privileged_fields:
-                if getattr(update_data, field, None) is not None:
-                    raise HTTPException(
-                        status_code=status.HTTP_403_FORBIDDEN,
-                        detail=f"Cannot update {field} field"
-                    )
-        
-        updated_user = await UserRepository.update_user(user_id, update_data)
-        if not updated_user:
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail="Failed to update user"
-            )
-        
-        return UserResponse.model_validate(updated_user.dict(exclude={"hashed_password"}))
-        
+    except CustomError:
+        raise
     except HTTPException:
         raise
     except Exception as e:
         logger.error(f"Error updating user {user_id}: {e}", exc_info=True)
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to update user"
-        )
+        raise CustomError(ErrorCodes.INTERNAL, "Failed to update user", status_code=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 @router.delete("/{user_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_user(
@@ -166,34 +118,16 @@ async def delete_user(
     current_user: CurrentUser = Depends(require_permission("user:delete"))
 ):
     try:
-        if user_id == str(current_user.user_id) and current_user.is_superuser:
-            superuser_count = await User.find({"is_superuser": True}).count()
-            if superuser_count <= 1:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="Cannot delete the last superuser"
-                )
+        await UserService.delete_user(user_id, current_user)
+        return ApiResponse.ok(message="User deleted successfully")
         
-        success = await UserRepository.delete_user(user_id, deleted_by=str(current_user.user_id))
-        if not success:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="User not found or could not be deleted"
-            )
-        
-    except ValueError as e:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=str(e)
-        )
+    except CustomError:
+        raise
     except HTTPException:
         raise
     except Exception as e:
         logger.error(f"Error deleting user {user_id}: {e}", exc_info=True)
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to delete user"
-        )
+        raise CustomError(ErrorCodes.INTERNAL, "Failed to delete user", status_code=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 @router.delete("/hard/{user_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def hard_delete_user(
@@ -201,26 +135,16 @@ async def hard_delete_user(
     current_user: CurrentUser = Depends(require_permission("user:hard_delete"))
 ):
     try:
-        success = await UserRepository.hard_delete_user(user_id)
-        if not success:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="User not found or could not be hard deleted"
-            )
+        await UserService.hard_delete_user(user_id)
+        return ApiResponse.ok(message="User hard deleted successfully")
         
-    except ValueError as e:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=str(e)
-        )
+    except CustomError:
+        raise
     except HTTPException:
         raise
     except Exception as e:
         logger.error(f"Error hard deleting user {user_id}: {e}", exc_info=True)
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to hard delete user"
-        )
+        raise CustomError(ErrorCodes.INTERNAL, "Failed to hard delete user", status_code=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 @router.get("/search/", response_model=List[UserResponse])
 async def search_users(

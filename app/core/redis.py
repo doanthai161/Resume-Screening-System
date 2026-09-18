@@ -11,16 +11,18 @@ async def init_redis():
     global redis_client
     
     try:
-        redis_client = Redis.from_url(
+        pool = ConnectionPool.from_url(
             str(settings.REDIS_URL),
             encoding="utf-8",
             decode_responses=True,
             max_connections=settings.REDIS_MAX_CONNECTIONS,
             socket_timeout=5,
             socket_connect_timeout=5,
+            socket_keepalive=True,
             retry_on_timeout=True,
             health_check_interval=30
         )
+        redis_client = Redis(connection_pool=pool)
         
         import asyncio
         try:

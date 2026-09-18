@@ -1,0 +1,537 @@
+<mxfile host="app.diagrams.net" agent="claude-code">
+  <diagram name="DB Overview" id="db-overview">
+    <mxGraphModel dx="1613" dy="884" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="4700" pageHeight="3300" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+        <mxCell id="title" parent="1" style="text;align=left;verticalAlign=middle;fontStyle=1;fontSize=20;" value="Resume-Screening-System — MongoDB Collections Overview (Beanie ODM)" vertex="1">
+          <mxGeometry height="30" width="900" x="1000" y="170" as="geometry" />
+        </mxCell>
+        <mxCell id="hdrA" parent="1" style="text;align=left;fontStyle=1;fontSize=13;fontColor=#6c8ebf;" value="Auth / RBAC" vertex="1">
+          <mxGeometry height="20" width="220" x="940" y="722" as="geometry" />
+        </mxCell>
+        <mxCell id="ent_users" parent="1" style="swimlane;fontStyle=1;align=center;fillColor=#dae8fc;strokeColor=#6c8ebf;startSize=26;" value="users" vertex="1">
+          <mxGeometry height="206" width="220" x="660" y="640" as="geometry" />
+        </mxCell>
+        <mxCell id="ent_users_id" parent="ent_users" style="text;align=left;verticalAlign=middle;spacingLeft=8;fontSize=11;fontStyle=4;" value="_id (PK)" vertex="1">
+          <mxGeometry height="20" width="220" as="geometry" />
+        </mxCell>
+        <mxCell id="ent_users_email" parent="ent_users" style="text;align=left;verticalAlign=middle;spacingLeft=8;fontSize=11;" value="email  (unique index)" vertex="1">
+          <mxGeometry height="20" width="220" y="20" as="geometry" />
+        </mxCell>
+        <mxCell id="ent_users_full_name" parent="ent_users" style="text;align=left;verticalAlign=middle;spacingLeft=8;fontSize=11;" value="full_name" vertex="1">
+          <mxGeometry height="20" width="220" y="40" as="geometry" />
+        </mxCell>
+        <mxCell id="ent_users_hashed_password" parent="ent_users" style="text;align=left;verticalAlign=middle;spacingLeft=8;fontSize=11;" value="hashed_password" vertex="1">
+          <mxGeometry height="20" width="220" y="60" as="geometry" />
+        </mxCell>
+        <mxCell id="ent_users_is_active" parent="ent_users" style="text;align=left;verticalAlign=middle;spacingLeft=8;fontSize=11;" value="is_active / is_verified / is_superuser" vertex="1">
+          <mxGeometry height="20" width="220" y="80" as="geometry" />
+        </mxCell>
+        <mxCell id="ent_users_phone" parent="ent_users" style="text;align=left;verticalAlign=middle;spacingLeft=8;fontSize=11;" value="phone_number / address" vertex="1">
+          <mxGeometry height="20" width="220" y="100" as="geometry" />
+        </mxCell>
+        <mxCell id="ent_users_last_login" parent="ent_users" style="text;align=left;verticalAlign=middle;spacingLeft=8;fontSize=11;" value="last_login" vertex="1">
+          <mxGeometry height="20" width="220" y="120" as="geometry" />
+        </mxCell>
+        <mxCell id="ent_users_created" parent="ent_users" style="text;align=left;verticalAlign=middle;spacingLeft=8;fontSize=11;fontColor=#999999;" value="created_at / updated_at" vertex="1">
+          <mxGeometry height="20" width="220" y="140" as="geometry" />
+        </mxCell>
+        <mxCell id="ent_actors" parent="1" style="swimlane;fontStyle=1;align=center;fillColor=#dae8fc;strokeColor=#6c8ebf;startSize=26;" value="actors" vertex="1">
+          <mxGeometry height="86" width="220" x="520" y="960" as="geometry" />
+        </mxCell>
+        <mxCell id="ent_actors_id" parent="ent_actors" style="text;align=left;verticalAlign=middle;spacingLeft=8;fontSize=11;fontStyle=4;" value="_id (PK)" vertex="1">
+          <mxGeometry height="20" width="220" as="geometry" />
+        </mxCell>
+        <mxCell id="ent_actors_name" parent="ent_actors" style="text;align=left;verticalAlign=middle;spacingLeft=8;fontSize=11;" value="name  (unique per is_active)" vertex="1">
+          <mxGeometry height="20" width="220" y="20" as="geometry" />
+        </mxCell>
+        <mxCell id="ent_actors_desc" parent="ent_actors" style="text;align=left;verticalAlign=middle;spacingLeft=8;fontSize=11;" value="description" vertex="1">
+          <mxGeometry height="20" width="220" y="40" as="geometry" />
+        </mxCell>
+        <mxCell id="ent_actors_active" parent="ent_actors" style="text;align=left;verticalAlign=middle;spacingLeft=8;fontSize=11;" value="is_active" vertex="1">
+          <mxGeometry height="20" width="220" y="60" as="geometry" />
+        </mxCell>
+        <mxCell id="ent_permissions" parent="1" style="swimlane;fontStyle=1;align=center;fillColor=#dae8fc;strokeColor=#6c8ebf;startSize=26;" value="permissions" vertex="1">
+          <mxGeometry height="86" width="220" x="250" y="1070" as="geometry" />
+        </mxCell>
+        <mxCell id="ent_permissions_id" parent="ent_permissions" style="text;align=left;verticalAlign=middle;spacingLeft=8;fontSize=11;fontStyle=4;" value="_id (PK)" vertex="1">
+          <mxGeometry height="20" width="220" as="geometry" />
+        </mxCell>
+        <mxCell id="ent_permissions_name" parent="ent_permissions" style="text;align=left;verticalAlign=middle;spacingLeft=8;fontSize=11;" value="name" vertex="1">
+          <mxGeometry height="20" width="220" y="20" as="geometry" />
+        </mxCell>
+        <mxCell id="ent_permissions_desc" parent="ent_permissions" style="text;align=left;verticalAlign=middle;spacingLeft=8;fontSize=11;" value="description" vertex="1">
+          <mxGeometry height="20" width="220" y="40" as="geometry" />
+        </mxCell>
+        <mxCell id="ent_permissions_active" parent="ent_permissions" style="text;align=left;verticalAlign=middle;spacingLeft=8;fontSize=11;" value="is_active" vertex="1">
+          <mxGeometry height="20" width="220" y="60" as="geometry" />
+        </mxCell>
+        <mxCell id="ent_actor_permissions" parent="1" style="swimlane;fontStyle=1;align=center;fillColor=#e1d5e7;strokeColor=#9673a6;startSize=26;" value="actor_permissions" vertex="1">
+          <mxGeometry height="86" width="220" x="250" y="1200" as="geometry" />
+        </mxCell>
+        <mxCell id="ent_ap_id" parent="ent_actor_permissions" style="text;align=left;verticalAlign=middle;spacingLeft=8;fontSize=11;fontStyle=4;" value="_id (PK)" vertex="1">
+          <mxGeometry height="20" width="220" as="geometry" />
+        </mxCell>
+        <mxCell id="ent_ap_actor_id" parent="ent_actor_permissions" style="text;align=left;verticalAlign=middle;spacingLeft=8;fontSize=11;" value="actor_id (FK)" vertex="1">
+          <mxGeometry height="20" width="220" y="20" as="geometry" />
+        </mxCell>
+        <mxCell id="ent_ap_permission_id" parent="ent_actor_permissions" style="text;align=left;verticalAlign=middle;spacingLeft=8;fontSize=11;" value="permission_id (FK)" vertex="1">
+          <mxGeometry height="20" width="220" y="40" as="geometry" />
+        </mxCell>
+        <mxCell id="ent_ap_created" parent="ent_actor_permissions" style="text;align=left;verticalAlign=middle;spacingLeft=8;fontSize=11;fontColor=#999999;" value="created_at" vertex="1">
+          <mxGeometry height="20" width="220" y="60" as="geometry" />
+        </mxCell>
+        <mxCell id="ent_user_actors" parent="1" style="swimlane;fontStyle=1;align=center;fillColor=#e1d5e7;strokeColor=#9673a6;startSize=26;" value="user_actors" vertex="1">
+          <mxGeometry height="106" width="220" x="240" y="1320" as="geometry" />
+        </mxCell>
+        <mxCell id="ent_ua_id" parent="ent_user_actors" style="text;align=left;verticalAlign=middle;spacingLeft=8;fontSize=11;fontStyle=4;" value="_id (PK)" vertex="1">
+          <mxGeometry height="20" width="220" as="geometry" />
+        </mxCell>
+        <mxCell id="ent_ua_user_id" parent="ent_user_actors" style="text;align=left;verticalAlign=middle;spacingLeft=8;fontSize=11;" value="user_id (FK)" vertex="1">
+          <mxGeometry height="20" width="220" y="20" as="geometry" />
+        </mxCell>
+        <mxCell id="ent_ua_actor_id" parent="ent_user_actors" style="text;align=left;verticalAlign=middle;spacingLeft=8;fontSize=11;" value="actor_id (FK)" vertex="1">
+          <mxGeometry height="20" width="220" y="40" as="geometry" />
+        </mxCell>
+        <mxCell id="ent_ua_created_by" parent="ent_user_actors" style="text;align=left;verticalAlign=middle;spacingLeft=8;fontSize=11;" value="created_by (FK -&gt; users)" vertex="1">
+          <mxGeometry height="20" width="220" y="60" as="geometry" />
+        </mxCell>
+        <mxCell id="ent_ua_updated_by" parent="ent_user_actors" style="text;align=left;verticalAlign=middle;spacingLeft=8;fontSize=11;" value="updated_by (FK -&gt; users)" vertex="1">
+          <mxGeometry height="20" width="220" y="80" as="geometry" />
+        </mxCell>
+        <mxCell id="hdrB" parent="1" style="text;align=left;fontStyle=1;fontSize=13;fontColor=#82b366;" value="Company / Tenant" vertex="1">
+          <mxGeometry height="20" width="220" x="1240" y="500" as="geometry" />
+        </mxCell>
+        <mxCell id="ent_companies" parent="1" style="swimlane;fontStyle=1;align=center;fillColor=#d5e8d4;strokeColor=#82b366;startSize=26;" value="companies" vertex="1">
+          <mxGeometry height="186" width="220" x="1240" y="522" as="geometry" />
+        </mxCell>
+        <mxCell id="ent_co_id" parent="ent_companies" style="text;align=left;verticalAlign=middle;spacingLeft=8;fontSize=11;fontStyle=4;" value="_id (PK)" vertex="1">
+          <mxGeometry height="20" width="220" as="geometry" />
+        </mxCell>
+        <mxCell id="ent_co_user_id" parent="ent_companies" style="text;align=left;verticalAlign=middle;spacingLeft=8;fontSize=11;" value="user_id (FK -&gt; users, owner)" vertex="1">
+          <mxGeometry height="20" width="220" y="20" as="geometry" />
+        </mxCell>
+        <mxCell id="ent_co_name" parent="ent_companies" style="text;align=left;verticalAlign=middle;spacingLeft=8;fontSize=11;" value="name / company_short_name" vertex="1">
+          <mxGeometry height="20" width="220" y="40" as="geometry" />
+        </mxCell>
+        <mxCell id="ent_co_code" parent="ent_companies" style="text;align=left;verticalAlign=middle;spacingLeft=8;fontSize=11;" value="company_code / tax_code" vertex="1">
+          <mxGeometry height="20" width="220" y="60" as="geometry" />
+        </mxCell>
+        <mxCell id="ent_co_email" parent="ent_companies" style="text;align=left;verticalAlign=middle;spacingLeft=8;fontSize=11;" value="email / website / logo_url" vertex="1">
+          <mxGeometry height="20" width="220" y="80" as="geometry" />
+        </mxCell>
+        <mxCell id="ent_co_branch_ids" parent="ent_companies" style="text;align=left;verticalAlign=middle;spacingLeft=8;fontSize=11;" value="branch_ids [] (FK -&gt; company_branches)" vertex="1">
+          <mxGeometry height="20" width="220" y="100" as="geometry" />
+        </mxCell>
+        <mxCell id="ent_co_updated_by" parent="ent_companies" style="text;align=left;verticalAlign=middle;spacingLeft=8;fontSize=11;" value="updated_by (FK -&gt; users)" vertex="1">
+          <mxGeometry height="20" width="220" y="120" as="geometry" />
+        </mxCell>
+        <mxCell id="ent_co_active" parent="ent_companies" style="text;align=left;verticalAlign=middle;spacingLeft=8;fontSize=11;" value="is_active" vertex="1">
+          <mxGeometry height="20" width="220" y="140" as="geometry" />
+        </mxCell>
+        <mxCell id="ent_company_branches" parent="1" style="swimlane;fontStyle=1;align=center;fillColor=#d5e8d4;strokeColor=#82b366;startSize=26;" value="company_branches" vertex="1">
+          <mxGeometry height="186" width="220" x="1100" y="1120" as="geometry" />
+        </mxCell>
+        <mxCell id="ent_cb_id" parent="ent_company_branches" style="text;align=left;verticalAlign=middle;spacingLeft=8;fontSize=11;fontStyle=4;" value="_id (PK)" vertex="1">
+          <mxGeometry height="20" width="220" as="geometry" />
+        </mxCell>
+        <mxCell id="ent_cb_company_id" parent="ent_company_branches" style="text;align=left;verticalAlign=middle;spacingLeft=8;fontSize=11;" value="company_id (FK -&gt; companies)" vertex="1">
+          <mxGeometry height="20" width="220" y="20" as="geometry" />
+        </mxCell>
+        <mxCell id="ent_cb_name" parent="ent_company_branches" style="text;align=left;verticalAlign=middle;spacingLeft=8;fontSize=11;" value="branch_name / bussiness_type" vertex="1">
+          <mxGeometry height="20" width="220" y="40" as="geometry" />
+        </mxCell>
+        <mxCell id="ent_cb_address" parent="ent_company_branches" style="text;align=left;verticalAlign=middle;spacingLeft=8;fontSize=11;" value="address / city / country" vertex="1">
+          <mxGeometry height="20" width="220" y="60" as="geometry" />
+        </mxCell>
+        <mxCell id="ent_cb_size" parent="ent_company_branches" style="text;align=left;verticalAlign=middle;spacingLeft=8;fontSize=11;" value="company_size / working_days" vertex="1">
+          <mxGeometry height="20" width="220" y="80" as="geometry" />
+        </mxCell>
+        <mxCell id="ent_cb_created_by" parent="ent_company_branches" style="text;align=left;verticalAlign=middle;spacingLeft=8;fontSize=11;" value="created_by (FK -&gt; users)" vertex="1">
+          <mxGeometry height="20" width="220" y="100" as="geometry" />
+        </mxCell>
+        <mxCell id="ent_cb_updated_by" parent="ent_company_branches" style="text;align=left;verticalAlign=middle;spacingLeft=8;fontSize=11;" value="updated_by (FK -&gt; users)" vertex="1">
+          <mxGeometry height="20" width="220" y="120" as="geometry" />
+        </mxCell>
+        <mxCell id="ent_cb_active" parent="ent_company_branches" style="text;align=left;verticalAlign=middle;spacingLeft=8;fontSize=11;" value="is_active" vertex="1">
+          <mxGeometry height="20" width="220" y="140" as="geometry" />
+        </mxCell>
+        <mxCell id="ent_user_companies" parent="1" style="swimlane;fontStyle=1;align=center;fillColor=#e1d5e7;strokeColor=#9673a6;startSize=26;" value="user_companies" vertex="1">
+          <mxGeometry height="166" width="220" x="1100" y="1470" as="geometry" />
+        </mxCell>
+        <mxCell id="ent_uc_id" parent="ent_user_companies" style="text;align=left;verticalAlign=middle;spacingLeft=8;fontSize=11;fontStyle=4;" value="_id (PK)" vertex="1">
+          <mxGeometry height="20" width="220" as="geometry" />
+        </mxCell>
+        <mxCell id="ent_uc_user_id" parent="ent_user_companies" style="text;align=left;verticalAlign=middle;spacingLeft=8;fontSize=11;" value="user_id (FK -&gt; users)" vertex="1">
+          <mxGeometry height="20" width="220" y="20" as="geometry" />
+        </mxCell>
+        <mxCell id="ent_uc_branch_id" parent="ent_user_companies" style="text;align=left;verticalAlign=middle;spacingLeft=8;fontSize=11;" value="company_branch_id (FK)" vertex="1">
+          <mxGeometry height="20" width="220" y="40" as="geometry" />
+        </mxCell>
+        <mxCell id="ent_uc_role" parent="ent_user_companies" style="text;align=left;verticalAlign=middle;spacingLeft=8;fontSize=11;" value="role / permissions []" vertex="1">
+          <mxGeometry height="20" width="220" y="60" as="geometry" />
+        </mxCell>
+        <mxCell id="ent_uc_assigned_by" parent="ent_user_companies" style="text;align=left;verticalAlign=middle;spacingLeft=8;fontSize=11;" value="assigned_by (FK -&gt; users)" vertex="1">
+          <mxGeometry height="20" width="220" y="80" as="geometry" />
+        </mxCell>
+        <mxCell id="ent_uc_unassigned_by" parent="ent_user_companies" style="text;align=left;verticalAlign=middle;spacingLeft=8;fontSize=11;" value="unassigned_by (FK -&gt; users)" vertex="1">
+          <mxGeometry height="20" width="220" y="100" as="geometry" />
+        </mxCell>
+        <mxCell id="ent_uc_updated_by" parent="ent_user_companies" style="text;align=left;verticalAlign=middle;spacingLeft=8;fontSize=11;" value="updated_by (FK -&gt; users)" vertex="1">
+          <mxGeometry height="20" width="220" y="120" as="geometry" />
+        </mxCell>
+        <mxCell id="ent_uc_active" parent="ent_user_companies" style="text;align=left;verticalAlign=middle;spacingLeft=8;fontSize=11;" value="is_active / start_date / end_date" vertex="1">
+          <mxGeometry height="20" width="220" y="140" as="geometry" />
+        </mxCell>
+        <mxCell id="hdrC" parent="1" style="text;align=left;fontStyle=1;fontSize=13;fontColor=#d79b00;" value="Job &amp; Resume" vertex="1">
+          <mxGeometry height="20" width="220" x="1600" y="520" as="geometry" />
+        </mxCell>
+        <mxCell id="ent_job_requirements" parent="1" style="swimlane;fontStyle=1;align=center;fillColor=#ffe6cc;strokeColor=#d79b00;startSize=26;" value="job_requirements" vertex="1">
+          <mxGeometry height="166" width="220" x="1600" y="542" as="geometry" />
+        </mxCell>
+        <mxCell id="ent_jr_id" parent="ent_job_requirements" style="text;align=left;verticalAlign=middle;spacingLeft=8;fontSize=11;fontStyle=4;" value="_id (PK)" vertex="1">
+          <mxGeometry height="20" width="220" as="geometry" />
+        </mxCell>
+        <mxCell id="ent_jr_user_id" parent="ent_job_requirements" style="text;align=left;verticalAlign=middle;spacingLeft=8;fontSize=11;" value="user_id (FK -&gt; users, creator)" vertex="1">
+          <mxGeometry height="20" width="220" y="20" as="geometry" />
+        </mxCell>
+        <mxCell id="ent_jr_branch_id" parent="ent_job_requirements" style="text;align=left;verticalAlign=middle;spacingLeft=8;fontSize=11;" value="company_branch_id (FK)" vertex="1">
+          <mxGeometry height="20" width="220" y="40" as="geometry" />
+        </mxCell>
+        <mxCell id="ent_jr_title" parent="ent_job_requirements" style="text;align=left;verticalAlign=middle;spacingLeft=8;fontSize=11;" value="title / skills_required []" vertex="1">
+          <mxGeometry height="20" width="220" y="60" as="geometry" />
+        </mxCell>
+        <mxCell id="ent_jr_salary" parent="ent_job_requirements" style="text;align=left;verticalAlign=middle;spacingLeft=8;fontSize=11;" value="experience_level / salary range" vertex="1">
+          <mxGeometry height="20" width="220" y="80" as="geometry" />
+        </mxCell>
+        <mxCell id="ent_jr_model_id" parent="ent_job_requirements" style="text;align=left;verticalAlign=middle;spacingLeft=8;fontSize=11;" value="screening_model_id (FK -&gt; ai_models)" vertex="1">
+          <mxGeometry height="20" width="220" y="100" as="geometry" />
+        </mxCell>
+        <mxCell id="ent_jr_flags" parent="ent_job_requirements" style="text;align=left;verticalAlign=middle;spacingLeft=8;fontSize=11;" value="is_open / is_active / threshold" vertex="1">
+          <mxGeometry height="20" width="220" y="120" as="geometry" />
+        </mxCell>
+        <mxCell id="ent_resume_files" parent="1" style="swimlane;fontStyle=1;align=center;fillColor=#ffe6cc;strokeColor=#d79b00;startSize=26;" value="resume_files" vertex="1">
+          <mxGeometry height="166" width="220" x="1540" y="930" as="geometry" />
+        </mxCell>
+        <mxCell id="ent_rf_id" parent="ent_resume_files" style="text;align=left;verticalAlign=middle;spacingLeft=8;fontSize=11;fontStyle=4;" value="_id (PK)" vertex="1">
+          <mxGeometry height="20" width="220" as="geometry" />
+        </mxCell>
+        <mxCell id="ent_rf_uploader_id" parent="ent_resume_files" style="text;align=left;verticalAlign=middle;spacingLeft=8;fontSize=11;" value="uploader_id (FK -&gt; users)" vertex="1">
+          <mxGeometry height="20" width="220" y="20" as="geometry" />
+        </mxCell>
+        <mxCell id="ent_rf_user_id" parent="ent_resume_files" style="text;align=left;verticalAlign=middle;spacingLeft=8;fontSize=11;" value="user_id (FK -&gt; users, candidate)" vertex="1">
+          <mxGeometry height="20" width="220" y="40" as="geometry" />
+        </mxCell>
+        <mxCell id="ent_rf_branch_id" parent="ent_resume_files" style="text;align=left;verticalAlign=middle;spacingLeft=8;fontSize=11;" value="company_branch_id (FK)" vertex="1">
+          <mxGeometry height="20" width="220" y="60" as="geometry" />
+        </mxCell>
+        <mxCell id="ent_rf_filename" parent="ent_resume_files" style="text;align=left;verticalAlign=middle;spacingLeft=8;fontSize=11;" value="filename / checksum" vertex="1">
+          <mxGeometry height="20" width="220" y="80" as="geometry" />
+        </mxCell>
+        <mxCell id="ent_rf_status" parent="ent_resume_files" style="text;align=left;verticalAlign=middle;spacingLeft=8;fontSize=11;" value="status (pending/processing/parsed/error)" vertex="1">
+          <mxGeometry height="20" width="220" y="100" as="geometry" />
+        </mxCell>
+        <mxCell id="ent_rf_parsed" parent="ent_resume_files" style="text;align=left;verticalAlign=middle;spacingLeft=8;fontSize=11;" value="parsed_data (embedded)" vertex="1">
+          <mxGeometry height="20" width="220" y="120" as="geometry" />
+        </mxCell>
+        <mxCell id="ent_job_applications" parent="1" style="swimlane;fontStyle=1;align=center;fillColor=#ffe6cc;strokeColor=#d79b00;startSize=26;" value="job_applications" vertex="1">
+          <mxGeometry height="146" width="220" x="1540" y="1280" as="geometry" />
+        </mxCell>
+        <mxCell id="ent_ja_id" parent="ent_job_applications" style="text;align=left;verticalAlign=middle;spacingLeft=8;fontSize=11;fontStyle=4;" value="_id (PK)" vertex="1">
+          <mxGeometry height="20" width="220" as="geometry" />
+        </mxCell>
+        <mxCell id="ent_ja_resume_file_id" parent="ent_job_applications" style="text;align=left;verticalAlign=middle;spacingLeft=8;fontSize=11;" value="resume_file_id (FK)" vertex="1">
+          <mxGeometry height="20" width="220" y="20" as="geometry" />
+        </mxCell>
+        <mxCell id="ent_ja_job_requirement_id" parent="ent_job_applications" style="text;align=left;verticalAlign=middle;spacingLeft=8;fontSize=11;" value="job_requirement_id (FK)" vertex="1">
+          <mxGeometry height="20" width="220" y="40" as="geometry" />
+        </mxCell>
+        <mxCell id="ent_ja_applicant_id" parent="ent_job_applications" style="text;align=left;verticalAlign=middle;spacingLeft=8;fontSize=11;" value="applicant_id (FK -&gt; users)" vertex="1">
+          <mxGeometry height="20" width="220" y="60" as="geometry" />
+        </mxCell>
+        <mxCell id="ent_ja_applied_by" parent="ent_job_applications" style="text;align=left;verticalAlign=middle;spacingLeft=8;fontSize=11;" value="applied_by (FK -&gt; users)" vertex="1">
+          <mxGeometry height="20" width="220" y="80" as="geometry" />
+        </mxCell>
+        <mxCell id="ent_ja_screening_result_id" parent="ent_job_applications" style="text;align=left;verticalAlign=middle;spacingLeft=8;fontSize=11;" value="screening_result_id (FK)" vertex="1">
+          <mxGeometry height="20" width="220" y="100" as="geometry" />
+        </mxCell>
+        <mxCell id="ent_ja_stage" parent="ent_job_applications" style="text;align=left;verticalAlign=middle;spacingLeft=8;fontSize=11;" value="current_stage / stages [] history" vertex="1">
+          <mxGeometry height="20" width="220" y="120" as="geometry" />
+        </mxCell>
+        <mxCell id="hdrD" parent="1" style="text;align=left;fontStyle=1;fontSize=13;fontColor=#b85450;" value="Screening / AI" vertex="1">
+          <mxGeometry height="20" width="220" x="1970" y="420" as="geometry" />
+        </mxCell>
+        <mxCell id="ent_screening_results" parent="1" style="swimlane;fontStyle=1;align=center;fillColor=#f8cecc;strokeColor=#b85450;startSize=26;" value="screening_results" vertex="1">
+          <mxGeometry height="146" width="220" x="1970" y="470" as="geometry" />
+        </mxCell>
+        <mxCell id="ent_sr_id" parent="ent_screening_results" style="text;align=left;verticalAlign=middle;spacingLeft=8;fontSize=11;fontStyle=4;" value="_id (PK)" vertex="1">
+          <mxGeometry height="20" width="220" as="geometry" />
+        </mxCell>
+        <mxCell id="ent_sr_resume_file_id" parent="ent_screening_results" style="text;align=left;verticalAlign=middle;spacingLeft=8;fontSize=11;" value="resume_file_id (FK)" vertex="1">
+          <mxGeometry height="20" width="220" y="20" as="geometry" />
+        </mxCell>
+        <mxCell id="ent_sr_job_requirement_id" parent="ent_screening_results" style="text;align=left;verticalAlign=middle;spacingLeft=8;fontSize=11;" value="job_requirement_id (FK)" vertex="1">
+          <mxGeometry height="20" width="220" y="40" as="geometry" />
+        </mxCell>
+        <mxCell id="ent_sr_evaluator_id" parent="ent_screening_results" style="text;align=left;verticalAlign=middle;spacingLeft=8;fontSize=11;" value="evaluator_id (FK -&gt; users/AI)" vertex="1">
+          <mxGeometry height="20" width="220" y="60" as="geometry" />
+        </mxCell>
+        <mxCell id="ent_sr_scores" parent="ent_screening_results" style="text;align=left;verticalAlign=middle;spacingLeft=8;fontSize=11;" value="overall_score / match_percentage" vertex="1">
+          <mxGeometry height="20" width="220" y="80" as="geometry" />
+        </mxCell>
+        <mxCell id="ent_sr_status" parent="ent_screening_results" style="text;align=left;verticalAlign=middle;spacingLeft=8;fontSize=11;" value="status (evaluated/reviewed/...)" vertex="1">
+          <mxGeometry height="20" width="220" y="100" as="geometry" />
+        </mxCell>
+        <mxCell id="ent_candidate_evaluations" parent="1" style="swimlane;fontStyle=1;align=center;fillColor=#f8cecc;strokeColor=#b85450;startSize=26;" value="candidate_evaluations" vertex="1">
+          <mxGeometry height="106" width="220" x="2110" y="710" as="geometry" />
+        </mxCell>
+        <mxCell id="ent_ce_id" parent="ent_candidate_evaluations" style="text;align=left;verticalAlign=middle;spacingLeft=8;fontSize=11;fontStyle=4;" value="_id (PK)" vertex="1">
+          <mxGeometry height="20" width="220" as="geometry" />
+        </mxCell>
+        <mxCell id="ent_ce_user_id" parent="ent_candidate_evaluations" style="text;align=left;verticalAlign=middle;spacingLeft=8;fontSize=11;" value="user_id (FK -&gt; users)" vertex="1">
+          <mxGeometry height="20" width="220" y="20" as="geometry" />
+        </mxCell>
+        <mxCell id="ent_ce_job_posting_id" parent="ent_candidate_evaluations" style="text;align=left;verticalAlign=middle;spacingLeft=8;fontSize=11;" value="job_posting_id (FK -&gt; job_requirements)" vertex="1">
+          <mxGeometry height="20" width="220" y="40" as="geometry" />
+        </mxCell>
+        <mxCell id="ent_ce_score" parent="ent_candidate_evaluations" style="text;align=left;verticalAlign=middle;spacingLeft=8;fontSize=11;" value="score / summary" vertex="1">
+          <mxGeometry height="20" width="220" y="60" as="geometry" />
+        </mxCell>
+        <mxCell id="ent_ai_models" parent="1" style="swimlane;fontStyle=1;align=center;fillColor=#f8cecc;strokeColor=#b85450;startSize=26;" value="ai_models" vertex="1">
+          <mxGeometry height="126" width="220" x="1840" y="970" as="geometry" />
+        </mxCell>
+        <mxCell id="ent_am_id" parent="ent_ai_models" style="text;align=left;verticalAlign=middle;spacingLeft=8;fontSize=11;fontStyle=4;" value="_id (PK)" vertex="1">
+          <mxGeometry height="20" width="220" as="geometry" />
+        </mxCell>
+        <mxCell id="ent_am_name" parent="ent_ai_models" style="text;align=left;verticalAlign=middle;spacingLeft=8;fontSize=11;" value="name / model_type / provider" vertex="1">
+          <mxGeometry height="20" width="220" y="20" as="geometry" />
+        </mxCell>
+        <mxCell id="ent_am_created_by" parent="ent_ai_models" style="text;align=left;verticalAlign=middle;spacingLeft=8;fontSize=11;" value="created_by (FK -&gt; users)" vertex="1">
+          <mxGeometry height="20" width="220" y="40" as="geometry" />
+        </mxCell>
+        <mxCell id="ent_am_stats" parent="ent_ai_models" style="text;align=left;verticalAlign=middle;spacingLeft=8;fontSize=11;" value="total_predictions / avg_processing_time" vertex="1">
+          <mxGeometry height="20" width="220" y="60" as="geometry" />
+        </mxCell>
+        <mxCell id="ent_am_active" parent="ent_ai_models" style="text;align=left;verticalAlign=middle;spacingLeft=8;fontSize=11;" value="is_active" vertex="1">
+          <mxGeometry height="20" width="220" y="80" as="geometry" />
+        </mxCell>
+        <mxCell id="hdrE" parent="1" style="text;align=left;fontStyle=1;fontSize=13;fontColor=#666666;" value="System / Cross-cutting" vertex="1">
+          <mxGeometry height="20" width="240" x="380" y="400" as="geometry" />
+        </mxCell>
+        <mxCell id="ent_audit_logs" parent="1" style="swimlane;fontStyle=1;align=center;fillColor=#f5f5f5;strokeColor=#666666;startSize=26;" value="audit_logs" vertex="1">
+          <mxGeometry height="126" width="220" x="380" y="422" as="geometry" />
+        </mxCell>
+        <mxCell id="ent_al_id" parent="ent_audit_logs" style="text;align=left;verticalAlign=middle;spacingLeft=8;fontSize=11;fontStyle=4;" value="_id (PK)" vertex="1">
+          <mxGeometry height="20" width="220" as="geometry" />
+        </mxCell>
+        <mxCell id="ent_al_event" parent="ent_audit_logs" style="text;align=left;verticalAlign=middle;spacingLeft=8;fontSize=11;" value="event_type / severity" vertex="1">
+          <mxGeometry height="20" width="220" y="20" as="geometry" />
+        </mxCell>
+        <mxCell id="ent_al_user_id" parent="ent_audit_logs" style="text;align=left;verticalAlign=middle;spacingLeft=8;fontSize=11;" value="user_id (FK -&gt; users, optional)" vertex="1">
+          <mxGeometry height="20" width="220" y="40" as="geometry" />
+        </mxCell>
+        <mxCell id="ent_al_resource" parent="ent_audit_logs" style="text;align=left;verticalAlign=middle;spacingLeft=8;fontSize=11;" value="resource_type / resource_id (polymorphic)" vertex="1">
+          <mxGeometry height="20" width="220" y="60" as="geometry" />
+        </mxCell>
+        <mxCell id="ent_al_timestamp" parent="ent_audit_logs" style="text;align=left;verticalAlign=middle;spacingLeft=8;fontSize=11;" value="timestamp / duration_ms" vertex="1">
+          <mxGeometry height="20" width="220" y="80" as="geometry" />
+        </mxCell>
+        <mxCell id="ent_email_otps" parent="1" style="swimlane;fontStyle=1;align=center;fillColor=#f5f5f5;strokeColor=#666666;startSize=26;" value="email_otps" vertex="1">
+          <mxGeometry height="106" width="220" x="250" y="710" as="geometry" />
+        </mxCell>
+        <mxCell id="ent_eo_id" parent="ent_email_otps" style="text;align=left;verticalAlign=middle;spacingLeft=8;fontSize=11;fontStyle=4;" value="_id (PK)" vertex="1">
+          <mxGeometry height="20" width="220" as="geometry" />
+        </mxCell>
+        <mxCell id="ent_eo_email" parent="ent_email_otps" style="text;align=left;verticalAlign=middle;spacingLeft=8;fontSize=11;" value="email  (loose ref, not FK)" vertex="1">
+          <mxGeometry height="20" width="220" y="20" as="geometry" />
+        </mxCell>
+        <mxCell id="ent_eo_otp" parent="ent_email_otps" style="text;align=left;verticalAlign=middle;spacingLeft=8;fontSize=11;" value="otp_code / otp_type" vertex="1">
+          <mxGeometry height="20" width="220" y="40" as="geometry" />
+        </mxCell>
+        <mxCell id="ent_eo_state" parent="ent_email_otps" style="text;align=left;verticalAlign=middle;spacingLeft=8;fontSize=11;" value="expires_at / attempts / is_used" vertex="1">
+          <mxGeometry height="20" width="220" y="60" as="geometry" />
+        </mxCell>
+        <mxCell id="legend" parent="1" style="text;align=left;fontStyle=1;fontSize=13;" value="Legend" vertex="1">
+          <mxGeometry height="20" width="200" x="2140" y="1150" as="geometry" />
+        </mxCell>
+        <mxCell id="legend_box1" parent="1" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;" vertex="1">
+          <mxGeometry height="16" width="16" x="2140" y="1176" as="geometry" />
+        </mxCell>
+        <mxCell id="legend_lbl1" parent="1" style="text;align=left;verticalAlign=middle;fontSize=11;" value="Auth / RBAC entity" vertex="1">
+          <mxGeometry height="20" width="180" x="2164" y="1174" as="geometry" />
+        </mxCell>
+        <mxCell id="legend_box2" parent="1" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;" vertex="1">
+          <mxGeometry height="16" width="16" x="2140" y="1198" as="geometry" />
+        </mxCell>
+        <mxCell id="legend_lbl2" parent="1" style="text;align=left;verticalAlign=middle;fontSize=11;" value="Join / assignment collection" vertex="1">
+          <mxGeometry height="20" width="180" x="2164" y="1196" as="geometry" />
+        </mxCell>
+        <mxCell id="legend_box3" parent="1" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;dashed=1;" vertex="1">
+          <mxGeometry height="16" width="16" x="2140" y="1220" as="geometry" />
+        </mxCell>
+        <mxCell id="legend_lbl3" parent="1" style="text;align=left;verticalAlign=middle;fontSize=11;" value="Unused / orphan model" vertex="1">
+          <mxGeometry height="20" width="180" x="2164" y="1218" as="geometry" />
+        </mxCell>
+        <mxCell id="e_ap_actor" edge="1" parent="1" source="ent_ap_actor_id" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=0;fontSize=10;" target="ent_actors">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_ap_perm" edge="1" parent="1" source="ent_ap_id" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=0;fontSize=10;exitX=0.5;exitY=0;exitDx=0;exitDy=0;" target="ent_permissions">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_ua_user" edge="1" parent="1" source="ent_ua_user_id" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=0;fontSize=10;" target="ent_users">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_ua_actor" edge="1" parent="1" source="ent_ua_actor_id" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=0;fontSize=10;" target="ent_actors">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_ua_createdby" edge="1" parent="1" source="ent_ua_created_by" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=0;dashed=1;fontSize=10;" target="ent_users">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_co_user" edge="1" parent="1" source="ent_co_user_id" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=0;fontSize=10;" target="ent_users">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_co_updatedby" edge="1" parent="1" source="ent_co_updated_by" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=0;dashed=1;fontSize=10;" target="ent_users">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_co_branches" edge="1" parent="1" source="ent_companies" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=0;fontSize=10;exitX=0.5;exitY=1;exitDx=0;exitDy=0;" target="ent_company_branches">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="1349.94" y="870" />
+              <mxPoint x="1209.94" y="870" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="e_cb_company" edge="1" parent="1" source="ent_cb_company_id" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=0;fontSize=10;" target="ent_companies">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="1209.94" y="900" />
+              <mxPoint x="1349.94" y="900" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="e_cb_createdby" edge="1" parent="1" source="ent_cb_created_by" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=0;dashed=1;fontSize=10;" target="ent_users">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_uc_user" edge="1" parent="1" source="ent_uc_user_id" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=0;fontSize=10;" target="ent_users">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_uc_branch" edge="1" parent="1" source="ent_uc_id" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=0;fontSize=10;exitX=0.5;exitY=0;exitDx=0;exitDy=0;" target="ent_company_branches">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_uc_assignedby" edge="1" parent="1" source="ent_uc_assigned_by" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=0;dashed=1;fontSize=10;" target="ent_users">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_jr_user" edge="1" parent="1" source="ent_jr_user_id" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=0;fontSize=10;exitX=0;exitY=0.5;exitDx=0;exitDy=0;" target="ent_users">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="1539.94" y="572" />
+              <mxPoint x="1539.94" y="500" />
+              <mxPoint x="770.06" y="500" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="e_jr_branch" edge="1" parent="1" source="ent_jr_title" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=0;fontSize=10;exitX=0;exitY=0.25;exitDx=0;exitDy=0;" target="ent_company_branches">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="1539.94" y="607.06" />
+              <mxPoint x="1539.94" y="770" />
+              <mxPoint x="1209.94" y="770" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="e_jr_model" edge="1" parent="1" source="ent_jr_model_id" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=0;fontSize=10;" target="ent_ai_models">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_rf_uploader" edge="1" parent="1" source="ent_rf_uploader_id" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=0;fontSize=10;" target="ent_users">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_rf_user" edge="1" parent="1" source="ent_rf_user_id" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=0;dashed=1;fontSize=10;" target="ent_users">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="770.06" y="980" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="e_rf_branch" edge="1" parent="1" source="ent_rf_branch_id" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=0;fontSize=10;" target="ent_company_branches">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_ja_resume" edge="1" parent="1" source="ent_ja_id" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=0;fontSize=10;exitX=0.5;exitY=0;exitDx=0;exitDy=0;" target="ent_resume_files">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_ja_jobreq" edge="1" parent="1" source="ent_ja_id" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=0;fontSize=10;exitX=0.5;exitY=0;exitDx=0;exitDy=0;entryX=0.5;entryY=1;entryDx=0;entryDy=0;" target="ent_job_requirements">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="1649.94" y="1230" />
+              <mxPoint x="1799.94" y="1230" />
+              <mxPoint x="1799.94" y="850" />
+              <mxPoint x="1709.94" y="850" />
+            </Array>
+            <mxPoint x="1700" y="710" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="e_ja_applicant" edge="1" parent="1" source="ent_ja_applicant_id" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=0;dashed=1;fontSize=10;" target="ent_users">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_ja_appliedby" edge="1" parent="1" source="ent_ja_applied_by" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=0;dashed=1;fontSize=10;" target="ent_users">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_ja_screeningresult" edge="1" parent="1" source="ent_ja_screening_result_id" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=0;fontSize=10;" target="ent_screening_results">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_sr_resume" edge="1" parent="1" source="ent_sr_resume_file_id" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=0;fontSize=10;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" target="ent_rf_id">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="1869.94" y="500" />
+              <mxPoint x="1869.94" y="780" />
+              <mxPoint x="1649.94" y="780" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="e_sr_jobreq" edge="1" parent="1" source="ent_sr_job_requirement_id" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=0;fontSize=10;" target="ent_job_requirements">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_sr_evaluator" edge="1" parent="1" source="ent_sr_evaluator_id" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=0;dashed=1;fontSize=10;exitX=0;exitY=0.75;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" target="ent_users_id">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="1889.94" y="544.94" />
+              <mxPoint x="1889.94" y="430" />
+              <mxPoint x="770.06" y="430" />
+            </Array>
+            <mxPoint x="1959.9399999999996" y="370.0000000000002" as="sourcePoint" />
+            <mxPoint x="759.9988235294118" y="469.9999999999998" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="e_ce_user" edge="1" parent="1" source="ent_ce_user_id" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=0;fontSize=10;" target="ent_users">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_ce_jobposting" edge="1" parent="1" source="ent_ce_job_posting_id" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=0;fontSize=10;entryX=0.5;entryY=1;entryDx=0;entryDy=0;exitX=0;exitY=0.5;exitDx=0;exitDy=0;" target="ent_job_requirements">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="1709.94" y="760" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="e_am_createdby" edge="1" parent="1" source="ent_am_created_by" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=0;dashed=1;fontSize=10;exitX=0;exitY=0.5;exitDx=0;exitDy=0;" target="ent_users">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="1819.94" y="1020" />
+              <mxPoint x="1819.94" y="880" />
+              <mxPoint x="770.06" y="880" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="e_al_user" edge="1" parent="1" source="ent_al_user_id" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=0;dashed=1;fontSize=10;exitX=1;exitY=0.5;exitDx=0;exitDy=0;" target="ent_users">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="770.06" y="472" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="e_eo_email" edge="1" parent="1" source="ent_eo_email" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=none;dashed=1;strokeColor=#999999;fontSize=10;" target="ent_users" value="by email (no real FK)">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

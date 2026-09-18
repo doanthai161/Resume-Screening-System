@@ -7,6 +7,7 @@ import logging
 from app.models.company import Company
 from app.models.company_branch import CompanyBranch
 from app.models.user import User
+from app.models.user_company import UserCompany
 from app.schemas.company import (
     CompanyCreate, 
     CompanyUpdate,
@@ -61,18 +62,10 @@ class CompanyRepository:
                 raise ValueError(f"Owner with ID {owner_id} does not exist")
             
             company_dict = company_data.model_dump()
-            # company_dict["owner_id"] = owner_id_obj
-            company_dict["user_id"] = owner_id_obj 
+            company_dict["user_id"] = owner_id_obj
             company_dict["created_at"] = now_utc()
             company_dict["updated_at"] = now_utc()
-            
-            company_dict["members"] = [{
-                "user_id": owner_id_obj,
-                "role": "owner",
-                "joined_at": now_utc(),
-                "permissions": ["admin", "manage_company", "manage_branches", "manage_members"]
-            }]
-            
+
             company = Company(**company_dict)
             await company.insert()
             
@@ -197,16 +190,10 @@ class CompanyRepository:
             company = await Company.get(ObjectId(company_id))
             if not company:
                 return False
-            
-            # is_owner = False
-            # for member in company.members:
-            #     if str(member["user_id"]) == user_id and member["role"] == "owner":
-            #         is_owner = True
-            #         break
-            
-            # if not is_owner:
-            #     raise ValueError("Only the owner can delete the company")
-            
+
+            if str(company.user_id) != user_id:
+                raise ValueError("Only the owner can delete the company")
+
             company.is_active = False
             company.updated_at = now_utc()
             await company.save()
@@ -236,14 +223,8 @@ class CompanyRepository:
             if not company:
                 raise ValueError(f"Company with ID {company_id} does not exist")
             
-            has_permission = False
-            for member in company.members:
-                if str(member["user_id"]) == created_by:
-                    if "manage_branches" in member.get("permissions", []) or member["role"] == "owner":
-                        has_permission = True
-                    break
-            
-            if not has_permission:
+            role = await CompanyRepository.get_user_company_role(created_by, company_id)
+            if role not in ["owner", "admin"]:
                 raise ValueError("User does not have permission to create branches")
             
             branch_dict = branch_data.dict()
@@ -312,14 +293,8 @@ class CompanyRepository:
             if not company:
                 raise ValueError("Company not found")
             
-            has_permission = False
-            for member in company.members:
-                if str(member["user_id"]) == user_id:
-                    if "manage_branches" in member.get("permissions", []) or member["role"] == "owner":
-                        has_permission = True
-                    break
-            
-            if not has_permission:
+            role = await CompanyRepository.get_user_company_role(user_id, str(company.id))
+            if role not in ["owner", "admin"]:
                 raise ValueError("User does not have permission to update this branch")
             
             update_dict = update_data.dict(exclude_unset=True)
@@ -353,14 +328,8 @@ class CompanyRepository:
             if not company:
                 raise ValueError("Company not found")
             
-            has_permission = False
-            for member in company.members:
-                if str(member["user_id"]) == user_id:
-                    if "manage_branches" in member.get("permissions", []) or member["role"] == "owner":
-                        has_permission = True
-                    break
-            
-            if not has_permission:
+            role = await CompanyRepository.get_user_company_role(user_id, str(company.id))
+            if role not in ["owner", "admin"]:
                 raise ValueError("User does not have permission to delete this branch")
             
             branch.is_active = False
@@ -395,11 +364,25 @@ class CompanyRepository:
             return companies
         
         try:
-            companies = await Company.find({
-                "members.user_id": ObjectId(user_id),
+            assigned_branches = await UserCompany.find({
+                "user_id": ObjectId(user_id),
                 "is_active": True
             }).to_list()
-            
+            branch_ids = [a.company_branch_id for a in assigned_branches]
+
+            company_ids_from_branches = []
+            if branch_ids:
+                branches = await CompanyBranch.find({"_id": {"$in": branch_ids}}).to_list()
+                company_ids_from_branches = [b.company_id for b in branches]
+
+            companies = await Company.find({
+                "$or": [
+                    {"user_id": ObjectId(user_id)},
+                    {"_id": {"$in": company_ids_from_branches}}
+                ],
+                "is_active": True
+            }).to_list()
+
             if companies:
                 await CompanyRepository._set_cache(
                     cache_key, 
@@ -527,169 +510,6 @@ class CompanyRepository:
             return [], 0
     
     @staticmethod
-    @monitor_db_operation("company_add_member")
-    async def add_company_member(
-        company_id: str,
-        user_id: str,
-        role: str = "member",
-        permissions: Optional[List[str]] = None,
-        added_by: str = None
-    ) -> bool:
-        try:
-            company = await Company.get(ObjectId(company_id))
-            if not company:
-                raise ValueError(f"Company with ID {company_id} does not exist")
-            
-            if added_by:
-                can_add = False
-                for member in company.members:
-                    if str(member["user_id"]) == added_by:
-                        if "manage_members" in member.get("permissions", []) or member["role"] == "owner":
-                            can_add = True
-                        break
-                
-                if not can_add:
-                    raise ValueError("User does not have permission to add members")
-            
-            for member in company.members:
-                if str(member["user_id"]) == user_id:
-                    raise ValueError("User is already a member of this company")
-            
-            new_member = {
-                "user_id": ObjectId(user_id),
-                "role": role,
-                "permissions": permissions or ["view"],
-                "joined_at": now_utc(),
-                "added_by": ObjectId(added_by) if added_by else None
-            }
-            
-            company.members.append(new_member)
-            company.updated_at = now_utc()
-            await company.save()
-            
-            await CompanyRepository._delete_cache(CompanyRepository._get_user_companies_cache_key(user_id))
-            await CompanyRepository._delete_cache(CompanyRepository._get_user_branches_cache_key(user_id))
-            
-            logger.info(f"Member added to company: user={user_id}, company={company_id}")
-            return True
-            
-        except ValueError as e:
-            raise
-        except Exception as e:
-            logger.error(f"Error adding member to company: {e}", exc_info=True)
-            return False
-    
-    @staticmethod
-    @monitor_db_operation("company_remove_member")
-    async def remove_company_member(
-        company_id: str,
-        user_id: str,
-        removed_by: str
-    ) -> bool:
-        try:
-            company = await Company.get(ObjectId(company_id))
-            if not company:
-                raise ValueError(f"Company with ID {company_id} does not exist")
-            can_remove = False
-            is_owner_removing = False
-            
-            for member in company.members:
-                if str(member["user_id"]) == removed_by:
-                    if "manage_members" in member.get("permissions", []) or member["role"] == "owner":
-                        can_remove = True
-                    if member["role"] == "owner" and str(member["user_id"]) == user_id:
-                        is_owner_removing = True
-                    break
-            
-            if not can_remove:
-                raise ValueError("User does not have permission to remove members")
-            
-            if is_owner_removing:
-                owner_count = sum(1 for m in company.members if m["role"] == "owner" and str(m["user_id"]) != user_id)
-                if owner_count == 0:
-                    raise ValueError("Cannot remove the only owner of the company")
-            
-            original_length = len(company.members)
-            company.members = [m for m in company.members if str(m["user_id"]) != user_id]
-            
-            if len(company.members) == original_length:
-                raise ValueError("User is not a member of this company")
-            
-            company.updated_at = now_utc()
-            await company.save()
-            
-            await CompanyRepository._delete_cache(CompanyRepository._get_user_companies_cache_key(user_id))
-            await CompanyRepository._delete_cache(CompanyRepository._get_user_branches_cache_key(user_id))
-            
-            logger.info(f"Member removed from company: user={user_id}, company={company_id}")
-            return True
-            
-        except ValueError as e:
-            raise
-        except Exception as e:
-            logger.error(f"Error removing member from company: {e}", exc_info=True)
-            return False
-    
-    @staticmethod
-    @monitor_db_operation("company_update_member")
-    async def update_company_member(
-        company_id: str,
-        user_id: str,
-        role: Optional[str] = None,
-        permissions: Optional[List[str]] = None,
-        updated_by: str = None
-    ) -> bool:
-        try:
-            company = await Company.get(ObjectId(company_id))
-            if not company:
-                raise ValueError(f"Company with ID {company_id} does not exist")
-            
-            if updated_by:
-                can_update = False
-                for member in company.members:
-                    if str(member["user_id"]) == updated_by:
-                        if "manage_members" in member.get("permissions", []) or member["role"] == "owner":
-                            can_update = True
-                        break
-                
-                if not can_update:
-                    raise ValueError("User does not have permission to update members")
-            
-            member_found = False
-            for member in company.members:
-                if str(member["user_id"]) == user_id:
-                    if role:
-                        if member["role"] == "owner" and role != "owner":
-                            owner_count = sum(1 for m in company.members if m["role"] == "owner")
-                            if owner_count <= 1:
-                                raise ValueError("Cannot change the only owner's role")
-                        member["role"] = role
-                    
-                    if permissions is not None:
-                        member["permissions"] = permissions
-                    
-                    member_found = True
-                    break
-            
-            if not member_found:
-                raise ValueError("User is not a member of this company")
-            
-            company.updated_at = now_utc()
-            await company.save()
-            
-            await CompanyRepository._delete_cache(CompanyRepository._get_user_companies_cache_key(user_id))
-            await CompanyRepository._delete_cache(CompanyRepository._get_user_branches_cache_key(user_id))
-            
-            logger.info(f"Member updated in company: user={user_id}, company={company_id}")
-            return True
-            
-        except ValueError as e:
-            raise
-        except Exception as e:
-            logger.error(f"Error updating company member: {e}", exc_info=True)
-            return False
-    
-    @staticmethod
     @monitor_db_operation("company_validate_user_access")
     @monitor_cache_operation("company_validate_user_access")
     async def validate_user_access(
@@ -704,6 +524,8 @@ class CompanyRepository:
             return cached_data
         
         try:
+            from app.repositories.user_company_repository import UserCompanyRepository
+
             branch = await CompanyBranch.get(ObjectId(company_branch_id))
             if not branch or not branch.is_active:
                 result = False
@@ -711,9 +533,14 @@ class CompanyRepository:
                 company = await Company.get(branch.company_id)
                 if not company or not company.is_active:
                     result = False
+                elif str(company.user_id) == user_id:
+                    result = True
                 else:
-                    result = any(str(member["user_id"]) == user_id for member in company.members)
-            
+                    result = await UserCompanyRepository.validate_user_branch_access(
+                        user_id=user_id,
+                        company_branch_id=company_branch_id
+                    )
+
             await CompanyRepository._set_cache(cache_key, result, 300)
             
             return result
@@ -729,13 +556,22 @@ class CompanyRepository:
             company = await Company.get(ObjectId(company_id))
             if not company:
                 return None
-            
-            for member in company.members:
-                if str(member["user_id"]) == user_id:
-                    return member["role"]
-            
+
+            if str(company.user_id) == user_id:
+                return "owner"
+
+            from app.repositories.user_company_repository import UserCompanyRepository
+
+            for branch_id in company.branch_ids:
+                role = await UserCompanyRepository.get_user_role_in_branch(
+                    user_id=user_id,
+                    company_branch_id=str(branch_id)
+                )
+                if role:
+                    return role
+
             return None
-            
+
         except Exception as e:
             logger.error(f"Error getting user role: {e}")
             return None
@@ -748,19 +584,26 @@ class CompanyRepository:
             if not company:
                 raise ValueError("Company not found")
             
-            branch_count = await CompanyBranch.find({
+            branches = await CompanyBranch.find({
                 "company_id": ObjectId(company_id),
                 "is_active": True
-            }).count()
-            
+            }).to_list()
+            branch_count = len(branches)
+
+            assignments = await UserCompany.find({
+                "company_branch_id": {"$in": [b.id for b in branches]},
+                "is_active": True
+            }).to_list()
+
+            distinct_members = {str(a.user_id) for a in assignments}
             member_stats = {
-                "total": len(company.members),
-                "owners": sum(1 for m in company.members if m["role"] == "owner"),
-                "admins": sum(1 for m in company.members if "admin" in m.get("permissions", [])),
-                "managers": sum(1 for m in company.members if "manage_members" in m.get("permissions", [])),
-                "members": sum(1 for m in company.members if m["role"] == "member")
+                "total": len(distinct_members) + 1,  # +1 for the company owner
+                "owners": 1,
+                "admins": sum(1 for a in assignments if a.role == "admin"),
+                "managers": sum(1 for a in assignments if a.role == "manager"),
+                "members": sum(1 for a in assignments if a.role not in ("admin", "manager"))
             }
-            
+
             avg_members_per_branch = member_stats["total"] / branch_count if branch_count > 0 else 0
             
             stats = {
@@ -836,13 +679,10 @@ class CompanyRepository:
             patterns = [
                 f"{CompanyRepository.CACHE_PREFIX}company:{company.id}",
                 f"{CompanyRepository.CACHE_PREFIX}company_branches:{company.id}",
+                f"{CompanyRepository.CACHE_PREFIX}user_companies:*",
+                f"{CompanyRepository.CACHE_PREFIX}user_branches:*",
             ]
-            
-            for member in company.members:
-                user_id = str(member["user_id"])
-                patterns.append(f"{CompanyRepository.CACHE_PREFIX}user_companies:{user_id}")
-                patterns.append(f"{CompanyRepository.CACHE_PREFIX}user_branches:{user_id}")
-            
+
             import asyncio
             delete_tasks = []
             for pattern in patterns:
@@ -868,15 +708,10 @@ class CompanyRepository:
             patterns = [
                 f"{CompanyRepository.CACHE_PREFIX}branch:{branch.id}",
                 f"{CompanyRepository.CACHE_PREFIX}company_branches:{branch.company_id}",
+                f"{CompanyRepository.CACHE_PREFIX}user_branches:*",
+                f"{CompanyRepository.CACHE_PREFIX}user_access:*:{branch.id}",
             ]
-            
-            company = await Company.get(branch.company_id)
-            if company:
-                for member in company.members:
-                    user_id = str(member["user_id"])
-                    patterns.append(f"{CompanyRepository.CACHE_PREFIX}user_branches:{user_id}")
-                    patterns.append(f"{CompanyRepository.CACHE_PREFIX}user_access:{user_id}:{branch.id}")
-            
+
             import asyncio
             delete_tasks = []
             for pattern in patterns:

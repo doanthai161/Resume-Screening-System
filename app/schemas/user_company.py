@@ -7,6 +7,8 @@ from pydantic import BaseModel
 class AssignUserToCompanyBranch(BaseModel):
     user_id: str
     company_branch_id: str
+    role: Optional[str] = "member"
+    permissions: Optional[list[str]] = None
 
 class ListUserCompanyBranchResponse:
     company_branch_id:str

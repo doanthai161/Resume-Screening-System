@@ -13,6 +13,9 @@ import uvicorn
 import sys
 from pathlib import Path
 
+from app.core.errors import CustomError, ErrorCodes
+from app.schemas.response import ApiResponse
+
 from app.core.config import settings
 from app.core.database import init_db, close_db
 from app.core.redis import init_redis, close_redis
@@ -237,11 +240,26 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
     return JSONResponse(
         status_code=422,
         content={
+            "success": False,
+            "message": "Validation failed",
             "error": {
-                "code": "VALIDATION_ERROR",
-                "message": "Validation failed",
+                "code": ErrorCodes.VALIDATION.value,
                 "details": exc.errors(),
-                "path": request.url.path,
+            }
+        },
+    )
+
+@app.exception_handler(CustomError)
+async def custom_error_handler(request: Request, exc: CustomError):
+    logger.warning(f"Custom error: {exc.message} (code: {exc.code})")
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={
+            "success": False,
+            "message": exc.message,
+            "error": {
+                "code": exc.code.value,
+                "details": exc.details,
             }
         },
     )
@@ -252,11 +270,10 @@ async def http_exception_handler(request: Request, exc: HTTPException):
     return JSONResponse(
         status_code=exc.status_code,
         content={
+            "success": False,
+            "message": str(exc.detail),
             "error": {
                 "code": "HTTP_ERROR",
-                "message": exc.detail,
-                "status_code": exc.status_code,
-                "path": request.url.path,
             }
         },
         headers=exc.headers,
@@ -264,19 +281,15 @@ async def http_exception_handler(request: Request, exc: HTTPException):
 
 @app.exception_handler(Exception)
 async def generic_exception_handler(request: Request, exc: Exception):
-    # Log the full exception with traceback
-    logger.error(f"Unhandled exception on {request.method} {request.url.path}", 
-                exc_info=True)
-    
+    logger.error(f"Unhandled exception on {request.method} {request.url.path}", exc_info=True)
     error_detail = str(exc) if settings.DEBUG else "Internal server error"
-    
     return JSONResponse(
         status_code=500,
         content={
+            "success": False,
+            "message": error_detail,
             "error": {
-                "code": "INTERNAL_ERROR",
-                "message": error_detail,
-                "path": request.url.path,
+                "code": ErrorCodes.INTERNAL.value,
                 "request_id": request.headers.get("x-request-id", "unknown"),
             }
         },

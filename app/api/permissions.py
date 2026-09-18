@@ -1,25 +1,15 @@
-from bson import ObjectId
-from fastapi import Request, BackgroundTasks, APIRouter, HTTPException, status, FastAPI, Depends, Query
-from app.utils.time import now_utc
-from datetime import datetime, timedelta, timezone
-from app.models.permission import Permission
+from fastapi import Request, BackgroundTasks, APIRouter, Depends, Query, status
 from app.schemas.permission import PermissionCreate, PermissionResponse, PermissionUpdate, PermissionListResponse
+from app.schemas.response import ApiResponse
 from app.core.rate_limiter import limiter
-from slowapi.errors import RateLimitExceeded
-from slowapi import _rate_limit_exceeded_handler
 from app.logs.logging_config import logger
-from app.core.security import (
-    CurrentUser,
-    require_permission,
-)
+from app.core.security import CurrentUser, require_permission
+from app.services.permission_service import PermissionService
+from app.core.errors import CustomError, ErrorCodes
 
 router = APIRouter()
-app = FastAPI()
 
-app.state.limiter = limiter
-app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
-
-@router.post("/create-permission", response_model=PermissionResponse)
+@router.post("/create-permission", response_model=ApiResponse[PermissionResponse])
 @limiter.limit("5/minute")
 async def create_permission(
     request: Request,
@@ -34,38 +24,30 @@ async def create_permission(
             logger.info,
             f"Creating permission with name: {data.name}"
         )
-        existing_permission = await Permission.find_one({'name': data.name, 'is_active': True})
-        if existing_permission:
-            raise HTTPException(status_code=400, detail="Permission already exists")
-
-        permission = Permission(
-            name=data.name,
-            description=data.description,
-            is_active=True,
-        )
-        await permission.insert()
+        permission = await PermissionService.create_permission(data)
         background_tasks.add_task(
             logger.info,
             f"Permission created with ID: {permission.id}"
         )
 
-        return PermissionResponse(
+        response_data = PermissionResponse(
             id=str(permission.id),
             name=permission.name,
             description=permission.description,
             is_active=permission.is_active,
         )
-    except RateLimitExceeded:
-        background_tasks.add_task(
-            logger.error,
-            "Rate limit exceeded while creating permission"
-        )
-        raise HTTPException(
-            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-            detail="Too many requests",
+        return ApiResponse.ok(response_data)
+    except CustomError:
+        raise
+    except Exception as e:
+        logger.error(f"Error creating permission: {e}", exc_info=True)
+        raise CustomError(
+            ErrorCodes.INTERNAL,
+            "Failed to create permission",
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
         )
     
-@router.get("/permissions", response_model=PermissionListResponse)
+@router.get("/permissions", response_model=ApiResponse[PermissionListResponse])
 @limiter.limit("10/minute")
 async def list_permissions(
     request: Request,
@@ -75,32 +57,35 @@ async def list_permissions(
         require_permission("permissions:view")
     ),
 ):
-    skip = (page - 1) * size
+    try:
+        permissions, total = await PermissionService.list_permissions(page, size)
+        
+        response_data = PermissionListResponse(
+            total=total,
+            page=page,
+            size=size,
+            permissions=[
+                PermissionResponse(
+                    id=str(p.id),
+                    name=p.name,
+                    description=p.description,
+                    is_active=p.is_active,
+                )
+                for p in permissions
+            ]
+        )
+        return ApiResponse.ok(response_data)
+    except CustomError:
+        raise
+    except Exception as e:
+        logger.error(f"Error listing permissions: {e}", exc_info=True)
+        raise CustomError(
+            ErrorCodes.INTERNAL,
+            "Failed to list permissions",
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
+        )
 
-    permissions = await Permission.find(
-        {"is_active": True}
-    ).skip(skip).limit(size).to_list()
-
-    total = await Permission.find(
-        {"is_active": True}
-    ).count()
-
-    return PermissionListResponse(
-        total=total,
-        page=page,
-        size=size,
-        permissions=[
-            PermissionResponse(
-                id=str(p.id),
-                name=p.name,
-                description=p.description,
-            )
-            for p in permissions
-        ]
-    )
-
-    
-@router.put("/update-permission/{permission_id}", response_model=PermissionResponse)
+@router.put("/update-permission/{permission_id}", response_model=ApiResponse[PermissionResponse])
 @limiter.limit("5/minute")
 async def update_permission(
     request: Request,
@@ -116,39 +101,30 @@ async def update_permission(
             logger.info,
             f"Updating permission with ID: {permission_id}"
         )
-        permission = await Permission.get(ObjectId(permission_id))
-        if not permission or not permission.is_active:
-            raise HTTPException(status_code=404, detail="Permission not found")
-
-        if data.name is not None:
-            permission.name = data.name
-        if data.description is not None:
-            permission.description = data.description
-
-        permission.updated_at = now_utc()
-        await permission.save()
+        permission = await PermissionService.update_permission(permission_id, data)
         background_tasks.add_task(
             logger.info,
             f"Permission updated with ID: {permission.id}"
         )
 
-        return PermissionResponse(
+        response_data = PermissionResponse(
             id=str(permission.id),
             name=permission.name,
             description=permission.description,
             is_active=permission.is_active,
         )
-    except RateLimitExceeded:
-        background_tasks.add_task(
-            logger.error,
-            "Rate limit exceeded while updating permission"
-        )
-        raise HTTPException(
-            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-            detail="Too many requests",
+        return ApiResponse.ok(response_data)
+    except CustomError:
+        raise
+    except Exception as e:
+        logger.error(f"Error updating permission {permission_id}: {e}", exc_info=True)
+        raise CustomError(
+            ErrorCodes.INTERNAL,
+            "Failed to update permission",
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
         )
     
-@router.get("/get-permission/{permission_id}", response_model=PermissionResponse)
+@router.get("/get-permission/{permission_id}", response_model=ApiResponse[PermissionResponse])
 @limiter.limit("10/minute")
 async def get_permission(
     request: Request,
@@ -158,21 +134,23 @@ async def get_permission(
     ),
 ):
     try:
-        permission = await Permission.get(ObjectId(permission_id))
-        if not permission or not permission.is_active:
-            raise HTTPException(status_code=404, detail="Permission not found")
-
-        return PermissionResponse(
+        permission = await PermissionService.get_permission(permission_id)
+        
+        response_data = PermissionResponse(
             id=str(permission.id),
             name=permission.name,
             description=permission.description,
             is_active=permission.is_active,
         )
-    except RateLimitExceeded:
-        logger.error("Rate limit exceeded while retrieving permission")
-        raise HTTPException(
-            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-            detail="Too many requests",
+        return ApiResponse.ok(response_data)
+    except CustomError:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting permission {permission_id}: {e}", exc_info=True)
+        raise CustomError(
+            ErrorCodes.INTERNAL,
+            "Failed to get permission",
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
         )
     
 @router.delete("/delete-permission/{permission_id}")
@@ -190,25 +168,19 @@ async def delete_permission(
             logger.info,
             f"Deleting permission with ID: {permission_id}"
         )
-        permission = await Permission.get(ObjectId(permission_id))
-        if not permission or not permission.is_active:
-            raise HTTPException(status_code=404, detail="Permission not found")
-
-        permission.is_active = False
-        permission.updated_at = now_utc()
-        await permission.save()
+        await PermissionService.delete_permission(permission_id)
         background_tasks.add_task(
             logger.info,
-            f"Permission deleted with ID: {permission.id}"
+            f"Permission deleted with ID: {permission_id}"
         )
 
-        return {"detail": "Permission deleted successfully"}
-    except RateLimitExceeded:
-        background_tasks.add_task(
-            logger.error,
-            "Rate limit exceeded while deleting permission"
-        )
-        raise HTTPException(
-            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-            detail="Too many requests",
+        return ApiResponse.ok({"detail": "Permission deleted successfully"})
+    except CustomError:
+        raise
+    except Exception as e:
+        logger.error(f"Error deleting permission {permission_id}: {e}", exc_info=True)
+        raise CustomError(
+            ErrorCodes.INTERNAL,
+            "Failed to delete permission",
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
         )
