@@ -1,0 +1,24 @@
+services:
+  api:
+    environment:
+      ENVIRONMENT: development
+      DEBUG: "true"
+      WATCHFILES_FORCE_POLLING: "true"
+    command:
+      - uvicorn
+      - app.main:app
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8000"
+      - --reload
+
+  mongo:
+    ports:
+      # Port 27017 is already used by the Windows MongoDB service.
+      - "127.0.0.1:27018:27017"
+
+  redis:
+    ports:
+      # Loopback-only exposure for a backend process running on the host.
+      - "127.0.0.1:6379:6379"

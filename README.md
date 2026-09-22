@@ -136,6 +136,36 @@ Kết quả `/health` thành công phải có `status: "healthy"` và `all_healt
 
 Docker Compose ép `ENVIRONMENT=production` và `DEBUG=false`, vì vậy Swagger UI không được public trong cấu hình mặc định.
 
+### Chế độ development có Swagger và hot reload
+
+File `docker-compose.dev.yml` ghi đè API sang development, bật Swagger và tự reload khi code trong `app/` thay đổi:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d --build
+```
+
+Sau khi khởi động:
+
+- Swagger UI: `http://localhost:8000/docs`
+- ReDoc: `http://localhost:8000/redoc`
+- OpenAPI JSON: `http://localhost:8000/openapi.json`
+- Health check: `http://localhost:8000/health`
+
+Theo dõi log trong lúc sửa code:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.dev.yml logs -f api
+```
+
+Override development cũng publish MongoDB tại `127.0.0.1:27018` và Redis tại `127.0.0.1:6379`. Các cổng chỉ bind vào loopback, không public ra mạng LAN.
+
+Để quay lại cấu hình production mặc định:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.dev.yml down
+docker compose up -d
+```
+
 ### 4. Dừng hệ thống
 
 Giữ nguyên dữ liệu:
@@ -176,6 +206,20 @@ DEBUG=true
 MONGODB_URI=mongodb://127.0.0.1:27017
 MONGODB_DB_NAME=resume_screening_dev
 REDIS_URL=redis://localhost:6379/0
+```
+
+Nếu giữ MongoDB/Redis trong Docker bằng development override nhưng chạy Uvicorn trên Windows, dùng credentials trong `.env` và các địa chỉ:
+
+```dotenv
+MONGODB_URI=mongodb://<MONGO_APP_USERNAME>:<MONGO_APP_PASSWORD>@127.0.0.1:27018/<MONGO_APP_DATABASE>?authSource=<MONGO_APP_DATABASE>
+MONGODB_DB_NAME=<MONGO_APP_DATABASE>
+REDIS_URL=redis://:<REDIS_PASSWORD>@127.0.0.1:6379/0
+```
+
+Không chạy đồng thời API container và Uvicorn local trên cùng cổng `8000`. Dừng riêng API container bằng:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.dev.yml stop api
 ```
 
 Redis có cơ chế degrade để API vẫn có thể khởi động trong development, nhưng cache, queue, token blacklist dùng chung và distributed rate limit sẽ không hoạt động đầy đủ. Production nên coi Redis là dependency bắt buộc.
