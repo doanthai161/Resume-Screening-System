@@ -1,8 +1,9 @@
 from typing import List, Optional, Tuple, Dict, Any
+import re
 from bson import ObjectId
 from beanie import PydanticObjectId
 
-from app.models.job_requirement import JobRequirement
+from app.models.job_requirement import JobRequirement, JobStatus
 from app.schemas.job_requirement import JobRequirementCreate, JobRequirementUpdate
 from app.utils.time import now_utc
 
@@ -34,26 +35,46 @@ class JobRequirementRepository:
         job_id: str,
         update_data: JobRequirementUpdate
     ) -> Optional[JobRequirement]:
-        try:
-            job = await JobRequirement.get(PydanticObjectId(job_id))
-            if not job:
-                return None
-
-            update_dict = update_data.model_dump(exclude_unset=True)
-
-            if "user_id" in update_dict:
-                update_dict["user_id"] = ObjectId(update_dict["user_id"])
-            if "company_branch_id" in update_dict:
-                update_dict["company_branch_id"] = ObjectId(update_dict["company_branch_id"])
-
-            for field, value in update_dict.items():
-                setattr(job, field, value)
-
-            job.updated_at = now_utc()
-            await job.save()
-            return job
-        except Exception:
+        if not PydanticObjectId.is_valid(job_id):
             return None
+        job = await JobRequirement.get(PydanticObjectId(job_id))
+        if not job:
+            return None
+
+        update_dict = update_data.model_dump(exclude_unset=True)
+        for field, value in update_dict.items():
+            setattr(job, field, value)
+
+        if update_dict.get("status") is not None:
+            target_status = JobStatus(update_dict["status"])
+            job.status = target_status
+            job.is_open = target_status == JobStatus.PUBLISHED
+            job.is_active = target_status != JobStatus.ARCHIVED
+            if target_status == JobStatus.PUBLISHED and job.published_at is None:
+                job.published_at = now_utc()
+            if target_status == JobStatus.CLOSED:
+                job.closed_at = now_utc()
+        elif "is_open" in update_dict:
+            job.status = JobStatus.PUBLISHED if update_dict["is_open"] else JobStatus.CLOSED
+            if job.status == JobStatus.PUBLISHED and job.published_at is None:
+                job.published_at = now_utc()
+            if job.status == JobStatus.CLOSED:
+                job.closed_at = now_utc()
+        if update_dict.get("is_active") is False:
+            job.status = JobStatus.ARCHIVED
+            job.is_open = False
+
+        if job.salary_min is not None and job.salary_max is not None and job.salary_min > job.salary_max:
+            raise ValueError("salary_min must be less than or equal to salary_max")
+        if (job.salary_min is not None or job.salary_max is not None) and not job.salary_currency:
+            raise ValueError("salary_currency is required when salary is provided")
+        if job.salary_currency:
+            job.salary_currency = job.salary_currency.upper()
+
+        job.version += 1
+        job.updated_at = now_utc()
+        await job.save()
+        return job
 
     @staticmethod
     async def delete_job_requirement(
@@ -64,6 +85,8 @@ class JobRequirementRepository:
             return False
 
         job.is_active = False
+        job.is_open = False
+        job.status = JobStatus.ARCHIVED
         job.updated_at = now_utc()
         await job.save()
         return True
@@ -118,9 +141,10 @@ class JobRequirementRepository:
         }
 
         if search_term:
+            escaped_term = re.escape(search_term.strip()[:100])
             query_filter["$or"] = [
-                {"title": {"$regex": search_term, "$options": "i"}},
-                {"description": {"$regex": search_term, "$options": "i"}}
+                {"title": {"$regex": escaped_term, "$options": "i"}},
+                {"description": {"$regex": escaped_term, "$options": "i"}}
             ]
 
         if programming_languages:

@@ -1,5 +1,5 @@
 from typing import List, Optional
-from fastapi import APIRouter, Depends, HTTPException, status, Query, Request
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status, Query, Request
 from pydantic import EmailStr
 from app.schemas.response import ApiResponse
 from app.core.errors import CustomError, ErrorCodes
@@ -20,6 +20,7 @@ from app.models.user import User
 from app.core.security import get_current_user, require_permission, CurrentUser
 from app.logs.logging_config import logger
 from app.core.rate_limiter import limiter
+from app.core.config import settings
 from slowapi.errors import RateLimitExceeded
 from slowapi import _rate_limit_exceeded_handler
 from app.services.user_service import UserService
@@ -32,7 +33,7 @@ router = APIRouter()
 async def create_user(
     request: Request,
     user_data: UserCreate,
-    current_user: CurrentUser = Depends(require_permission("user:create"))
+    current_user: CurrentUser = Depends(require_permission("users:create"))
 ):
     try:
         user = await UserService.create_user(user_data)
@@ -45,13 +46,15 @@ async def create_user(
         raise CustomError(ErrorCodes.INTERNAL, "Failed to create user", status_code=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 @router.get("/", response_model=ApiResponse[List[UserResponse]])
+@limiter.limit(settings.RATE_LIMIT_READ)
 async def list_users(
+    request: Request,
     page: int = Query(1, ge=1),
     size: int = Query(20, ge=1, le=100),
     filters: Optional[UserFilter] = Depends(),
     sort_by: str = Query("created_at", regex="^(email|username|full_name|created_at|last_login)$"),
     sort_desc: bool = Query(True),
-    current_user: CurrentUser = Depends(require_permission("user:read"))
+    current_user: CurrentUser = Depends(require_permission("users:view"))
 ):
     try:
         users, total = await UserService.list_users(
@@ -73,14 +76,64 @@ async def list_users(
         logger.error(f"Error listing users: {e}", exc_info=True)
         raise CustomError(ErrorCodes.INTERNAL, "Failed to list users", status_code=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
-@router.get("/{user_id}", response_model=UserResponse)
+
+@router.get("/search/", response_model=List[UserResponse])
+@limiter.limit(settings.RATE_LIMIT_READ)
+async def search_users(
+    request: Request,
+    q: str = Query(..., min_length=2, max_length=100, description="Search term"),
+    skip: int = Query(0, ge=0),
+    limit: int = Query(20, ge=1, le=100),
+    current_user: CurrentUser = Depends(require_permission("users:view")),
+):
+    try:
+        users, _ = await UserRepository.search_users(q, skip, limit)
+        return [
+            UserResponse.model_validate(user.dict(exclude={"hashed_password"}))
+            for user in users
+        ]
+    except Exception as e:
+        logger.error(f"Error searching users: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to search users",
+        )
+
+
+@router.get("/me", response_model=UserResponse)
+@limiter.limit(settings.RATE_LIMIT_READ)
+async def get_current_user_profile(
+    request: Request,
+    current_user: CurrentUser = Depends(get_current_user),
+):
+    try:
+        user = await UserRepository.get_user(str(current_user.user_id))
+        if not user:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="User not found",
+            )
+        return UserResponse.model_validate(user.dict(exclude={"hashed_password"}))
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting current user profile: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to get user profile",
+        )
+
+@router.get("/{user_id}", response_model=ApiResponse[UserResponse])
+@limiter.limit(settings.RATE_LIMIT_READ)
 async def get_user(
+    request: Request,
     user_id: str,
-    current_user: CurrentUser = Depends(require_permission("user:read"))
+    current_user: CurrentUser = Depends(require_permission("users:view"))
 ):
     try:
         user = await UserService.get_user(user_id, current_user)
-        return UserResponse.model_validate(user.dict(exclude={"hashed_password"}))
+        data = UserResponse.model_validate(user.dict(exclude={"hashed_password"}))
+        return ApiResponse.ok(data)
         
     except CustomError:
         raise
@@ -94,7 +147,9 @@ async def get_user(
         )
 
 @router.put("/{user_id}", response_model=ApiResponse[UserResponse])
+@limiter.limit(settings.RATE_LIMIT_WRITE)
 async def update_user(
+    request: Request,
     user_id: str,
     update_data: UserUpdate,
     current_user: CurrentUser = Depends(get_current_user)
@@ -113,9 +168,11 @@ async def update_user(
         raise CustomError(ErrorCodes.INTERNAL, "Failed to update user", status_code=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 @router.delete("/{user_id}", status_code=status.HTTP_204_NO_CONTENT)
+@limiter.limit(settings.RATE_LIMIT_WRITE)
 async def delete_user(
+    request: Request,
     user_id: str,
-    current_user: CurrentUser = Depends(require_permission("user:delete"))
+    current_user: CurrentUser = Depends(require_permission("users:delete"))
 ):
     try:
         await UserService.delete_user(user_id, current_user)
@@ -130,12 +187,14 @@ async def delete_user(
         raise CustomError(ErrorCodes.INTERNAL, "Failed to delete user", status_code=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 @router.delete("/hard/{user_id}", status_code=status.HTTP_204_NO_CONTENT)
+@limiter.limit("5/minute")
 async def hard_delete_user(
+    request: Request,
     user_id: str,
-    current_user: CurrentUser = Depends(require_permission("user:hard_delete"))
+    current_user: CurrentUser = Depends(require_permission("users:delete"))
 ):
     try:
-        await UserService.hard_delete_user(user_id)
+        await UserService.hard_delete_user(user_id, current_user)
         return ApiResponse.ok(message="User hard deleted successfully")
         
     except CustomError:
@@ -146,37 +205,12 @@ async def hard_delete_user(
         logger.error(f"Error hard deleting user {user_id}: {e}", exc_info=True)
         raise CustomError(ErrorCodes.INTERNAL, "Failed to hard delete user", status_code=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
-@router.get("/search/", response_model=List[UserResponse])
-async def search_users(
-    q: str = Query(..., min_length=2, description="Search term"),
-    skip: int = Query(0, ge=0),
-    limit: int = Query(20, ge=1, le=100),
-    current_user: CurrentUser = Depends(require_permission("user:read"))
-):
-    """
-    Search users by email, username, full_name, or phone
-    """
-    try:
-        users, total = await UserRepository.search_users(q, skip, limit)
-        
-        response_users = [
-            UserResponse.model_validate(user.dict(exclude={"hashed_password"})) 
-            for user in users
-        ]
-        
-        return response_users
-        
-    except Exception as e:
-        logger.error(f"Error searching users: {e}", exc_info=True)
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to search users"
-        )
-
 @router.post("/bulk/update", status_code=status.HTTP_200_OK)
+@limiter.limit("5/minute")
 async def bulk_update_users(
+    request: Request,
     bulk_data: UserBulkUpdate,
-    current_user: CurrentUser = Depends(require_permission("user:bulk_update"))
+    current_user: CurrentUser = Depends(require_permission("users:edit"))
 ):
     """
     Bulk update users (Admin only)
@@ -201,9 +235,11 @@ async def bulk_update_users(
         )
 
 @router.post("/bulk/deactivate", status_code=status.HTTP_200_OK)
+@limiter.limit("5/minute")
 async def bulk_deactivate_users(
+    request: Request,
     bulk_data: UserBulkDeactivate,
-    current_user: CurrentUser = Depends(require_permission("user:delete"))
+    current_user: CurrentUser = Depends(require_permission("users:delete"))
 ):
     try:
         deactivated_count = await UserRepository.bulk_deactivate_users(
@@ -224,9 +260,11 @@ async def bulk_deactivate_users(
         )
 
 @router.post("/verify/{user_id}", status_code=status.HTTP_200_OK)
+@limiter.limit(settings.RATE_LIMIT_WRITE)
 async def verify_user(
+    request: Request,
     user_id: str,
-    current_user: CurrentUser = Depends(require_permission("user:verify"))
+    current_user: CurrentUser = Depends(require_permission("users:edit"))
 ):
     """
     Verify a user (Admin only)
@@ -240,7 +278,8 @@ async def verify_user(
             )
         
         return {"message": "User verified successfully"}
-        
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Error verifying user {user_id}: {e}", exc_info=True)
         raise HTTPException(
@@ -249,7 +288,9 @@ async def verify_user(
         )
 
 @router.post("/password/change", status_code=status.HTTP_200_OK)
+@limiter.limit("5/minute")
 async def change_password(
+    request: Request,
     password_data: UserChangePassword,
     current_user: CurrentUser = Depends(get_current_user)
 ):
@@ -284,14 +325,22 @@ async def change_password(
 @limiter.limit("5/hour")
 async def request_password_reset(
     request: Request,
-    reset_request: UserResetPasswordRequest
+    reset_request: UserResetPasswordRequest,
+    background_tasks: BackgroundTasks,
 ):
     try:
         token = await UserRepository.generate_password_reset_token(reset_request.email)
-        
+        if token:
+            from app.core.email_otp import send_otp_email
+
+            background_tasks.add_task(
+                send_otp_email,
+                str(reset_request.email),
+                token,
+                "password_reset",
+            )
         return {
-            "message": "If an account exists with this email, a reset link has been sent",
-            "token": token
+            "message": "If an account exists with this email, a reset link has been sent"
         }
         
     except Exception as e:
@@ -301,7 +350,9 @@ async def request_password_reset(
         }
 
 @router.post("/password/reset/confirm", status_code=status.HTTP_200_OK)
+@limiter.limit("5/hour")
 async def confirm_password_reset(
+    request: Request,
     reset_confirm: UserResetPasswordConfirm
 ):
     try:
@@ -328,8 +379,10 @@ async def confirm_password_reset(
         )
 
 @router.get("/stats/overall", response_model=UserStatisticsResponse)
+@limiter.limit(settings.RATE_LIMIT_READ)
 async def get_user_statistics(
-    current_user: CurrentUser = Depends(require_permission("user:stats"))
+    request: Request,
+    current_user: CurrentUser = Depends(require_permission("users:view"))
 ):
     try:
         stats = await UserRepository.get_user_statistics()
@@ -343,9 +396,11 @@ async def get_user_statistics(
         )
 
 @router.get("/stats/activity/{user_id}", response_model=UserActivityStatsResponse)
+@limiter.limit(settings.RATE_LIMIT_READ)
 async def get_user_activity_stats(
+    request: Request,
     user_id: str,
-    current_user: CurrentUser = Depends(require_permission("user:stats"))
+    current_user: CurrentUser = Depends(require_permission("users:view"))
 ):
     try:
         stats = await UserRepository.get_user_activity_statistics(user_id)
@@ -367,8 +422,10 @@ async def get_user_activity_stats(
         )
 
 @router.post("/cache/clear", status_code=status.HTTP_200_OK)
+@limiter.limit("5/minute")
 async def clear_user_cache(
-    current_user: CurrentUser = Depends(require_permission("user:cache_clear"))
+    request: Request,
+    current_user: CurrentUser = Depends(require_permission("users:edit"))
 ):
     try:
         await UserRepository.clear_all_user_cache()
@@ -379,27 +436,4 @@ async def clear_user_cache(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to clear user cache"
-        )
-
-@router.get("/me", response_model=UserResponse)
-async def get_current_user_profile(
-    current_user: CurrentUser = Depends(get_current_user)
-):
-    try:
-        user = await UserRepository.get_user(str(current_user.user_id))
-        if not user:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="User not found"
-            )
-        
-        return UserResponse.model_validate(user.dict(exclude={"hashed_password"}))
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error getting current user profile: {e}", exc_info=True)
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to get user profile"
         )

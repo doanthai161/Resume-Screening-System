@@ -18,6 +18,12 @@ class UserActorRepository:
         return await UserActor.find_one({"user_id": ObjectId(user_id)})
 
     @staticmethod
+    async def get_user_actor_link(user_id: str, actor_id: str) -> Optional[UserActor]:
+        return await UserActor.find_one(
+            {"user_id": ObjectId(user_id), "actor_id": ObjectId(actor_id)}
+        )
+
+    @staticmethod
     async def get_user_actor_by_id(user_actor_id: str) -> Optional[UserActor]:
         return await UserActor.find_one({"_id": ObjectId(user_actor_id)})
 

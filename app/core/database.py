@@ -1,34 +1,43 @@
-import motor.motor_asyncio
-from beanie import init_beanie, Document
-from app.core.config import settings
-
-from app.models.job_requirement import JobRequirement
-from app.models.user import User
-from app.models.company import Company
-from app.models.user_company import UserCompany
-from app.models.actor_permission import ActorPermission
-from app.models.permission import Permission
-from app.models.actor import Actor
-from app.models.user_actor import UserActor
-from app.models.company_branch import CompanyBranch
-from app.models.candidate_evaluation import CandidateEvaluation
-from app.models.email_otp import EmailOTP
-from app.models.resume_file import ResumeFile, ParsedResumeData
-from app.models.screening_result import ScreeningResult
-from app.models.ai_model import AIModel
-from app.models.job_application import JobApplication
-from app.models.audit_log import AuditLog
-
-from pymongo.errors import DuplicateKeyError
-import os
-import datetime
+import hashlib
 import logging
-from typing import Type, List
+from typing import Iterable, Sequence
+
+import motor.motor_asyncio
+from beanie import Document, init_beanie
+from bson import ObjectId
+from pymongo import UpdateOne
+from pymongo.errors import DuplicateKeyError, OperationFailure
+
+from app.core.config import settings
+from app.models.actor import Actor
+from app.models.actor_permission import ActorPermission
+from app.models.ai_model import AIModel
+from app.models.application_review import ApplicationReview
+from app.models.application_stage_event import ApplicationStageEvent
+from app.models.audit_log import AuditLog
+from app.models.candidate import Candidate
+from app.models.candidate_evaluation import CandidateEvaluation
+from app.models.company import Company
+from app.models.company_branch import CompanyBranch
+from app.models.database_migration import DatabaseMigration
+from app.models.email_otp import EmailOTP
+from app.models.job_application import JobApplication
+from app.models.job_requirement import JobRequirement
+from app.models.job_scorecard import JobScorecard
+from app.models.permission import Permission
+from app.models.resume_file import ResumeFile
+from app.models.screening_result import ScreeningResult
+from app.models.screening_run import ResumeParseRun, ScreeningRun
+from app.models.user import User
+from app.models.user_actor import UserActor
+from app.models.user_company import UserCompany
+from app.utils.time import now_utc
 
 logger = logging.getLogger(__name__)
-INIT_FILE_PATH = ".initdb"
+_mongo_client = None
 
-DOCUMENT_MODELS = [
+
+DOCUMENT_MODELS: list[type[Document]] = [
     User,
     Company,
     UserCompany,
@@ -38,528 +47,456 @@ DOCUMENT_MODELS = [
     UserActor,
     CompanyBranch,
     JobRequirement,
-    CandidateEvaluation,
+    CandidateEvaluation,  # Legacy collection kept readable during migration.
     EmailOTP,
     ResumeFile,
     ScreeningResult,
     AIModel,
     JobApplication,
     AuditLog,
+    Candidate,
+    ApplicationStageEvent,
+    JobScorecard,
+    ScreeningRun,
+    ResumeParseRun,
+    ApplicationReview,
+    DatabaseMigration,
 ]
 
-MODEL_NAMES = {
-    "User": User,
-    "Company": Company,
-    "UserCompany": UserCompany,
-    "ActorPermission": ActorPermission,
-    "Permission": Permission,
-    "Actor": Actor,
-    "UserActor": UserActor,
-    "CompanyBranch": CompanyBranch,
-    "JobRequirement": JobRequirement,
-    "CandidateEvaluation": CandidateEvaluation,
-    "EmailOTP": EmailOTP,
-    "ResumeFile": ResumeFile,
-    "ScreeningResult": ScreeningResult,
-    "AIModel": AIModel,
-    "JobApplication": JobApplication,
-    "AuditLog": AuditLog,
-}
+# Internal metadata does not receive API permissions.
+PERMISSION_MODELS: Sequence[type[Document]] = tuple(
+    model for model in DOCUMENT_MODELS if model is not DatabaseMigration
+)
+
+
+def _collection_name(model: type[Document]) -> str:
+    settings_class = getattr(model, "Settings", None)
+    return getattr(settings_class, "name", f"{model.__name__.lower()}s")
+
 
 async def _ensure_default_permissions() -> None:
     default_actions = ("view", "create", "edit", "delete", "list")
+    existing = {permission.name for permission in await Permission.find_all().to_list()}
+    desired = {
+        f"{_collection_name(model)}:{action}"
+        for model in PERMISSION_MODELS
+        for action in default_actions
+    }
+    desired.update(
+        {
+            "resume_files:upload",
+            "resume_files:parse",
+            "resume_files:screen",
+            "screening_results:evaluate",
+            "ai_models:train",
+            "ai_models:deploy",
+            "jobs:match",
+            "jobs:bulk_screen",
+        }
+    )
 
-    existing_perms_cursor = Permission.find_all()
-    existing_perms_set = {perm.name for perm in await existing_perms_cursor.to_list()}
-
-    perms_to_create = []
-
-    for model_name, model_class in MODEL_NAMES.items():
-        model_settings = getattr(model_class, "Settings", None)
-        if model_settings and hasattr(model_settings, "name"):
-            collection_name = model_settings.name
-        else:
-            collection_name = model_name.lower() + "s"
-        
-        for action in default_actions:
-            perm_name = f"{collection_name}:{action}"
-            
-            if perm_name not in existing_perms_set:
-                perms_to_create.append(
-                    Permission(
-                        name=perm_name, 
-                        description=f"Permission to {action} {collection_name}",
-                        is_active=True
-                    )
-                )
-                existing_perms_set.add(perm_name)
-    
-    special_permissions = [
-        ("resume_files:upload", "Permission to upload resume files"),
-        ("resume_files:parse", "Permission to parse resume files"),
-        ("resume_files:screen", "Permission to screen resumes"),
-        ("screening_results:evaluate", "Permission to evaluate screening results"),
-        ("ai_models:train", "Permission to train AI models"),
-        ("ai_models:deploy", "Permission to deploy AI models"),
-        ("jobs:match", "Permission to match jobs with resumes"),
-        ("jobs:bulk_screen", "Permission to bulk screen resumes"),
-    ]
-    
-    for perm_name, description in special_permissions:
-        if perm_name not in existing_perms_set:
-            perms_to_create.append(
-                Permission(
-                    name=perm_name,
-                    description=description,
-                    is_active=True
-                )
-            )
-            existing_perms_set.add(perm_name)
-    
-    if perms_to_create:
+    for name in sorted(desired - existing):
         try:
-            await Permission.insert_many(perms_to_create)
-            logger.info(f"Created {len(perms_to_create)} default permissions.")
+            action = name.rsplit(":", 1)[-1]
+            await Permission(
+                name=name,
+                description=f"Permission to {action} {name.rsplit(':', 1)[0]}",
+                is_active=True,
+            ).insert()
         except DuplicateKeyError:
-            logger.info("Some default permissions already exist, skipping creation.")
-    else:
-        logger.info("No default permissions to create.")
+            # Another worker completed the same idempotent bootstrap write.
+            continue
+
+
+async def _get_or_create_actor(
+    name: str,
+    description: str,
+    *,
+    is_system: bool = False,
+) -> Actor:
+    actor = await Actor.find_one(Actor.name == name)
+    if actor:
+        return actor
+    try:
+        return await Actor(
+            name=name,
+            description=description,
+            is_active=True,
+            is_default=True,
+            is_system=is_system,
+        ).insert()
+    except DuplicateKeyError:
+        actor = await Actor.find_one(Actor.name == name)
+        if actor is None:
+            raise
+        return actor
+
+
+async def _sync_actor_permissions(actor: Actor, permission_names: Iterable[str]) -> None:
+    permissions = await Permission.find(
+        {"name": {"$in": list(permission_names)}, "is_active": True}
+    ).to_list()
+    current_links = await ActorPermission.find(ActorPermission.actor_id == actor.id).to_list()
+    current_ids = {link.permission_id for link in current_links}
+    for permission in permissions:
+        if permission.id in current_ids:
+            continue
+        try:
+            await ActorPermission(actor_id=actor.id, permission_id=permission.id).insert()
+        except DuplicateKeyError:
+            continue
 
 
 async def _ensure_default_actors() -> None:
-    admin_role_name = settings.ADMIN_ROLE_NAME
-    admin_role = await Actor.find_one(Actor.name == admin_role_name)
+    all_permissions = await Permission.find(Permission.is_active == True).to_list()
+    admin = await _get_or_create_actor(
+        settings.ADMIN_ROLE_NAME,
+        "Full system administrator",
+        is_system=True,
+    )
+    await _sync_actor_permissions(admin, (permission.name for permission in all_permissions))
 
-    if not admin_role:
-        try:
-            logger.info(f"Creating default actor: {admin_role_name}")
-            admin_role = Actor(
-                name=admin_role_name, 
-                description="Full system administrator with all permissions",
-                is_default=True,
-                is_system=True
-            )
-            await admin_role.insert()
-        except DuplicateKeyError:
-            logger.info(f"Actor '{admin_role_name}' already exists, fetching...")
-            admin_role = await Actor.find_one(Actor.name == admin_role_name)
+    recruiter = await _get_or_create_actor(
+        settings.RECRUITER_ROLE_NAME,
+        "Recruiter with tenant-scoped hiring workflow access",
+    )
+    recruiter_prefixes = (
+        "companies:",
+        "company_branches:",
+        "job_requirements:",
+        "candidates:",
+        "resume_files:",
+        "job_applications:",
+        "application_stage_events:",
+        "job_scorecards:",
+        "screening_runs:",
+        "screening_results:",
+        "resume_parse_runs:",
+        "application_reviews:",
+        "jobs:",
+    )
+    await _sync_actor_permissions(
+        recruiter,
+        (
+            permission.name
+            for permission in all_permissions
+            if permission.name.startswith(recruiter_prefixes)
+        ),
+    )
 
-    if admin_role:
-        all_permissions = await Permission.find_all().to_list()
-        target_admin_perm_ids = {perm.id for perm in all_permissions}
-            
-        current_admin_links = await ActorPermission.find(
-            ActorPermission.actor_id == admin_role.id
-        ).to_list()
-        current_admin_perm_ids = {link.permission_id for link in current_admin_links}
+    candidate = await _get_or_create_actor(
+        settings.CANDIDATE_ROLE_NAME,
+        "Candidate with self-service application access",
+    )
+    candidate_permissions = {
+        "users:view",
+        "users:edit",
+        "job_requirements:view",
+        "job_requirements:list",
+        "resume_files:upload",
+        "resume_files:view",
+        "job_applications:create",
+        "job_applications:view",
+        "job_applications:list",
+        "screening_results:view",
+    }
+    await _sync_actor_permissions(candidate, candidate_permissions)
 
-        missing_admin_perm_ids = target_admin_perm_ids - current_admin_perm_ids
-            
-        if missing_admin_perm_ids:
-            links_to_create = [
-                ActorPermission(actor_id=admin_role.id, permission_id=perm_id)
-                for perm_id in missing_admin_perm_ids
-            ]
-            await ActorPermission.insert_many(links_to_create)
-            logger.info(f"Assigned {len(links_to_create)} new permissions to actor '{admin_role_name}'.")
-        else:
-            logger.info(f"Actor '{admin_role_name}' already has all permissions.")
-
-    recruiter_role_name = settings.RECRUITER_ROLE_NAME
-    recruiter_role = await Actor.find_one(Actor.name == recruiter_role_name)
-
-    if not recruiter_role:
-        try:
-            logger.info(f"Creating default actor: '{recruiter_role_name}'")
-            recruiter_role = Actor(
-                name=recruiter_role_name,
-                description="Recruiter with permissions to manage jobs and screen resumes",
-                is_default=True
-            )
-            await recruiter_role.insert()
-        except DuplicateKeyError:
-            logger.info(f"Actor '{recruiter_role_name}' already exists, fetching...")
-            recruiter_role = await Actor.find_one(Actor.name == recruiter_role_name)
-    
-    if recruiter_role:
-        recruiter_permission_patterns = [
-            r"^users:view$",
-            r"^users:list$",
-            r"^companies:view$",
-            r"^companies:list$",
-            r"^company_branches:view$",
-            r"^company_branches:list$",
-            r"^job_requirements:.*$",  # All job permissions
-            r"^resume_files:.*$",      # All resume permissions
-            r"^screening_results:.*$", # All screening permissions
-            r"^candidate_evaluations:.*$", # All candidate evaluation permissions
-            r"^jobs:.*$",              # All job-related permissions
-        ]
-        
-        recruiter_permissions = []
-        all_permissions = await Permission.find_all().to_list()
-        
-        for perm in all_permissions:
-            for pattern in recruiter_permission_patterns:
-                import re
-                if re.match(pattern, perm.name):
-                    recruiter_permissions.append(perm)
-                    break
-        
-        target_recruiter_perm_ids = {perm.id for perm in recruiter_permissions}
-        
-        current_recruiter_links = await ActorPermission.find(
-            ActorPermission.actor_id == recruiter_role.id
-        ).to_list()
-        current_recruiter_perm_ids = {link.permission_id for link in current_recruiter_links}
-
-        missing_recruiter_perm_ids = target_recruiter_perm_ids - current_recruiter_perm_ids
-
-        if missing_recruiter_perm_ids:
-            links_to_create = [
-                ActorPermission(actor_id=recruiter_role.id, permission_id=perm_id)
-                for perm_id in missing_recruiter_perm_ids
-            ]
-            await ActorPermission.insert_many(links_to_create)
-            logger.info(f"Assigned {len(links_to_create)} new permissions to actor '{recruiter_role_name}'.")
-        else:
-            logger.info(f"Actor '{recruiter_role_name}' already has all recruiter permissions.")
-
-    candidate_role_name = settings.CANDIDATE_ROLE_NAME
-    candidate_role = await Actor.find_one(Actor.name == candidate_role_name)
-
-    if not candidate_role:
-        try:
-            logger.info(f"Creating default actor: '{candidate_role_name}'")
-            candidate_role = Actor(
-                name=candidate_role_name,
-                description="Candidate with permissions to view and apply for jobs",
-                is_default=True
-            )
-            await candidate_role.insert()
-        except DuplicateKeyError:
-            logger.info(f"Actor '{candidate_role_name}' already exists, fetching...")
-            candidate_role = await Actor.find_one(Actor.name == candidate_role_name)
-    
-    if candidate_role:
-        candidate_permission_patterns = [
-            r"^users:view$",
-            r"^users:edit$",
-            r"^job_requirements:view$",
-            r"^job_requirements:list$",
-            r"^resume_files:upload$",
-            r"^resume_files:view$",
-            r"^resume_files:edit$",
-            r"^resume_files:delete$",
-            r"^screening_results:view$",
-            r"^candidate_evaluations:view$",
-        ]
-        
-        candidate_permissions = []
-        all_permissions = await Permission.find_all().to_list()
-        
-        for perm in all_permissions:
-            for pattern in candidate_permission_patterns:
-                import re
-                if re.match(pattern, perm.name):
-                    candidate_permissions.append(perm)
-                    break
-        
-        target_candidate_perm_ids = {perm.id for perm in candidate_permissions}
-        
-        current_candidate_links = await ActorPermission.find(
-            ActorPermission.actor_id == candidate_role.id
-        ).to_list()
-        current_candidate_perm_ids = {link.permission_id for link in current_candidate_links}
-
-        missing_candidate_perm_ids = target_candidate_perm_ids - current_candidate_perm_ids
-
-        if missing_candidate_perm_ids:
-            links_to_create = [
-                ActorPermission(actor_id=candidate_role.id, permission_id=perm_id)
-                for perm_id in missing_candidate_perm_ids
-            ]
-            await ActorPermission.insert_many(links_to_create)
-            logger.info(f"Assigned {len(links_to_create)} new permissions to actor '{candidate_role_name}'.")
-        else:
-            logger.info(f"Actor '{candidate_role_name}' already has all candidate permissions.")
 
 async def _ensure_default_ai_models() -> None:
-    try:
-        existing_models = await AIModel.find_all().to_list()
-        
-        if not existing_models:
-            logger.info("Creating default AI models...")
-            
-            default_models = [
-                AIModel(
-                    name="resume-parser-default",
-                    model_type="resume_parser",
-                    provider="custom",
-                    model_id="resume-parser-v1",
-                    version="1.0.0",
-                    description="Default resume parser using rule-based extraction",
-                    is_active=True,
-                    config={
-                        "parser_type": "rule_based",
-                        "supported_formats": ["pdf", "docx", "doc"],
-                        "extraction_fields": ["personal_info", "skills", "experience", "education"]
-                    },
-                    created_by=None,
-                ),
-                AIModel(
-                    name="skill-matcher-default",
-                    model_type="skill_matcher",
-                    provider="custom",
-                    model_id="skill-matcher-v1",
-                    version="1.0.0",
-                    description="Default skill matching algorithm using keyword matching",
-                    is_active=True,
-                    config={
-                        "matching_algorithm": "keyword_similarity",
-                        "similarity_threshold": 0.7,
-                        "use_synonyms": True
-                    },
-                    created_by=None,
-                ),
-                AIModel(
-                    name="scoring-model-default",
-                    model_type="scoring",
-                    provider="custom",
-                    model_id="scoring-model-v1",
-                    version="1.0.0",
-                    description="Default scoring model with weighted criteria",
-                    is_active=True,
-                    config={
-                        "weights": {
-                            "skills": 0.4,
-                            "experience": 0.3,
-                            "education": 0.2,
-                            "other": 0.1
-                        },
-                        "normalization": "min_max"
-                    },
-                    created_by=None,
-                )
-            ]
-            
-            await AIModel.insert_many(default_models)
-            logger.info(f"Created {len(default_models)} default AI models.")
-    except Exception as e:
-        logger.error(f"Error creating default AI models: {e}")
+    defaults = (
+        {
+            "name": "resume-parser-default",
+            "model_type": "resume_parser",
+            "provider": "custom",
+            "model_id": "resume-parser-v1",
+            "version": "1.0.0",
+            "description": "Default rule-based resume parser",
+            "config": {
+                "parser_type": "rule_based",
+                "supported_formats": ["pdf", "docx"],
+            },
+        },
+        {
+            "name": "skill-matcher-default",
+            "model_type": "skill_matcher",
+            "provider": "custom",
+            "model_id": "skill-matcher-v1",
+            "version": "1.0.0",
+            "description": "Default keyword skill matcher",
+            "config": {"similarity_threshold": 0.7, "use_synonyms": True},
+        },
+        {
+            "name": "scoring-model-default",
+            "model_type": "scoring",
+            "provider": "custom",
+            "model_id": "scoring-model-v1",
+            "version": "1.0.0",
+            "description": "Default weighted scoring model",
+            "config": {
+                "weights": {
+                    "skills": 0.4,
+                    "experience": 0.3,
+                    "education": 0.2,
+                    "other": 0.1,
+                }
+            },
+        },
+    )
+    for data in defaults:
+        exists = await AIModel.find_one(
+            {
+                "provider": data["provider"],
+                "model_id": data["model_id"],
+                "version": data["version"],
+            }
+        )
+        if exists:
+            continue
+        try:
+            await AIModel(**data, is_active=True, created_by=None).insert()
+        except DuplicateKeyError:
+            continue
+
 
 async def _create_first_superuser() -> None:
     if not settings.CREATE_FIRST_SUPERUSER:
         return
-    
-    existing_users = await User.find_all().limit(1).to_list()
-    if existing_users:
-        logger.info("Users already exist, skipping first superuser creation.")
+    if await User.find_all().limit(1).to_list():
         return
-    
-    try:
-        from app.core.security import get_password_hash
-        
-        superuser = User(
-            email=settings.FIRST_SUPERUSER_EMAIL,
-            full_name=settings.FIRST_SUPERUSER_FULL_NAME,
-            hashed_password=get_password_hash(settings.FIRST_SUPERUSER_PASSWORD),
-            is_active=True,
-        )
-        await superuser.insert()
-        logger.info(f"Created first superuser: {settings.FIRST_SUPERUSER_EMAIL}")
-        
-        admin_actor = await Actor.find_one(Actor.name == settings.ADMIN_ROLE_NAME)
-        if admin_actor:
-            user_actor = UserActor(
-                user_id=superuser.id,
-                actor_id=admin_actor.id,
-                created_by=superuser.id,
-            )
-            await user_actor.insert()
-            logger.info(f"Assigned admin role to {settings.FIRST_SUPERUSER_EMAIL}")
-            
-    except DuplicateKeyError:
-        logger.info(f"Superuser {settings.FIRST_SUPERUSER_EMAIL} already exists.")
-    except Exception as e:
-        logger.error(f"Error creating first superuser: {e}")
 
-async def init_db():
+    from app.core.security import get_password_hash
+
+    superuser = User(
+        email=settings.FIRST_SUPERUSER_EMAIL.lower(),
+        full_name=settings.FIRST_SUPERUSER_FULL_NAME,
+        hashed_password=get_password_hash(settings.FIRST_SUPERUSER_PASSWORD),
+        is_active=True,
+        is_verified=True,
+        is_superuser=True,
+    )
     try:
-        logger.info(f"Connecting to MongoDB...")
-        
-        client = motor.motor_asyncio.AsyncIOMotorClient(
+        await superuser.insert()
+    except DuplicateKeyError:
+        superuser = await User.find_one(User.email == settings.FIRST_SUPERUSER_EMAIL.lower())
+        if superuser is None:
+            raise
+
+    admin = await Actor.find_one(Actor.name == settings.ADMIN_ROLE_NAME)
+    if admin and not await UserActor.find_one(
+        {"user_id": superuser.id, "actor_id": admin.id}
+    ):
+        try:
+            await UserActor(
+                user_id=superuser.id,
+                actor_id=admin.id,
+                created_by=superuser.id,
+            ).insert()
+        except DuplicateKeyError:
+            pass
+
+
+async def _record_schema_baseline() -> None:
+    version = 1
+    name = "recruitment_pipeline_schema"
+    checksum = hashlib.sha256(name.encode("utf-8")).hexdigest()
+    existing = await DatabaseMigration.find_one(DatabaseMigration.version == version)
+    if existing:
+        if existing.checksum != checksum:
+            raise RuntimeError(f"Database migration {version} checksum mismatch")
+        return
+    try:
+        await DatabaseMigration(version=version, name=name, checksum=checksum).insert()
+    except DuplicateKeyError:
+        pass
+
+
+async def _bootstrap_database() -> None:
+    await _ensure_default_permissions()
+    await _ensure_default_actors()
+    await _ensure_default_ai_models()
+    await _create_first_superuser()
+    await _record_schema_baseline()
+
+
+async def _run_pre_init_index_migrations(database) -> None:
+    """Remove only indexes explicitly replaced by this schema revision."""
+    replacements = {
+        "resume_files": {"uq_resume_company_checksum"},
+    }
+    for collection_name, obsolete_names in replacements.items():
+        existing = await database[collection_name].index_information()
+        for index_name in obsolete_names.intersection(existing):
+            try:
+                await database[collection_name].drop_index(index_name)
+                logger.info("Dropped obsolete index %s.%s", collection_name, index_name)
+            except OperationFailure as exc:
+                if exc.code != 27:  # IndexNotFound from a concurrent startup worker.
+                    raise
+
+    user_indexes = await database["users"].index_information()
+    old_phone_index = user_indexes.get("phone_number_1")
+    if old_phone_index and not old_phone_index.get("unique", False):
+        try:
+            await database["users"].drop_index("phone_number_1")
+            logger.info("Dropped non-unique users.phone_number_1 before unique replacement")
+        except OperationFailure as exc:
+            if exc.code != 27:
+                raise
+
+    migration_name = "normalize_user_identity_v2"
+    migration_checksum = hashlib.sha256(migration_name.encode("utf-8")).hexdigest()
+    migration_id = ObjectId(migration_checksum[:24])
+    migrations = database["database_migrations"]
+    existing_migration = await migrations.find_one(
+        {"$or": [{"_id": migration_id}, {"version": 2}]}
+    )
+    if existing_migration:
+        if existing_migration.get("checksum") != migration_checksum:
+            raise RuntimeError("Database migration 2 checksum mismatch")
+        return
+
+    users = await database["users"].find(
+        {}, {"email": 1, "phone_number": 1}
+    ).to_list(length=None)
+    seen_emails: set[str] = set()
+    seen_phones: set[str] = set()
+    updates = []
+    for user in users:
+        email = str(user.get("email") or "").strip().lower()
+        raw_phone = str(user.get("phone_number") or "").strip()
+        phone = None
+        if raw_phone:
+            prefix = "+" if raw_phone.startswith("+") else ""
+            digits = "".join(character for character in raw_phone if character.isdigit())
+            phone = f"{prefix}{digits}" if digits else None
+        if email:
+            if email in seen_emails:
+                raise RuntimeError("Cannot normalize users: duplicate case-insensitive emails exist")
+            seen_emails.add(email)
+        if phone:
+            if phone in seen_phones:
+                raise RuntimeError("Cannot create unique phone index: duplicate normalized phones exist")
+            seen_phones.add(phone)
+        updates.append(
+            UpdateOne(
+                {"_id": user["_id"]},
+                {"$set": {"email": email, "phone_number": phone}},
+            )
+        )
+    if updates:
+        await database["users"].bulk_write(updates, ordered=False)
+    try:
+        await migrations.insert_one(
+            {
+                "_id": migration_id,
+                "version": 2,
+                "name": migration_name,
+                "checksum": migration_checksum,
+                "applied_at": now_utc(),
+            }
+        )
+    except DuplicateKeyError:
+        pass
+
+
+async def init_db() -> bool:
+    global _mongo_client
+    try:
+        _mongo_client = motor.motor_asyncio.AsyncIOMotorClient(
             settings.MONGODB_URL,
             maxPoolSize=settings.MONGODB_MAX_POOL_SIZE,
             minPoolSize=settings.MONGODB_MIN_POOL_SIZE,
-            serverSelectionTimeoutMS=settings.MONGODB_SERVER_SELECTION_TIMEOUT
+            serverSelectionTimeoutMS=settings.MONGODB_SERVER_SELECTION_TIMEOUT,
         )
-        
-        await client.admin.command('ping')
-        logger.info("✓ MongoDB connection successful")
-        
-        database = client[settings.MONGODB_DB_NAME]
-
-        try:
-            await init_beanie(
-                database=database,
-                document_models=DOCUMENT_MODELS,
-            )
-            # logger.info("AuditLog collection: %s", AuditLog.get_motor_collection())
-            logger.info(f'Beanie initialized with {len(DOCUMENT_MODELS)} models in database: {settings.MONGODB_DB_NAME}')
-        except Exception as beanie_error:
-            logger.warning(f"Beanie initialization failed: {beanie_error}")
-            logger.warning("Continuing without Beanie - some ODM features may not work")
-            for model in DOCUMENT_MODELS:
-                try:
-                    model._database = database
-                    logger.debug(f"Assigned database to {model.__name__}")
-                except:
-                    pass
-        
-        if not os.path.exists(INIT_FILE_PATH):
-            logger.info(f'File {INIT_FILE_PATH} not found. Starting default data initialization.')
-            
-            try:
-                await _ensure_default_permissions()
-                await _ensure_default_actors()
-                await _ensure_default_ai_models()
-                await _create_first_superuser()
-                
-                with open(INIT_FILE_PATH, 'w', encoding='utf-8') as f:
-                    f.write(f"Default data initialized on: {datetime.datetime.now(datetime.UTC)}")
-                    
-                logger.info(f'Created file {INIT_FILE_PATH}. Will not reinitialize default data on next startup.')
-                logger.info('Default data initialization completed.')
-                
-            except IOError as e:
-                logger.error(f'Cannot create {INIT_FILE_PATH}. Data may be reinitialized on next startup. Error: {e}')
-            except Exception as e:
-                logger.error(f'Error during data initialization: {e}')
-                raise
-        else:
-            logger.info(f'File {INIT_FILE_PATH} found. Skipping default data initialization.')
-        
+        await _mongo_client.admin.command("ping")
+        database = _mongo_client[settings.MONGODB_DB_NAME]
+        await _run_pre_init_index_migrations(database)
+        # Index creation is part of initialization. Unique-index failures are
+        # fatal so the API never runs without its data-integrity guarantees.
+        await init_beanie(database=database, document_models=DOCUMENT_MODELS)
+        await _bootstrap_database()
+        logger.info(
+            "Database initialized with %s document models in %s",
+            len(DOCUMENT_MODELS),
+            settings.MONGODB_DB_NAME,
+        )
         return True
-        
-    except Exception as e:
-        logger.error(f"✗ Failed to initialize database: {e}")
-        return False
+    except Exception:
+        logger.exception("Database initialization failed")
+        if _mongo_client:
+            _mongo_client.close()
+            _mongo_client = None
+        raise
 
-async def close_db():
-    logger.info("Database connections will be closed automatically.")
 
-# async def create_indexes():
-#     from motor.motor_asyncio import AsyncIOMotorClient
-#     from app.core.config import settings
-    
-#     logger.info("Creating/verifying database indexes...")
-    
-#     client = None
-#     try:
-#         client = AsyncIOMotorClient(settings.MONGODB_URI)
-#         db = client[settings.MONGODB_DB_NAME]
-        
-#         await db.users.create_index([("email", 1)], unique=True, name="idx_users_email")
-#         await db.users.create_index([("full_name", 1)], name="idx_users_full_name")
-#         await db.users.create_index([("phone_number", 1)], unique=True, sparse=True, name="idx_users_phone")
-        
-#         await db.companies.create_index([("user_id", 1)], name="idx_companies_user_id")
-#         await db.companies.create_index([("company_code", 1)], unique=True, name="idx_companies_company_code")
-#         await db.companies.create_index([("email", 1)], name="idx_companies_email")
-#         await db.companies.create_index([("is_active", 1)], name="idx_companies_active")
-#         await db.companies.create_index([("name", 1)], name="idx_companies_name")
-        
-#         await db.permissions.create_index([("name", 1)], unique=True, name="idx_permissions_name")
-#         await db.permissions.create_index([("is_active", 1)], name="idx_permissions_active")
-        
-#         await db.actors.create_index([("name", 1)], name="idx_actors_name")
-#         await db.actors.create_index([("created_at", -1)], name="idx_actors_created_at_desc")
-#         await db.actors.create_index([("is_active", 1)], name="idx_actors_active")
-        
-#         await db.email_otps.create_index([("expires_at", 1)], expireAfterSeconds=0, name="ttl_index")
-#         await db.email_otps.create_index([("email", 1), ("otp_type", 1)], name="email_otp_type_idx")
-#         await db.email_otps.create_index([("email", 1), ("otp_type", 1), ("is_used", 1), ("expires_at", 1)], 
-#                                          name="active_otp_idx")
-#         await db.email_otps.create_index([("is_used", 1)], name="idx_otp_is_used")
-        
-#         logger.info("All indexes created successfully")
-        
-#     except Exception as e:
-#         logger.error(f"Error creating indexes: {e}")
-#         raise
-#     finally:
-#         if client:
-#             client.close()
+async def close_db() -> None:
+    global _mongo_client
+    if _mongo_client:
+        _mongo_client.close()
+        _mongo_client = None
+
 
 async def check_connection() -> bool:
+    client = None
     try:
+        if _mongo_client is not None:
+            await _mongo_client.admin.command("ping")
+            return True
         client = motor.motor_asyncio.AsyncIOMotorClient(
             settings.MONGODB_URL,
-            serverSelectionTimeoutMS=5000
+            serverSelectionTimeoutMS=settings.MONGODB_SERVER_SELECTION_TIMEOUT,
         )
-        await client.admin.command('ping')
-        logger.info("MongoDB connection successful")
+        await client.admin.command("ping")
         return True
-    except Exception as e:
-        logger.error(f"MongoDB connection check failed: {e}")
+    except Exception:
+        logger.exception("MongoDB connection check failed")
         return False
     finally:
-        if 'client' in locals():
+        if client:
             client.close()
 
+
 async def get_database_info() -> dict:
+    client = None
     try:
         client = motor.motor_asyncio.AsyncIOMotorClient(settings.MONGODB_URL)
-        db = client[settings.MONGODB_DB_NAME]
-        
-        db_stats = await db.command("dbstats")
-        
-        collections = await db.list_collection_names()
+        database = client[settings.MONGODB_DB_NAME]
+        stats = await database.command("dbstats")
+        collections = await database.list_collection_names()
         index_info = {}
         for collection_name in collections:
-            try:
-                collection = db[collection_name]
-                indexes = await collection.index_information()
-                index_info[collection_name] = {
-                    "count": len(indexes),
-                    "indexes": list(indexes.keys())
-                }
-            except Exception as e:
-                logger.warning(f"Cannot get indexes for {collection_name}: {e}")
-        
-        client.close()
-        
+            indexes = await database[collection_name].index_information()
+            index_info[collection_name] = {
+                "count": len(indexes),
+                "indexes": list(indexes.keys()),
+            }
         return {
             "database_name": settings.MONGODB_DB_NAME,
             "collections": collections,
             "collection_count": len(collections),
-            "database_size": db_stats.get("dataSize", 0),
-            "index_size": db_stats.get("indexSize", 0),
-            "total_size": db_stats.get("totalSize", 0),
+            "database_size": stats.get("dataSize", 0),
+            "index_size": stats.get("indexSize", 0),
+            "total_size": stats.get("totalSize", 0),
             "index_info": index_info,
-            "status": "connected"
+            "status": "connected",
         }
-    except Exception as e:
-        logger.error(f"Error getting database info: {e}")
-        return {
-            "database_name": settings.MONGODB_DB_NAME,
-            "status": "error",
-            "error": str(e)
-        }
+    except Exception as exc:
+        logger.exception("Could not read database information")
+        return {"database_name": settings.MONGODB_DB_NAME, "status": "error", "error": str(exc)}
+    finally:
+        if client:
+            client.close()
 
-async def cleanup_expired_data():
+
+async def cleanup_expired_data() -> int:
+    # Email OTPs are normally removed by the MongoDB TTL index. This remains a
+    # maintenance fallback for environments where TTL cleanup is delayed.
+    from app.utils.time import now_utc
+
     try:
-        from datetime import datetime, timezone
-        
-        expired_otp_count = await EmailOTP.find({
-            "expires_at": {"$lt": datetime.now(timezone.utc)}
-        }).delete()
-        
-        if expired_otp_count > 0:
-            logger.info(f"Cleaned up {expired_otp_count} expired OTPs")
-        
-        return expired_otp_count
-    except Exception as e:
-        logger.error(f"Error cleaning up expired data: {e}")
+        result = await EmailOTP.find({"expires_at": {"$lt": now_utc()}}).delete()
+        return int(getattr(result, "deleted_count", result or 0))
+    except Exception:
+        logger.exception("Expired-data cleanup failed")
         return 0

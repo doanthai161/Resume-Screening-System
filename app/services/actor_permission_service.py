@@ -8,6 +8,7 @@ from app.schemas.permission import PermissionResponse
 from app.utils.time import now_utc
 from app.core.errors import CustomError, ErrorCodes
 from bson.errors import InvalidId
+from app.core import cache
 
 class ActorPermissionService:
     @staticmethod
@@ -52,6 +53,7 @@ class ActorPermissionService:
                     )
 
             await ActorPermissionRepository.insert_links(links)
+            await cache.invalidate_actor_authorization(actor_id)
         except CustomError:
             raise
         except Exception as e:
@@ -89,6 +91,7 @@ class ActorPermissionService:
                 )
 
             await ActorPermissionRepository.delete_links(actor_oid, permission_ids)
+            await cache.invalidate_actor_authorization(actor_id)
             return len(permission_ids)
         except CustomError:
             raise

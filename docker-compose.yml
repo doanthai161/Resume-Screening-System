@@ -8,33 +8,50 @@ services:
       - .env
     environment:
       - PROJECT_ROOT_DIR=/app
-      - MONGODB_URI=mongodb://mongo:27017
-      - MONGODB_DB_NAME=resume_screening_db
-      - REDIS_URL=redis://redis:6379/0
+      - MONGODB_URI=mongodb://${MONGO_APP_USERNAME:?MONGO_APP_USERNAME is required}:${MONGO_APP_PASSWORD:?MONGO_APP_PASSWORD is required}@mongo:27017/${MONGO_APP_DATABASE:-resume_screening_db}?authSource=${MONGO_APP_DATABASE:-resume_screening_db}
+      - MONGODB_DB_NAME=${MONGO_APP_DATABASE:-resume_screening_db}
+      - REDIS_URL=redis://:${REDIS_PASSWORD:?REDIS_PASSWORD is required}@redis:6379/0
       - ENVIRONMENT=production
+      - DEBUG=false
     depends_on:
-      - mongo
-      - redis
+      mongo:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
     volumes:
       - ./app:/app/app
       - ./uploads:/app/uploads
       - ./logs:/app/logs
 
   mongo:
-    image: mongo:latest
+    image: mongo:7
     container_name: resume_mongo_db
-    ports:
-      - "27017:27017"
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: ${MONGO_USERNAME:?MONGO_USERNAME is required}
+      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_PASSWORD:?MONGO_PASSWORD is required}
+      MONGO_APP_DATABASE: ${MONGO_APP_DATABASE:-resume_screening_db}
+      MONGO_APP_USERNAME: ${MONGO_APP_USERNAME:?MONGO_APP_USERNAME is required}
+      MONGO_APP_PASSWORD: ${MONGO_APP_PASSWORD:?MONGO_APP_PASSWORD is required}
     volumes:
       - mongo_data:/data/db
+      - ./mongo-init.js:/docker-entrypoint-initdb.d/10-app-user.js:ro
+    healthcheck:
+      test: ["CMD-SHELL", "mongosh --quiet --username $$MONGO_INITDB_ROOT_USERNAME --password $$MONGO_INITDB_ROOT_PASSWORD --authenticationDatabase admin --eval 'db.adminCommand({ ping: 1 })' || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
 
   redis:
-    image: redis:latest
+    image: redis:7-alpine
     container_name: resume_redis_db
-    ports:
-      - "6380:6379"
+    command: ["redis-server", "--appendonly", "yes", "--requirepass", "${REDIS_PASSWORD:?REDIS_PASSWORD is required}"]
     volumes:
       - redis_data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli -a '${REDIS_PASSWORD:?REDIS_PASSWORD is required}' ping | grep PONG"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
 
 volumes:
   mongo_data:

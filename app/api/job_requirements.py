@@ -63,7 +63,7 @@ async def create_job_requirement(
 @limiter.limit("30/minute")
 async def search_job_requirements(
     request: Request,
-    q: Optional[str] = Query(None, min_length=2, description="Search query for title or description"),
+    q: Optional[str] = Query(None, min_length=2, max_length=100, description="Search query for title or description"),
     programming_languages: Optional[List[str]] = Query(None, description="Filter by programming languages"),
     skills: Optional[List[str]] = Query(None, description="Filter by required skills"),
     experience_level: Optional[str] = Query(None, description="Filter by experience level"),

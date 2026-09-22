@@ -1,0 +1,135 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mxfile host="app.diagrams.net" modified="2026-09-22T13:30:00.000Z" agent="Codex" version="24.7.17">
+  <diagram id="resume-screening-erd-v2" name="Database ERD v2">
+    <mxGraphModel dx="2800" dy="1800" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="3000" pageHeight="2000" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+
+        <mxCell id="title" value="&lt;b&gt;Resume Screening System — Database ERD v2&lt;/b&gt;&lt;br&gt;MongoDB collections, logical foreign keys and main integrity constraints" style="text;html=1;align=left;verticalAlign=middle;fontSize=24;fontColor=#1F2937;" vertex="1" parent="1">
+          <mxGeometry x="40" y="20" width="1200" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="legend" value="&lt;b&gt;Legend&lt;/b&gt;&lt;br&gt;PK = document _id | FK = logical ObjectId reference | UQ = unique/partial unique index&lt;br&gt;Solid connector = active relation | Dashed connector = legacy/generic relation" style="rounded=1;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacing=8;fillColor=#F9FAFB;strokeColor=#6B7280;fontColor=#374151;" vertex="1" parent="1">
+          <mxGeometry x="1800" y="20" width="870" height="70" as="geometry" />
+        </mxCell>
+
+        <mxCell id="identity-label" value="IDENTITY &amp;amp; ACCESS" style="text;html=1;fontSize=16;fontStyle=1;fontColor=#1D4ED8;" vertex="1" parent="1">
+          <mxGeometry x="40" y="110" width="300" height="30" as="geometry" />
+        </mxCell>
+        <mxCell id="tenant-label" value="TENANT &amp;amp; ORGANIZATION" style="text;html=1;fontSize=16;fontStyle=1;fontColor=#2E7D32;" vertex="1" parent="1">
+          <mxGeometry x="660" y="110" width="330" height="30" as="geometry" />
+        </mxCell>
+        <mxCell id="recruit-label" value="RECRUITMENT PIPELINE" style="text;html=1;fontSize=16;fontStyle=1;fontColor=#C2410C;" vertex="1" parent="1">
+          <mxGeometry x="1280" y="110" width="330" height="30" as="geometry" />
+        </mxCell>
+        <mxCell id="process-label" value="AI PROCESSING &amp;amp; RESULTS" style="text;html=1;fontSize=16;fontStyle=1;fontColor=#7E22CE;" vertex="1" parent="1">
+          <mxGeometry x="1900" y="110" width="360" height="30" as="geometry" />
+        </mxCell>
+
+        <mxCell id="users" value="&lt;b&gt;users&lt;/b&gt;&lt;br&gt;&lt;br&gt;PK _id: ObjectId&lt;br&gt;UQ email&lt;br&gt;UQ username (partial)&lt;br&gt;UQ phone_number (partial)&lt;br&gt;hashed_password&lt;br&gt;auth_version&lt;br&gt;is_active / is_verified&lt;br&gt;is_superuser&lt;br&gt;verified_at / last_login&lt;br&gt;deleted_at / deleted_by&lt;br&gt;created_at / updated_at" style="rounded=1;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacing=8;fillColor=#DAE8FC;strokeColor=#6C8EBF;fontColor=#111827;" vertex="1" parent="1">
+          <mxGeometry x="40" y="150" width="270" height="280" as="geometry" />
+        </mxCell>
+        <mxCell id="actors" value="&lt;b&gt;actors&lt;/b&gt;&lt;br&gt;&lt;br&gt;PK _id&lt;br&gt;UQ name&lt;br&gt;description&lt;br&gt;is_active&lt;br&gt;is_default&lt;br&gt;is_system&lt;br&gt;created_at / updated_at" style="rounded=1;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacing=8;fillColor=#DAE8FC;strokeColor=#6C8EBF;fontColor=#111827;" vertex="1" parent="1">
+          <mxGeometry x="40" y="500" width="270" height="200" as="geometry" />
+        </mxCell>
+        <mxCell id="permissions" value="&lt;b&gt;permissions&lt;/b&gt;&lt;br&gt;&lt;br&gt;PK _id&lt;br&gt;UQ name&lt;br&gt;description&lt;br&gt;is_active&lt;br&gt;created_at / updated_at" style="rounded=1;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacing=8;fillColor=#DAE8FC;strokeColor=#6C8EBF;fontColor=#111827;" vertex="1" parent="1">
+          <mxGeometry x="40" y="770" width="270" height="170" as="geometry" />
+        </mxCell>
+        <mxCell id="user_actors" value="&lt;b&gt;user_actors&lt;/b&gt;&lt;br&gt;&lt;br&gt;PK _id&lt;br&gt;FK user_id → users&lt;br&gt;FK actor_id → actors&lt;br&gt;FK created_by → users&lt;br&gt;UQ (user_id, actor_id)&lt;br&gt;created_at / updated_at" style="rounded=1;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacing=8;fillColor=#DAE8FC;strokeColor=#6C8EBF;fontColor=#111827;" vertex="1" parent="1">
+          <mxGeometry x="350" y="500" width="270" height="200" as="geometry" />
+        </mxCell>
+        <mxCell id="actor_permissions" value="&lt;b&gt;actor_permissions&lt;/b&gt;&lt;br&gt;&lt;br&gt;PK _id&lt;br&gt;FK actor_id → actors&lt;br&gt;FK permission_id → permissions&lt;br&gt;UQ (actor_id, permission_id)&lt;br&gt;created_at" style="rounded=1;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacing=8;fillColor=#DAE8FC;strokeColor=#6C8EBF;fontColor=#111827;" vertex="1" parent="1">
+          <mxGeometry x="350" y="770" width="270" height="180" as="geometry" />
+        </mxCell>
+        <mxCell id="email_otps" value="&lt;b&gt;email_otps&lt;/b&gt;&lt;br&gt;&lt;br&gt;PK _id&lt;br&gt;email / otp_type&lt;br&gt;otp_hash&lt;br&gt;otp_code (legacy only)&lt;br&gt;attempts / max_attempts&lt;br&gt;is_used&lt;br&gt;expires_at (TTL)&lt;br&gt;created_at / updated_at" style="rounded=1;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacing=8;fillColor=#F5F5F5;strokeColor=#666666;fontColor=#111827;" vertex="1" parent="1">
+          <mxGeometry x="40" y="1030" width="270" height="220" as="geometry" />
+        </mxCell>
+        <mxCell id="audit_logs" value="&lt;b&gt;audit_logs&lt;/b&gt;&lt;br&gt;&lt;br&gt;PK _id&lt;br&gt;FK user_id → users (optional)&lt;br&gt;resource_type / resource_id&lt;br&gt;event_type / event_name&lt;br&gt;severity / success&lt;br&gt;old_values / new_values&lt;br&gt;metadata / tags&lt;br&gt;timestamp / created_at&lt;br&gt;retention: 90d / critical 365d" style="rounded=1;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacing=8;fillColor=#F5F5F5;strokeColor=#666666;fontColor=#111827;" vertex="1" parent="1">
+          <mxGeometry x="350" y="1030" width="270" height="240" as="geometry" />
+        </mxCell>
+        <mxCell id="database_migrations" value="&lt;b&gt;database_migrations&lt;/b&gt;&lt;br&gt;&lt;br&gt;PK _id&lt;br&gt;UQ version&lt;br&gt;name&lt;br&gt;checksum&lt;br&gt;applied_at" style="rounded=1;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacing=8;fillColor=#F5F5F5;strokeColor=#666666;fontColor=#111827;" vertex="1" parent="1">
+          <mxGeometry x="350" y="1360" width="270" height="160" as="geometry" />
+        </mxCell>
+
+        <mxCell id="companies" value="&lt;b&gt;companies&lt;/b&gt;&lt;br&gt;&lt;br&gt;PK _id&lt;br&gt;FK user_id → users (owner)&lt;br&gt;UQ company_code&lt;br&gt;UQ tax_code (partial)&lt;br&gt;name / short_name&lt;br&gt;email / website&lt;br&gt;industry&lt;br&gt;is_active&lt;br&gt;created_at / updated_at" style="rounded=1;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacing=8;fillColor=#D5E8D4;strokeColor=#82B366;fontColor=#111827;" vertex="1" parent="1">
+          <mxGeometry x="660" y="150" width="270" height="240" as="geometry" />
+        </mxCell>
+        <mxCell id="company_branches" value="&lt;b&gt;company_branches&lt;/b&gt;&lt;br&gt;&lt;br&gt;PK _id&lt;br&gt;FK company_id → companies&lt;br&gt;FK created_by → users&lt;br&gt;UQ active (company_id, branch_name)&lt;br&gt;branch_name / business_type&lt;br&gt;address / city / country&lt;br&gt;company_size / working_days&lt;br&gt;is_active&lt;br&gt;created_at / updated_at" style="rounded=1;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacing=8;fillColor=#D5E8D4;strokeColor=#82B366;fontColor=#111827;" vertex="1" parent="1">
+          <mxGeometry x="660" y="470" width="270" height="250" as="geometry" />
+        </mxCell>
+        <mxCell id="user_companies" value="&lt;b&gt;user_companies&lt;/b&gt;&lt;br&gt;&lt;br&gt;PK _id&lt;br&gt;FK user_id → users&lt;br&gt;FK company_branch_id → branches&lt;br&gt;FK assigned_by → users&lt;br&gt;UQ active (user_id, branch_id)&lt;br&gt;role / permissions[]&lt;br&gt;start_date / end_date&lt;br&gt;is_active&lt;br&gt;assigned_at / unassigned_at" style="rounded=1;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacing=8;fillColor=#D5E8D4;strokeColor=#82B366;fontColor=#111827;" vertex="1" parent="1">
+          <mxGeometry x="970" y="470" width="270" height="240" as="geometry" />
+        </mxCell>
+        <mxCell id="candidates" value="&lt;b&gt;candidates&lt;/b&gt;&lt;br&gt;&lt;br&gt;PK _id&lt;br&gt;FK company_id → companies&lt;br&gt;FK user_id → users (optional)&lt;br&gt;UQ active (company_id, normalized_email)&lt;br&gt;UQ active (company_id, normalized_phone)&lt;br&gt;full_name / email / phone&lt;br&gt;status / source / tags[]&lt;br&gt;merged_into_id / soft delete&lt;br&gt;created_at / updated_at" style="rounded=1;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacing=8;fillColor=#D5E8D4;strokeColor=#82B366;fontColor=#111827;" vertex="1" parent="1">
+          <mxGeometry x="660" y="830" width="270" height="260" as="geometry" />
+        </mxCell>
+        <mxCell id="resume_files" value="&lt;b&gt;resume_files&lt;/b&gt;&lt;br&gt;&lt;br&gt;PK _id&lt;br&gt;FK company_id → companies&lt;br&gt;FK candidate_id → candidates&lt;br&gt;FK uploader_id → users&lt;br&gt;FK company_branch_id → branches&lt;br&gt;UQ active (company, candidate, checksum)&lt;br&gt;UQ (storage_provider, object_key)&lt;br&gt;filename / mime / size / checksum&lt;br&gt;parsed_data / status&lt;br&gt;soft delete / timestamps" style="rounded=1;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacing=8;fillColor=#D5E8D4;strokeColor=#82B366;fontColor=#111827;" vertex="1" parent="1">
+          <mxGeometry x="970" y="830" width="270" height="270" as="geometry" />
+        </mxCell>
+
+        <mxCell id="job_requirements" value="&lt;b&gt;job_requirements&lt;/b&gt;&lt;br&gt;&lt;br&gt;PK _id&lt;br&gt;FK user_id → users (creator)&lt;br&gt;FK company_branch_id → branches&lt;br&gt;FK screening_model_id → ai_models&lt;br&gt;FK active_scorecard_id → scorecards&lt;br&gt;title / description&lt;br&gt;skills[] / languages[]&lt;br&gt;status / employment / work_mode&lt;br&gt;salary / openings / expiration&lt;br&gt;version / timestamps" style="rounded=1;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacing=8;fillColor=#FFE6CC;strokeColor=#D79B00;fontColor=#111827;" vertex="1" parent="1">
+          <mxGeometry x="1280" y="150" width="280" height="270" as="geometry" />
+        </mxCell>
+        <mxCell id="job_scorecards" value="&lt;b&gt;job_scorecards&lt;/b&gt;&lt;br&gt;&lt;br&gt;PK _id&lt;br&gt;FK company_id → companies&lt;br&gt;FK job_requirement_id → jobs&lt;br&gt;FK created_by → users&lt;br&gt;UQ (job_id, version)&lt;br&gt;UQ active job scorecard&lt;br&gt;UQ tenant idempotency_key&lt;br&gt;criteria[] / pass_threshold&lt;br&gt;is_active / deactivated_at" style="rounded=1;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacing=8;fillColor=#FFE6CC;strokeColor=#D79B00;fontColor=#111827;" vertex="1" parent="1">
+          <mxGeometry x="1280" y="500" width="280" height="240" as="geometry" />
+        </mxCell>
+        <mxCell id="job_applications" value="&lt;b&gt;job_applications&lt;/b&gt;&lt;br&gt;&lt;br&gt;PK _id&lt;br&gt;FK company_id / branch_id&lt;br&gt;FK candidate_id / resume_file_id&lt;br&gt;FK job_requirement_id&lt;br&gt;FK applicant_id / applied_by&lt;br&gt;FK assigned_recruiter_id&lt;br&gt;FK latest_screening_result_id&lt;br&gt;UQ tenant idempotency_key&lt;br&gt;UQ (job_id, candidate_id)&lt;br&gt;current_stage / status / revision&lt;br&gt;applied / hired / rejected timestamps" style="rounded=1;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacing=8;fillColor=#FFE6CC;strokeColor=#D79B00;fontColor=#111827;" vertex="1" parent="1">
+          <mxGeometry x="1280" y="830" width="280" height="290" as="geometry" />
+        </mxCell>
+        <mxCell id="stage_events" value="&lt;b&gt;application_stage_events&lt;/b&gt;&lt;br&gt;&lt;br&gt;PK _id&lt;br&gt;FK company_id → companies&lt;br&gt;FK application_id → applications&lt;br&gt;FK changed_by → users&lt;br&gt;UQ tenant idempotency_key&lt;br&gt;from_stage / to_stage&lt;br&gt;reason / metadata&lt;br&gt;created_at&lt;br&gt;&lt;i&gt;append-only history&lt;/i&gt;" style="rounded=1;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacing=8;fillColor=#FFE6CC;strokeColor=#D79B00;fontColor=#111827;" vertex="1" parent="1">
+          <mxGeometry x="1590" y="830" width="280" height="230" as="geometry" />
+        </mxCell>
+        <mxCell id="application_reviews" value="&lt;b&gt;application_reviews&lt;/b&gt;&lt;br&gt;&lt;br&gt;PK _id&lt;br&gt;FK company_id → companies&lt;br&gt;FK application_id → applications&lt;br&gt;FK reviewer_id → users&lt;br&gt;UQ (application, reviewer, round)&lt;br&gt;score / criteria_scores&lt;br&gt;recommendation / summary&lt;br&gt;created_at / updated_at" style="rounded=1;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacing=8;fillColor=#FFE6CC;strokeColor=#D79B00;fontColor=#111827;" vertex="1" parent="1">
+          <mxGeometry x="1590" y="1130" width="280" height="220" as="geometry" />
+        </mxCell>
+
+        <mxCell id="ai_models" value="&lt;b&gt;ai_models&lt;/b&gt;&lt;br&gt;&lt;br&gt;PK _id&lt;br&gt;FK created_by → users (optional)&lt;br&gt;UQ (provider, model_id, version)&lt;br&gt;name / model_type / provider&lt;br&gt;model_id / version / config&lt;br&gt;is_active&lt;br&gt;prediction metrics&lt;br&gt;created_at / updated_at" style="rounded=1;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacing=8;fillColor=#E1D5E7;strokeColor=#9673A6;fontColor=#111827;" vertex="1" parent="1">
+          <mxGeometry x="1900" y="150" width="280" height="230" as="geometry" />
+        </mxCell>
+        <mxCell id="resume_parse_runs" value="&lt;b&gt;resume_parse_runs&lt;/b&gt;&lt;br&gt;&lt;br&gt;PK _id&lt;br&gt;FK company_id → companies&lt;br&gt;FK resume_file_id → resumes&lt;br&gt;FK parser_model_id → ai_models&lt;br&gt;FK triggered_by → users&lt;br&gt;UQ tenant idempotency_key&lt;br&gt;UQ active input_hash&lt;br&gt;status / attempt / max_attempts&lt;br&gt;worker_id / lease_expires_at&lt;br&gt;queue metadata / timestamps" style="rounded=1;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacing=8;fillColor=#E1D5E7;strokeColor=#9673A6;fontColor=#111827;" vertex="1" parent="1">
+          <mxGeometry x="1900" y="470" width="280" height="270" as="geometry" />
+        </mxCell>
+        <mxCell id="screening_runs" value="&lt;b&gt;screening_runs&lt;/b&gt;&lt;br&gt;&lt;br&gt;PK _id&lt;br&gt;FK company / application / resume&lt;br&gt;FK job / scorecard / ai_model&lt;br&gt;FK triggered_by → users&lt;br&gt;FK result_id → screening_results&lt;br&gt;UQ tenant idempotency_key&lt;br&gt;UQ active application&lt;br&gt;UQ active input_hash&lt;br&gt;status / attempts / worker lease&lt;br&gt;config_snapshot / queue metadata" style="rounded=1;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacing=8;fillColor=#E1D5E7;strokeColor=#9673A6;fontColor=#111827;" vertex="1" parent="1">
+          <mxGeometry x="2220" y="470" width="290" height="280" as="geometry" />
+        </mxCell>
+        <mxCell id="screening_results" value="&lt;b&gt;screening_results&lt;/b&gt;&lt;br&gt;&lt;br&gt;PK _id&lt;br&gt;FK company / application&lt;br&gt;FK screening_run_id (UQ)&lt;br&gt;FK resume / job / scorecard / ai_model&lt;br&gt;FK evaluator_user_id → users&lt;br&gt;overall_score / match_percentage&lt;br&gt;decision / criteria_scores&lt;br&gt;scorecard_snapshot&lt;br&gt;strengths / weaknesses / skills&lt;br&gt;status / timestamps" style="rounded=1;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacing=8;fillColor=#E1D5E7;strokeColor=#9673A6;fontColor=#111827;" vertex="1" parent="1">
+          <mxGeometry x="2220" y="860" width="290" height="280" as="geometry" />
+        </mxCell>
+        <mxCell id="candidate_evaluations" value="&lt;b&gt;candidate_evaluations (LEGACY)&lt;/b&gt;&lt;br&gt;&lt;br&gt;PK _id&lt;br&gt;FK user_id → users&lt;br&gt;FK job_posting_id → jobs (legacy name)&lt;br&gt;summary / score&lt;br&gt;created_at / updated_at&lt;br&gt;&lt;br&gt;&lt;i&gt;Read-only compatibility collection;&lt;br&gt;superseded by screening_results.&lt;/i&gt;" style="rounded=1;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacing=8;fillColor=#F8CECC;strokeColor=#B85450;fontColor=#111827;dashed=1;" vertex="1" parent="1">
+          <mxGeometry x="2220" y="1280" width="290" height="220" as="geometry" />
+        </mxCell>
+
+        <mxCell id="note" value="&lt;b&gt;Design notes&lt;/b&gt;&lt;br&gt;1. MongoDB remains the source of truth; Redis stores cache, idempotency reservations, rate-limit counters and bounded streams.&lt;br&gt;2. Tenant-owned recruitment records carry company_id explicitly to prevent cross-tenant queries.&lt;br&gt;3. Application stages and scorecards are immutable/versioned histories; current state is materialized for fast reads.&lt;br&gt;4. Worker claims use compare-and-set leases. Maintenance safely requeues stale jobs.&lt;br&gt;5. Secondary audit/user references are listed in each collection but some connectors are omitted to keep the diagram readable." style="rounded=1;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacing=10;fillColor=#FFF2CC;strokeColor=#D6B656;fontColor=#374151;" vertex="1" parent="1">
+          <mxGeometry x="660" y="1430" width="1210" height="150" as="geometry" />
+        </mxCell>
+
+        <mxCell id="e1" value="owner" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;startArrow=ERone;endArrow=ERmany;strokeColor=#6B7280;fontSize=10;" edge="1" parent="1" source="users" target="companies"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e2" value="company_id" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;startArrow=ERone;endArrow=ERmany;strokeColor=#6B7280;fontSize=10;" edge="1" parent="1" source="companies" target="company_branches"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e3" value="user_id" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;startArrow=ERone;endArrow=ERmany;strokeColor=#6B7280;fontSize=10;" edge="1" parent="1" source="users" target="user_actors"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e4" value="actor_id" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;startArrow=ERone;endArrow=ERmany;strokeColor=#6B7280;fontSize=10;" edge="1" parent="1" source="actors" target="user_actors"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e5" value="actor_id" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;startArrow=ERone;endArrow=ERmany;strokeColor=#6B7280;fontSize=10;" edge="1" parent="1" source="actors" target="actor_permissions"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e6" value="permission_id" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;startArrow=ERone;endArrow=ERmany;strokeColor=#6B7280;fontSize=10;" edge="1" parent="1" source="permissions" target="actor_permissions"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e7" value="user_id" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;startArrow=ERone;endArrow=ERmany;strokeColor=#6B7280;fontSize=10;" edge="1" parent="1" source="users" target="user_companies"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e8" value="branch_id" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;startArrow=ERone;endArrow=ERmany;strokeColor=#6B7280;fontSize=10;" edge="1" parent="1" source="company_branches" target="user_companies"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e9" value="company_id" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;startArrow=ERone;endArrow=ERmany;strokeColor=#6B7280;fontSize=10;" edge="1" parent="1" source="companies" target="candidates"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e10" value="candidate_id" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;startArrow=ERone;endArrow=ERmany;strokeColor=#6B7280;fontSize=10;" edge="1" parent="1" source="candidates" target="resume_files"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e11" value="branch_id" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;startArrow=ERone;endArrow=ERmany;strokeColor=#6B7280;fontSize=10;" edge="1" parent="1" source="company_branches" target="job_requirements"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e12" value="job_id" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;startArrow=ERone;endArrow=ERmany;strokeColor=#6B7280;fontSize=10;" edge="1" parent="1" source="job_requirements" target="job_scorecards"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e13" value="candidate_id" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;startArrow=ERone;endArrow=ERmany;strokeColor=#6B7280;fontSize=10;" edge="1" parent="1" source="candidates" target="job_applications"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e14" value="resume_file_id" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;startArrow=ERone;endArrow=ERmany;strokeColor=#6B7280;fontSize=10;" edge="1" parent="1" source="resume_files" target="job_applications"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e15" value="job_id" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;startArrow=ERone;endArrow=ERmany;strokeColor=#6B7280;fontSize=10;" edge="1" parent="1" source="job_requirements" target="job_applications"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e16" value="application_id" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;startArrow=ERone;endArrow=ERmany;strokeColor=#6B7280;fontSize=10;" edge="1" parent="1" source="job_applications" target="stage_events"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e17" value="application_id" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;startArrow=ERone;endArrow=ERmany;strokeColor=#6B7280;fontSize=10;" edge="1" parent="1" source="job_applications" target="application_reviews"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e18" value="parser_model_id" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;startArrow=ERone;endArrow=ERmany;strokeColor=#6B7280;fontSize=10;" edge="1" parent="1" source="ai_models" target="resume_parse_runs"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e19" value="resume_file_id" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;startArrow=ERone;endArrow=ERmany;strokeColor=#6B7280;fontSize=10;" edge="1" parent="1" source="resume_files" target="resume_parse_runs"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e20" value="application_id" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;startArrow=ERone;endArrow=ERmany;strokeColor=#6B7280;fontSize=10;" edge="1" parent="1" source="job_applications" target="screening_runs"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e21" value="scorecard_id" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;startArrow=ERone;endArrow=ERmany;strokeColor=#6B7280;fontSize=10;" edge="1" parent="1" source="job_scorecards" target="screening_runs"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e22" value="ai_model_id" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;startArrow=ERone;endArrow=ERmany;strokeColor=#6B7280;fontSize=10;" edge="1" parent="1" source="ai_models" target="screening_runs"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e23" value="screening_run_id (1:1)" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;startArrow=ERone;endArrow=ERone;strokeColor=#6B7280;fontSize=10;" edge="1" parent="1" source="screening_runs" target="screening_results"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e24" value="application_id" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;startArrow=ERone;endArrow=ERmany;strokeColor=#6B7280;fontSize=10;" edge="1" parent="1" source="job_applications" target="screening_results"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e25" value="user_id" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;startArrow=ERone;endArrow=ERmany;strokeColor=#9CA3AF;fontSize=10;dashed=1;" edge="1" parent="1" source="users" target="audit_logs"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e26" value="legacy" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;startArrow=ERone;endArrow=ERmany;strokeColor=#B85450;fontSize=10;dashed=1;" edge="1" parent="1" source="job_requirements" target="candidate_evaluations"><mxGeometry relative="1" as="geometry" /></mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

@@ -3,6 +3,8 @@ from bson import ObjectId
 from app.repositories.company_repository import CompanyRepository
 from app.schemas.company import CompanyCreate, CompanyUpdate
 from app.models.company import Company
+from app.models.company_branch import CompanyBranch
+from app.models.user_company import UserCompany
 from app.core.errors import CustomError, ErrorCodes
 from fastapi import status
 
@@ -25,15 +27,42 @@ class CompanyService:
             )
 
     @staticmethod
-    async def list_companies(page: int, size: int) -> Tuple[List[Company], int]:
+    async def list_companies(
+        page: int,
+        size: int,
+        user_id: str,
+        is_superuser: bool = False,
+    ) -> Tuple[List[Company], int]:
         try:
             if page < 1: page = 1
             if size < 1 or size > 100: size = 10
             
-            companies, total = await CompanyRepository.list_all_active_companies(
-                page=page,
-                size=size
+            if is_superuser:
+                companies, total = await CompanyRepository.list_all_active_companies(
+                    page=page,
+                    size=size,
+                )
+                return companies, total
+
+            assignments = await UserCompany.find(
+                {"user_id": ObjectId(user_id), "is_active": True}
+            ).to_list()
+            branch_ids = [assignment.company_branch_id for assignment in assignments]
+            branches = (
+                await CompanyBranch.find({"_id": {"$in": branch_ids}, "is_active": True}).to_list()
+                if branch_ids
+                else []
             )
+            accessible_company_ids = list({branch.company_id for branch in branches})
+            query = {
+                "is_active": True,
+                "$or": [
+                    {"user_id": ObjectId(user_id)},
+                    {"_id": {"$in": accessible_company_ids}},
+                ],
+            }
+            total = await Company.find(query).count()
+            companies = await Company.find(query).sort("-created_at").skip((page - 1) * size).limit(size).to_list()
             return companies, total
         except Exception as e:
             raise CustomError(

@@ -3,6 +3,7 @@ from beanie import Document
 from datetime import datetime
 from app.utils.time import now_utc
 from typing import Optional
+from pymongo import ASCENDING, DESCENDING, IndexModel
 
 
 class Permission(Document):
@@ -15,9 +16,9 @@ class Permission(Document):
     class Settings:
         name = "permissions"
         indexes = [
-            [("name", 1)],
-            [("is_active", 1)],
-            [("created_at", -1)],
+            IndexModel([("name", ASCENDING)], unique=True, name="uq_permission_name"),
+            IndexModel([("is_active", ASCENDING)]),
+            IndexModel([("created_at", DESCENDING)]),
         ]
     class Config:
         arbitrary_types_allowed = True

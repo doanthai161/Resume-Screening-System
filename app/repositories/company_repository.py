@@ -14,6 +14,7 @@ from app.schemas.company import (
 )
 from app.schemas.company_branch import CompanyBranchCreate, CompanyBranchUpdate
 from app.core.redis import get_redis, is_redis_available
+from app.core import cache as shared_cache
 from app.core.monitoring import monitor_db_operation, monitor_cache_operation
 from app.utils.time import now_utc
 
@@ -21,7 +22,7 @@ logger = logging.getLogger(__name__)
 
 
 class CompanyRepository:
-    CACHE_PREFIX = "company:"
+    CACHE_PREFIX = shared_cache.cache_key("company") + ":"
     COMPANY_CACHE_TTL = 3600 
     BRANCH_CACHE_TTL = 3600 
     USER_COMPANY_CACHE_TTL = 1800 
@@ -562,10 +563,14 @@ class CompanyRepository:
 
             from app.repositories.user_company_repository import UserCompanyRepository
 
-            for branch_id in company.branch_ids:
+            branches = await CompanyBranch.find({
+                "company_id": company.id,
+                "is_active": True,
+            }).to_list()
+            for branch in branches:
                 role = await UserCompanyRepository.get_user_role_in_branch(
                     user_id=user_id,
-                    company_branch_id=str(branch_id)
+                    company_branch_id=str(branch.id)
                 )
                 if role:
                     return role
@@ -674,8 +679,6 @@ class CompanyRepository:
             return
         
         try:
-            redis_client = get_redis()
-            
             patterns = [
                 f"{CompanyRepository.CACHE_PREFIX}company:{company.id}",
                 f"{CompanyRepository.CACHE_PREFIX}company_branches:{company.id}",
@@ -683,16 +686,9 @@ class CompanyRepository:
                 f"{CompanyRepository.CACHE_PREFIX}user_branches:*",
             ]
 
-            import asyncio
-            delete_tasks = []
             for pattern in patterns:
-                keys = await redis_client.keys(pattern)
-                if keys:
-                    delete_tasks.append(redis_client.delete(*keys))
-            
-            if delete_tasks:
-                await asyncio.gather(*delete_tasks, return_exceptions=True)
-                logger.debug(f"Invalidated caches for company: {company.id}")
+                await shared_cache.delete_pattern(pattern)
+            logger.debug(f"Invalidated caches for company: {company.id}")
             
         except Exception as e:
             logger.warning(f"Error invalidating company caches for {company.id}: {e}")
@@ -703,8 +699,6 @@ class CompanyRepository:
             return
         
         try:
-            redis_client = get_redis()
-            
             patterns = [
                 f"{CompanyRepository.CACHE_PREFIX}branch:{branch.id}",
                 f"{CompanyRepository.CACHE_PREFIX}company_branches:{branch.company_id}",
@@ -712,16 +706,9 @@ class CompanyRepository:
                 f"{CompanyRepository.CACHE_PREFIX}user_access:*:{branch.id}",
             ]
 
-            import asyncio
-            delete_tasks = []
             for pattern in patterns:
-                keys = await redis_client.keys(pattern)
-                if keys:
-                    delete_tasks.append(redis_client.delete(*keys))
-            
-            if delete_tasks:
-                await asyncio.gather(*delete_tasks, return_exceptions=True)
-                logger.debug(f"Invalidated caches for branch: {branch.id}")
+                await shared_cache.delete_pattern(pattern)
+            logger.debug(f"Invalidated caches for branch: {branch.id}")
             
         except Exception as e:
             logger.warning(f"Error invalidating branch caches for {branch.id}: {e}")
@@ -732,13 +719,9 @@ class CompanyRepository:
             return
         
         try:
-            redis_client = get_redis()
             pattern = f"{CompanyRepository.CACHE_PREFIX}*"
-            keys = await redis_client.keys(pattern)
-            
-            if keys:
-                await redis_client.delete(*keys)
-                logger.info(f"Cleared all company cache ({len(keys)} keys)")
+            await shared_cache.delete_pattern(pattern)
+            logger.info("Cleared all company cache")
             
         except Exception as e:
             logger.warning(f"Error clearing company cache: {e}")

@@ -42,7 +42,7 @@ async def create_company_branch(
             company_id=company_id,
             branch_data=branch_data,
             user_id=str(current_user.user_id),
-            is_superuser=getattr(current_user, "is_superuser", False)
+            is_superuser=current_user.is_admin
         )
         
         background_tasks.add_task(
@@ -99,7 +99,7 @@ async def list_company_branches(
         branches = await CompanyBranchService.list_company_branches(
             company_id=company_id,
             user_id=str(current_user.id),
-            is_superuser=getattr(current_user, "is_superuser", False),
+            is_superuser=current_user.is_admin,
             permissions=getattr(current_user, "permissions", [])
         )
         
@@ -162,7 +162,7 @@ async def get_company_branch(
             company_id,
             branch_id,
             user_id=str(current_user.id),
-            is_superuser=getattr(current_user, "is_superuser", False)
+            is_superuser=current_user.is_admin
         )
         
         background_tasks.add_task(

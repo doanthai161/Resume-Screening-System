@@ -1,5 +1,7 @@
 from typing import List, Optional, Dict, Any
 from datetime import datetime
+import hashlib
+import json
 import logging
 from fastapi import HTTPException, status
 from app.core.errors import CustomError, ErrorCodes
@@ -13,14 +15,15 @@ from app.schemas.job_requirement import (
     JobRequirementResponse,
     JobRequirementListResponse
 )
-from app.models.job_requirement import JobRequirement
+from app.models.job_requirement import JobRequirement, JobStatus
 from app.core.monitoring import (
     monitor_service_call, 
     record_business_metric,
     start_trace,
     end_trace
 )
-from app.core.redis import get_redis, is_redis_available
+from app.core import cache as cache_backend
+from app.utils.time import ensure_utc, now_utc
 
 logger = logging.getLogger(__name__)
 
@@ -36,15 +39,16 @@ class JobRequirementService:
         trace = start_trace("create_job_requirement")
         
         try:
-            # if not await JobRequirementService._validate_user_company_access(
-            #     user_id, job_data.company_branch_id
-            # ):
-            #     raise HTTPException(
-            #         status_code=status.HTTP_403_FORBIDDEN,
-            #         detail="User does not have access to this company branch"
-            #     )
-            
-            if job_data.expiration_time and job_data.expiration_time < datetime.now():
+            if not await JobRequirementService._validate_user_company_access(
+                user_id, job_data.company_branch_id
+            ):
+                raise CustomError(
+                    ErrorCodes.FORBIDDEN,
+                    "User does not have access to this company branch",
+                    status_code=status.HTTP_403_FORBIDDEN,
+                )
+
+            if job_data.expiration_time and ensure_utc(job_data.expiration_time) < now_utc():
                 raise CustomError(
                     ErrorCodes.BAD_REQUEST,
                     "Expiration time cannot be in the past",
@@ -101,9 +105,16 @@ class JobRequirementService:
             
             return JobRequirementService._to_response(job)
             
-        except HTTPException:
+        except (HTTPException, CustomError):
             end_trace(trace, success=False)
             raise
+        except ValueError as e:
+            end_trace(trace, success=False)
+            raise CustomError(
+                ErrorCodes.BAD_REQUEST,
+                str(e),
+                status_code=status.HTTP_400_BAD_REQUEST,
+            ) from e
         except Exception as e:
             end_trace(trace, success=False)
             logger.error(f"Error creating job requirement: {e}", exc_info=True)
@@ -124,29 +135,20 @@ class JobRequirementService:
         trace = start_trace("get_job_requirement")
         
         try:
-            cache_key = f"job_req:{job_id}"
-            if is_redis_available():
-                try:
-                    redis_client = get_redis()
-                    import json
-                    cached = await redis_client.get(cache_key)
-                    if cached:
-                        cached_data = json.loads(cached)
-                        record_business_metric("cache_hit", tags={"type": "job_requirement"})
-                        
-                        if user_id and cached_data.get("user_id") != user_id:
-                            if not await JobRequirementService._validate_user_company_access(
-                                user_id, cached_data.get("company_branch_id")
-                            ):
-                                raise CustomError(
-                    ErrorCodes.FORBIDDEN,
-                    "Access denied",
-                    status_code=status.HTTP_403_FORBIDDEN
-                )
-                        
-                        return JobRequirementResponse(**cached_data)
-                except Exception as e:
-                    logger.warning(f"Cache error for job {job_id}: {e}")
+            cache_key = cache_backend.cache_key("job", job_id)
+            cached_data = await cache_backend.get_json(cache_key)
+            if cached_data:
+                response = JobRequirementResponse(**cached_data)
+                if user_id and response.user_id != user_id and not await JobRequirementService._validate_user_company_access(
+                    user_id, response.company_branch_id
+                ):
+                    raise CustomError(
+                        ErrorCodes.FORBIDDEN,
+                        "Access denied",
+                        status_code=status.HTTP_403_FORBIDDEN,
+                    )
+                record_business_metric("cache_hit", tags={"type": "job_requirement"})
+                return response
             
             record_business_metric("cache_miss", tags={"type": "job_requirement"})
 
@@ -157,22 +159,25 @@ class JobRequirementService:
                     "Job requirement not found",
                     status_code=status.HTTP_404_NOT_FOUND
                 )
+
+            if user_id and str(job.user_id) != user_id and not await JobRequirementService._validate_user_company_access(
+                user_id, str(job.company_branch_id)
+            ):
+                raise CustomError(
+                    ErrorCodes.FORBIDDEN,
+                    "Access denied",
+                    status_code=status.HTTP_403_FORBIDDEN,
+                )
             
-            if is_redis_available():
-                try:
-                    redis_client = get_redis()
-                    import json
-                    await redis_client.setex(
-                        cache_key,
-                        3600,
-                        json.dumps(JobRequirementService._to_response(job).dict())
-                    )
-                except Exception as e:
-                    logger.warning(f"Failed to cache job {job_id}: {e}")
+            await cache_backend.set_json(
+                cache_key,
+                JobRequirementService._to_response(job).model_dump(mode="json"),
+                3600,
+            )
             
             return JobRequirementService._to_response(job)
             
-        except HTTPException:
+        except (HTTPException, CustomError):
             end_trace(trace, success=False)
             raise
         except Exception as e:
@@ -223,19 +228,35 @@ class JobRequirementService:
                 )
             
             # Validate updates
-            if update_data.expiration_time and update_data.expiration_time < datetime.now():
+            if update_data.expiration_time and ensure_utc(update_data.expiration_time) < now_utc():
                 raise CustomError(
                     ErrorCodes.BAD_REQUEST,
                     "Expiration time cannot be in the past",
                     status_code=status.HTTP_400_BAD_REQUEST
                 )
             
-            if (update_data.salary_min and update_data.salary_max and 
-                update_data.salary_min > update_data.salary_max):
+            salary_min = (
+                update_data.salary_min if "salary_min" in update_data.model_fields_set else job.salary_min
+            )
+            salary_max = (
+                update_data.salary_max if "salary_max" in update_data.model_fields_set else job.salary_max
+            )
+            salary_currency = (
+                update_data.salary_currency
+                if "salary_currency" in update_data.model_fields_set
+                else job.salary_currency
+            )
+            if salary_min is not None and salary_max is not None and salary_min > salary_max:
                 raise CustomError(
                     ErrorCodes.BAD_REQUEST,
                     "Minimum salary cannot be greater than maximum salary",
                     status_code=status.HTTP_400_BAD_REQUEST
+                )
+            if (salary_min is not None or salary_max is not None) and not salary_currency:
+                raise CustomError(
+                    ErrorCodes.BAD_REQUEST,
+                    "Salary currency is required when salary is provided",
+                    status_code=status.HTTP_400_BAD_REQUEST,
                 )
             
             # Update the job
@@ -261,9 +282,16 @@ class JobRequirementService:
             
             return JobRequirementService._to_response(updated_job)
             
-        except HTTPException:
+        except (HTTPException, CustomError):
             end_trace(trace, success=False)
             raise
+        except ValueError as e:
+            end_trace(trace, success=False)
+            raise CustomError(
+                ErrorCodes.BAD_REQUEST,
+                str(e),
+                status_code=status.HTTP_400_BAD_REQUEST,
+            ) from e
         except Exception as e:
             end_trace(trace, success=False)
             logger.error(f"Error updating job requirement {job_id}: {e}", exc_info=True)
@@ -316,8 +344,9 @@ class JobRequirementService:
                 await job.delete()
                 action = "hard_deleted"
                 
-                # Clear all related caches
-                await JobRequirementService._clear_all_job_caches(job_id, user_id)
+                # The document is already deleted, so invalidate from the
+                # in-memory copy instead of trying to load it again.
+                await JobRequirementService._invalidate_related_caches(job)
             else:
                 # Soft delete
                 success = await JobRequirementRepository.delete_job_requirement(job_id)
@@ -345,7 +374,7 @@ class JobRequirementService:
                 "timestamp": datetime.now().isoformat()
             }
             
-        except HTTPException:
+        except (HTTPException, CustomError):
             end_trace(trace, success=False)
             raise
         except Exception as e:
@@ -385,31 +414,23 @@ class JobRequirementService:
             sort_order_int = -1 if sort_order == "desc" else 1
             
             # Build cache key
-            cache_key_parts = [
-                "job_req_list",
-                f"user:{user_id}" if user_id else "user:all",
-                f"branch:{company_branch_id}" if company_branch_id else "branch:all",
-                f"open:{is_open}" if is_open is not None else "open:all",
-                f"active:{is_active}",
-                f"page:{page}",
-                f"size:{size}",
-                f"sort:{sort_by}:{sort_order}"
-            ]
-            cache_key = ":".join(cache_key_parts)
+            cache_key = cache_backend.cache_key(
+                "job-list",
+                user_id or "all",
+                company_branch_id or "all",
+                is_open if is_open is not None else "all",
+                is_active,
+                page,
+                size,
+                sort_by,
+                sort_order,
+            )
             
             # Try cache first
-            if is_redis_available():
-                try:
-                    redis_client = get_redis()
-                    import json
-                    cached = await redis_client.get(cache_key)
-                    if cached:
-                        cached_data = json.loads(cached)
-                        record_business_metric("cache_hit", tags={"type": "job_list"})
-                        
-                        return JobRequirementListResponse(**cached_data)
-                except Exception as e:
-                    logger.warning(f"Cache error for job list: {e}")
+            cached_data = await cache_backend.get_json(cache_key)
+            if cached_data:
+                record_business_metric("cache_hit", tags={"type": "job_list"})
+                return JobRequirementListResponse(**cached_data)
             
             record_business_metric("cache_miss", tags={"type": "job_list"})
             
@@ -436,17 +457,7 @@ class JobRequirementService:
             )
 
             # Cache the result
-            if is_redis_available() and jobs:
-                try:
-                    redis_client = get_redis()
-                    import json
-                    await redis_client.setex(
-                        cache_key,
-                        300,  # 5 minutes TTL for lists
-                        json.dumps(response.dict())
-                    )
-                except Exception as e:
-                    logger.warning(f"Failed to cache job list: {e}")
+            await cache_backend.set_json(cache_key, response.model_dump(mode="json"), 300)
             
             record_business_metric(
                 "job_requirement_listed",
@@ -486,6 +497,23 @@ class JobRequirementService:
             if limit < 1 or limit > 100:
                 limit = 20
 
+            search_payload = {
+                "q": (search_term or "").strip().lower(),
+                "languages": sorted(programming_languages or []),
+                "skills": sorted(skills or []),
+                "experience": experience_level,
+                "skip": skip,
+                "limit": limit,
+            }
+            search_digest = hashlib.sha256(
+                json.dumps(search_payload, sort_keys=True).encode("utf-8")
+            ).hexdigest()
+            search_cache_key = cache_backend.cache_key("job-search", search_digest)
+            cached_search = await cache_backend.get_json(search_cache_key)
+            if cached_search:
+                record_business_metric("cache_hit", tags={"type": "job_search"})
+                return JobRequirementListResponse(**cached_search)
+
             # Search jobs
             jobs, total = await JobRequirementRepository.search_job_requirements(
                 search_term=search_term or "",
@@ -508,12 +536,18 @@ class JobRequirementService:
                 }
             )
 
-            return JobRequirementListResponse(
+            response = JobRequirementListResponse(
                 job_requirements=job_responses,
                 total=total,
                 skip=skip,
                 limit=limit
             )
+            await cache_backend.set_json(
+                search_cache_key,
+                response.model_dump(mode="json"),
+                120,
+            )
+            return response
 
         except Exception as e:
             end_trace(trace, success=False)
@@ -534,19 +568,12 @@ class JobRequirementService:
         
         try:
             # Build cache key
-            cache_key = f"job_stats:user:{user_id or 'all'}"
-            
-            # Try cache first
-            if is_redis_available():
-                try:
-                    redis_client = get_redis()
-                    import json
-                    cached = await redis_client.get(cache_key)
-                    if cached:
-                        record_business_metric("cache_hit", tags={"type": "job_stats"})
-                        return json.loads(cached)
-                except Exception as e:
-                    logger.warning(f"Cache error for job stats: {e}")
+            cache_key = cache_backend.cache_key("job-stats", user_id or "all")
+
+            cached = await cache_backend.get_json(cache_key)
+            if cached:
+                record_business_metric("cache_hit", tags={"type": "job_stats"})
+                return cached
             
             record_business_metric("cache_miss", tags={"type": "job_stats"})
             
@@ -572,13 +599,7 @@ class JobRequirementService:
             }
             
             # Cache the result
-            if is_redis_available():
-                try:
-                    redis_client = get_redis()
-                    import json
-                    await redis_client.setex(cache_key, 60, json.dumps(stats))  # 1 minute TTL
-                except Exception as e:
-                    logger.warning(f"Failed to cache job stats: {e}")
+            await cache_backend.set_json(cache_key, stats, 60)
             
             record_business_metric(
                 "job_stats_retrieved",
@@ -684,7 +705,7 @@ class JobRequirementService:
                 "timestamp": datetime.now().isoformat()
             }
             
-        except HTTPException:
+        except (HTTPException, CustomError):
             end_trace(trace, success=False)
             raise
         except Exception as e:
@@ -825,7 +846,7 @@ class JobRequirementService:
                 "total_jobs": len(jobs)
             }
             
-        except HTTPException:
+        except (HTTPException, CustomError):
             end_trace(trace, success=False)
             raise
         except Exception as e:
@@ -853,29 +874,64 @@ class JobRequirementService:
             skills_required=job.skills_required,
             experience_level=job.experience_level,
             description=job.description,
+            employment_type=job.employment_type,
+            work_mode=job.work_mode,
+            location=job.location,
+            number_of_openings=job.number_of_openings,
             salary_min=job.salary_min,
             salary_max=job.salary_max,
+            salary_currency=job.salary_currency,
+            salary_period=job.salary_period,
             expiration_time=job.expiration_time,
+            status=job.status,
             is_open=job.is_open,
+            is_active=job.is_active,
+            published_at=job.published_at,
+            closed_at=job.closed_at,
+            version=job.version,
             created_at=job.created_at,
             updated_at=job.updated_at
         )
     
     @staticmethod
     async def _validate_user_company_access(user_id: str, company_branch_id: str) -> bool:
-        """Validate that user has access to the company branch"""
-        # Implement based on your User-Company relationship model
-        # This is a placeholder - implement according to your business logic
+        """Validate branch access from source-of-truth records (never cached)."""
         try:
-            from app.repositories.company_repository import CompanyRepository
-            return await CompanyRepository.validate_user_access(
-                user_id=user_id,
-                company_branch_id=company_branch_id
+            from app.models.company import Company
+            from app.models.company_branch import CompanyBranch
+            from app.models.user import User
+            from app.models.user_company import UserCompany
+
+            if not ObjectId.is_valid(user_id) or not ObjectId.is_valid(company_branch_id):
+                return False
+            user = await User.get(ObjectId(user_id))
+            branch = await CompanyBranch.get(ObjectId(company_branch_id))
+            if not user or not user.is_active or not branch or not branch.is_active:
+                return False
+            if user.is_superuser:
+                return True
+            company = await Company.get(branch.company_id)
+            if not company or not company.is_active:
+                return False
+            if str(company.user_id) == user_id:
+                return True
+            now = now_utc()
+            return bool(
+                await UserCompany.find_one(
+                    {
+                        "user_id": user.id,
+                        "company_branch_id": branch.id,
+                        "is_active": True,
+                        "$and": [
+                            {"$or": [{"start_date": None}, {"start_date": {"$lte": now}}]},
+                            {"$or": [{"end_date": None}, {"end_date": {"$gte": now}}]},
+                        ],
+                    }
+                )
             )
-        except ImportError:
-            # For now, assume validation passes (for development)
-            logger.warning("CompanyRepository not available, skipping company access validation")
-            return True
+        except Exception:
+            logger.warning("Could not validate company branch access", exc_info=True)
+            return False
     
     @staticmethod
     async def _is_admin(user_id: str) -> bool:
@@ -910,20 +966,6 @@ class JobRequirementService:
             # Return top 10 skills
             popular_skills = [skill for skill, _ in skill_counter.most_common(10)]
             
-            # Cache popular skills
-            if is_redis_available():
-                try:
-                    redis_client = get_redis()
-                    import json
-                    cache_key = f"popular_skills:user:{user_id or 'all'}"
-                    await redis_client.setex(
-                        cache_key,
-                        300,  # 5 minutes
-                        json.dumps(popular_skills)
-                    )
-                except Exception as e:
-                    logger.warning(f"Failed to cache popular skills: {e}")
-            
             return popular_skills
             
         except Exception as e:
@@ -953,20 +995,6 @@ class JobRequirementService:
             # Return top 10 languages
             popular_languages = [lang for lang, _ in language_counter.most_common(10)]
             
-            # Cache popular languages
-            if is_redis_available():
-                try:
-                    redis_client = get_redis()
-                    import json
-                    cache_key = f"popular_languages:user:{user_id or 'all'}"
-                    await redis_client.setex(
-                        cache_key,
-                        300,  # 5 minutes
-                        json.dumps(popular_languages)
-                    )
-                except Exception as e:
-                    logger.warning(f"Failed to cache popular languages: {e}")
-            
             return popular_languages
             
         except Exception as e:
@@ -976,58 +1004,22 @@ class JobRequirementService:
     @staticmethod
     async def _invalidate_related_caches(job: JobRequirement) -> None:
         """Invalidate all caches related to a job"""
-        if not is_redis_available():
-            return
-        
         try:
-            redis_client = get_redis()
-            
             # Patterns to delete
             patterns = [
-                f"job_req:{job.id}",  # Single job cache
-                f"job_req_list:user:{job.user_id}:*",  # User's job lists
-                f"job_req_list:branch:{job.company_branch_id}:*",  # Branch job lists
-                "job_req_list:user:all:*",  # Global job lists
-                f"job_stats:user:{job.user_id}",  # User stats
-                "job_stats:user:all",  # Global stats
-                "popular_skills:*",  # Popular skills cache
-                "popular_languages:*",  # Popular languages cache
+                cache_backend.cache_key("job", job.id),
+                cache_backend.cache_key("job-list", "*"),
+                cache_backend.cache_key("job-stats", job.user_id),
+                cache_backend.cache_key("job-stats", "all"),
+                cache_backend.cache_key("job-search", "*"),
             ]
             
-            # Delete all matching keys
-            import asyncio
-            delete_tasks = []
             for pattern in patterns:
-                # Get all keys matching the pattern
-                keys = await redis_client.keys(pattern)
-                if keys:
-                    delete_tasks.append(redis_client.delete(*keys))
-            
-            if delete_tasks:
-                await asyncio.gather(*delete_tasks, return_exceptions=True)
-                logger.debug(f"Invalidated caches for job: {job.id}")
+                await cache_backend.delete_pattern(pattern)
+            logger.debug(f"Invalidated caches for job: {job.id}")
             
         except Exception as e:
             logger.warning(f"Error invalidating caches for job {job.id}: {e}")
-    
-    @staticmethod
-    async def _clear_all_job_caches(job_id: str, user_id: str) -> None:
-        """Clear all caches for a specific job"""
-        if not is_redis_available():
-            return
-        
-        try:
-            redis_client = get_redis()
-            
-            # Get job to get company_branch_id
-            job = await JobRequirementRepository.get_job_requirement(job_id)
-            if not job:
-                return
-            
-            await JobRequirementService._invalidate_related_caches(job)
-            
-        except Exception as e:
-            logger.warning(f"Error clearing all caches for job {job_id}: {e}")
     
     @staticmethod
     async def cleanup_expired_jobs() -> Dict[str, Any]:
@@ -1039,7 +1031,7 @@ class JobRequirementService:
             
             # Find expired but still open jobs
             query = {
-                "expiration_time": {"$lt": datetime.now()},
+                "expiration_time": {"$lt": now_utc()},
                 "is_open": True,
                 "is_active": True
             }
@@ -1058,6 +1050,9 @@ class JobRequirementService:
                 try:
                     # Auto-close expired jobs
                     job.is_open = False
+                    job.status = JobStatus.CLOSED
+                    job.closed_at = now_utc()
+                    job.updated_at = now_utc()
                     await job.save()
                     closed_count += 1
                     

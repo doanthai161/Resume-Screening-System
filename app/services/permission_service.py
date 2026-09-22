@@ -4,6 +4,7 @@ from app.repositories.permission_repository import PermissionRepository
 from app.schemas.permission import PermissionCreate, PermissionUpdate
 from app.models.permission import Permission
 from app.core.errors import CustomError, ErrorCodes
+from app.core import cache
 
 class PermissionService:
     @staticmethod
@@ -49,7 +50,9 @@ class PermissionService:
                     "Permission not found",
                     status_code=status.HTTP_404_NOT_FOUND
                 )
-            return await PermissionRepository.update(permission, data)
+            permission = await PermissionRepository.update(permission, data)
+            await cache.invalidate_permission_authorization(permission_id)
+            return permission
         except CustomError:
             raise
         except Exception as e:
@@ -90,6 +93,7 @@ class PermissionService:
                     status_code=status.HTTP_404_NOT_FOUND
                 )
             await PermissionRepository.soft_delete(permission)
+            await cache.invalidate_permission_authorization(permission_id)
         except CustomError:
             raise
         except Exception as e:

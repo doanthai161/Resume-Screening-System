@@ -11,6 +11,7 @@ class ActorUpdate(BaseModel):
     description: Optional[str]
 
 class ActorResponse(BaseModel):
+    id: Optional[str] = None
     name: str
     description: Optional[str]
 

@@ -11,6 +11,7 @@ from app.models.company import Company
 from app.models.user_company import UserCompany
 from app.schemas.company_branch import CompanyBranchCreate, CompanyBranchUpdate
 from app.core.redis import get_redis, is_redis_available
+from app.core import cache as shared_cache
 from app.core.monitoring import monitor_db_operation, monitor_cache_operation
 from app.utils.time import now_utc
 from beanie.exceptions import RevisionIdWasChanged
@@ -19,7 +20,7 @@ logger = logging.getLogger(__name__)
 
 
 class CompanyBranchRepository:
-    CACHE_PREFIX = "company_branch:"
+    CACHE_PREFIX = shared_cache.cache_key("company-branch") + ":"
     BRANCH_CACHE_TTL = 3600
     BRANCH_LIST_CACHE_TTL = 300
     USER_BRANCHES_CACHE_TTL = 1800
@@ -153,10 +154,7 @@ class CompanyBranchRepository:
             return
 
         try:
-            redis_client = get_redis()
-            keys = await redis_client.keys(pattern)
-            if keys:
-                await redis_client.delete(*keys)
+            await shared_cache.delete_pattern(pattern)
         except Exception as e:
             logger.debug(f"Pattern delete error: {e}")
 
@@ -224,17 +222,12 @@ class CompanyBranchRepository:
             branch_dict["created_at"] = now_utc()
             branch_dict["updated_at"] = now_utc()
 
-            branch = CompanyBranch(**branch_dict)
-            await branch.insert()
-
             company = await Company.find_one({"_id": ObjectId(company_id)})
-            if not company:
+            if not company or not company.is_active:
                 raise ValueError(f"Company with id {company_id} not found.")
 
-            company.branch_ids.append(branch.id)
-            company.updated_at = now_utc()
-
-            await company.save()
+            branch = CompanyBranch(**branch_dict)
+            await branch.insert()
 
             await CompanyBranchRepository._invalidate_branch_creation(branch)
 

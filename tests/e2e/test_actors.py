@@ -24,7 +24,7 @@ async def test_create_actor(async_client: AsyncClient, test_actor, mock_admin_us
     # Clean up DB before test if it's an integration test.
     # Since we don't have direct DB access here, we assume it's clean or we mock.
     # In a real scenario, tests would run against a dedicated test database.
-    response = await async_client.post("/actors/create-actor", json=test_actor)
+    response = await async_client.post("/api/v1/actors/create-actor", json=test_actor)
     
     # We might get 429 if rate limiter is active in tests, or 401 if auth fails.
     # Let's assume the test setup handles this.

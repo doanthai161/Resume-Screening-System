@@ -4,6 +4,7 @@ from bson import ObjectId
 from datetime import datetime
 from app.utils.time import now_utc
 from typing import Optional, Dict, Any
+from pymongo import ASCENDING, DESCENDING, IndexModel
 
 class AIModel(Document):
     name: str = Field(..., description="Name of the model")
@@ -17,21 +18,22 @@ class AIModel(Document):
     avg_processing_time: float = Field(0.0)
     last_used: Optional[datetime] = Field(None)
     description: Optional[str] = Field(None)
-    created_by: ObjectId = Field(..., description="ID of the user who created the AI model")
+    created_by: Optional[ObjectId] = Field(None, description="ID of creator; null for system-provided models")
     created_at: datetime = Field(default_factory=lambda: now_utc())
     updated_at: datetime = Field(default_factory=lambda: now_utc())
     
     class Settings:
         name = "ai_models"
         indexes = [
-            [("name", 1)],
-            [("model_type", 1)],
-            [("provider", 1)],
-            [("is_active", 1)],
-            [("last_used", -1)],
-            [("created_at", -1)],
-            [("provider", 1), ("model_id", 1)],
-            [("model_type", 1), ("is_active", 1)],
+            IndexModel(
+                [("provider", ASCENDING), ("model_id", ASCENDING), ("version", ASCENDING)],
+                unique=True,
+                name="uq_ai_model_provider_id_version",
+            ),
+            IndexModel([("name", ASCENDING)]),
+            IndexModel([("model_type", ASCENDING), ("is_active", ASCENDING)]),
+            IndexModel([("last_used", DESCENDING)]),
+            IndexModel([("created_at", DESCENDING)]),
         ]
     
     class Config:

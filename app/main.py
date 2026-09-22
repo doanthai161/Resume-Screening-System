@@ -4,21 +4,24 @@ from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from contextlib import asynccontextmanager
-from slowapi import Limiter, _rate_limit_exceeded_handler
-from slowapi.util import get_remote_address
+from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 import time
+import asyncio
 import logging
 import uvicorn
 import sys
 from pathlib import Path
 
 from app.core.errors import CustomError, ErrorCodes
+from app.core.rate_limiter import limiter
+from app.core.security import CurrentUser, require_admin
 from app.schemas.response import ApiResponse
 
 from app.core.config import settings
 from app.core.database import init_db, close_db
 from app.core.redis import init_redis, close_redis
+from app.core.maintenance import run_maintenance
 from app.dependencies.versions import api_router
 from app.middleware.request_logging import RequestLoggingMiddleware
 from app.middleware.response_time import ResponseTimeMiddleware
@@ -29,6 +32,10 @@ log_dir.mkdir(parents=True, exist_ok=True)
 
 try:
     log_file = settings.LOG_FILE
+    if log_file.exists() and log_file.is_dir():
+        # A legacy setup created `logs/app.log` as a directory. Keep it intact
+        # and select a sibling file instead of disabling file logging.
+        log_file = log_file.with_name("application.log")
     log_file.parent.mkdir(parents=True, exist_ok=True)
     log_file.touch(exist_ok=True)
     
@@ -47,11 +54,6 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-limiter = Limiter(
-    key_func=get_remote_address,
-    default_limits=[settings.RATE_LIMIT_DEFAULT] if settings.RATE_LIMIT_ENABLED else []
-)
-
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     logger.info(f" Starting {settings.APP_NAME} v{settings.APP_VERSION}")
@@ -59,6 +61,8 @@ async def lifespan(app: FastAPI):
     logger.info(f" Debug mode: {settings.DEBUG}")
     
     startup_tasks = []
+    maintenance_stop = asyncio.Event()
+    maintenance_task = None
     
     try:
         startup_tasks.append("database")
@@ -77,6 +81,12 @@ async def lifespan(app: FastAPI):
         
         startup_tasks.append("directories")
         logger.info(f" Upload directories ready at {settings.upload_path}")
+
+        maintenance_task = asyncio.create_task(
+            run_maintenance(maintenance_stop),
+            name="database-queue-maintenance",
+        )
+        startup_tasks.append("maintenance")
         
         # Print upload config
         upload_config = settings.get_upload_config()
@@ -105,6 +115,15 @@ async def lifespan(app: FastAPI):
         logger.info(" Shutting down application...")
         
         shutdown_tasks = []
+
+        if maintenance_task:
+            maintenance_stop.set()
+            maintenance_task.cancel()
+            try:
+                await maintenance_task
+            except asyncio.CancelledError:
+                pass
+            shutdown_tasks.append("maintenance")
         
         try:
             shutdown_tasks.append("database")
@@ -217,11 +236,11 @@ app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 if settings.CORS_ORIGINS:
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=settings.CORS_ORIGINS,
+        allow_origins=settings.cors_origins_list,
         allow_credentials=settings.CORS_ALLOW_CREDENTIALS,
-        allow_methods=settings.CORS_ALLOW_METHODS,
-        allow_headers=settings.CORS_ALLOW_HEADERS,
-        expose_headers=settings.CORS_EXPOSE_HEADERS,
+        allow_methods=[method.strip() for method in settings.CORS_ALLOW_METHODS.split(",") if method.strip()],
+        allow_headers=[header.strip() for header in settings.CORS_ALLOW_HEADERS.split(",") if header.strip()],
+        expose_headers=[header.strip() for header in settings.CORS_EXPOSE_HEADERS.split(",") if header.strip()],
         max_age=settings.CORS_MAX_AGE,
     )
 
@@ -464,7 +483,11 @@ async def get_config(request: Request):
     return config_info
 
 @app.get("/metrics", tags=["Monitoring"])
-async def get_metrics(request: Request):
+@limiter.limit(settings.RATE_LIMIT_READ)
+async def get_metrics(
+    request: Request,
+    _current_user: CurrentUser = Depends(require_admin()),
+):
     try:
         import psutil
         from datetime import datetime
@@ -513,13 +536,12 @@ async def get_metrics(request: Request):
             }
         }
 
-from app.core.security import get_current_user
 @app.get("/metrics/prometheus", tags=["Monitoring"], include_in_schema=False)
+@limiter.limit(settings.RATE_LIMIT_READ)
 async def get_prometheus_metrics(
-    # current_user: dict = Depends(get_current_user)
+    request: Request,
+    _current_user: CurrentUser = Depends(require_admin()),
 ):
-    # if not current_user.get("is_admin"):
-    #     raise HTTPException(status_code=403)
     try:
         import psutil
         
@@ -585,8 +607,8 @@ def start():
         reload=settings.RELOAD and settings.is_development,
         log_level="info" if settings.is_production else "debug",
         access_log=settings.DEBUG,
-        proxy_headers=True,
-        forwarded_allow_ips="*",
+        proxy_headers=bool(settings.trusted_proxy_ips_list),
+        forwarded_allow_ips=settings.TRUSTED_PROXY_IPS,
         workers=settings.WORKERS if settings.is_production else 1,
         loop="auto" if sys.platform != "win32" else "asyncio",
         timeout_keep_alive=30,

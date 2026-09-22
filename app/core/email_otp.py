@@ -1,7 +1,10 @@
+import asyncio
 import os
 import logging
 from typing import Optional
 from dotenv import load_dotenv
+
+from app.core.config import settings
 
 load_dotenv()
 
@@ -174,7 +177,7 @@ async def send_otp_email(
                 <div class="otp-container">
                     <div style="font-size: 14px; opacity: 0.9;">YOUR VERIFICATION CODE</div>
                     <div class="otp-code">{otp}</div>
-                    <div class="expiry">⏰ Valid for 10 minutes</div>
+                    <div class="expiry">⏰ Valid for {settings.OTP_EXPIRY_MINUTES} minutes</div>
                 </div>
                 
                 <div class="instructions">
@@ -218,7 +221,7 @@ Your One-Time Password (OTP) for {otp_type.replace('_', ' ')}:
 
 {otp}
 
-This code is valid for 10 minutes.
+This code is valid for {settings.OTP_EXPIRY_MINUTES} minutes.
 
 INSTRUCTIONS:
 1. Enter this code in the verification field
@@ -253,7 +256,7 @@ Best regards,
                 "otp_type": otp_type,
                 "full_name": full_name or "",
                 "company_name": BREVO_SENDER_NAME,
-                "expiry_minutes": 30
+                "expiry_minutes": settings.OTP_EXPIRY_MINUTES
             }
         )
         
@@ -265,10 +268,12 @@ Best regards,
                 "TYPE": otp_type.replace('_', ' ').title()
             }
         
-        api_response = api_instance.send_transac_email(send_smtp_email)
+        api_response = await asyncio.to_thread(
+            api_instance.send_transac_email,
+            send_smtp_email,
+        )
         
         logger.info(f"✅ OTP email sent successfully to {email}. Message ID: {api_response.message_id}")
-        logger.info(f"   OTP: {otp}, Type: {otp_type}, Recipient: {full_name or 'N/A'}")
         
         return True
         

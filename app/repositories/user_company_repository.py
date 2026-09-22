@@ -13,6 +13,7 @@ from app.schemas.user_company import (
     UserCompanyStats
 )
 from app.core.redis import get_redis, is_redis_available
+from app.core import cache as shared_cache
 from app.core.monitoring import monitor_db_operation, monitor_cache_operation
 from app.utils.time import now_utc
 
@@ -20,7 +21,7 @@ logger = logging.getLogger(__name__)
 
 
 class UserCompanyRepository:
-    CACHE_PREFIX = "user_company:"
+    CACHE_PREFIX = shared_cache.cache_key("user-company") + ":"
     ASSIGNMENT_CACHE_TTL = 3600  
     USER_ASSIGNMENTS_CACHE_TTL = 1800  
     BRANCH_ASSIGNMENTS_CACHE_TTL = 1800  
@@ -898,13 +899,9 @@ class UserCompanyRepository:
             return
         
         try:
-            redis_client = get_redis()
             pattern = f"{UserCompanyRepository.CACHE_PREFIX}*"
-            keys = await redis_client.keys(pattern)
-            
-            if keys:
-                await redis_client.delete(*keys)
-                logger.info(f"Cleared all user_company cache ({len(keys)} keys)")
+            await shared_cache.delete_pattern(pattern)
+            logger.info("Cleared all user_company cache")
             
         except Exception as e:
             logger.warning(f"Error clearing user_company cache: {e}")

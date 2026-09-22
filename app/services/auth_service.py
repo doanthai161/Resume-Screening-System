@@ -1,7 +1,9 @@
 from typing import Optional, Tuple, Dict, Any
+import secrets
 from datetime import timedelta
 from bson import ObjectId
 from fastapi import status, BackgroundTasks, Request
+from pymongo.errors import DuplicateKeyError
 
 from app.models.user import User
 from app.models.actor import Actor
@@ -13,15 +15,14 @@ from app.core.security import (
     password_strength_check,
     create_token_pair,
     decode_jwt_token,
-    is_token_blacklisted,
-    blacklist_token,
+    consume_refresh_token,
 )
 from app.core.errors import CustomError, ErrorCodes
 from app.dependencies.error_code import ErrorCode
 from app.repositories.user_repository import UserRepository
 from app.core.config import settings
 from app.utils.time import now_utc, ensure_utc
-from app.utils.otp import generate_otp
+from app.utils.otp import generate_otp, hash_otp, verify_otp_hash
 from app.core.email_otp import send_otp_email
 from app.models.audit_log import AuditEventType
 from app.logs.logging_config import logger
@@ -100,10 +101,11 @@ class AuthService:
         
         default_actor = await Actor.find_one(Actor.name == settings.CANDIDATE_ROLE_NAME)
         if not default_actor:
-            logger.error(f"Default actor '{settings.CANDIDATE_ROLE_NAME}' not found.")
-            background_tasks.add_task(
-                logger.error, 
-                f"Default actor '{settings.CANDIDATE_ROLE_NAME}' not found. User {data.email} registered without role assignment."
+            await UserRepository.hard_delete_user(str(user.id))
+            raise CustomError(
+                ErrorCodes.INTERNAL,
+                "Registration role is not configured",
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             )
         else:
             try:
@@ -118,11 +120,15 @@ class AuthService:
                     logger.info, 
                     f"Assigned default actor '{settings.CANDIDATE_ROLE_NAME}' to user '{data.email}'."
                 )
-            except Exception as e:
-                logger.error(f"Failed to assign default role to user {data.email}: {e}")
-                background_tasks.add_task(
-                    logger.error, 
-                    f"Failed to assign default role to user {data.email}: {e}"
+            except DuplicateKeyError:
+                pass
+            except Exception:
+                await UserRepository.hard_delete_user(str(user.id))
+                logger.exception("Failed to assign registration role")
+                raise CustomError(
+                    ErrorCodes.INTERNAL,
+                    "Could not complete registration",
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 )
                 
         otp_code = generate_otp()
@@ -135,7 +141,8 @@ class AuthService:
         })
         
         if existing_otp:
-            existing_otp.otp_code = otp_code
+            existing_otp.otp_code = None
+            existing_otp.otp_hash = hash_otp(str(data.email), "registration", otp_code)
             existing_otp.expires_at = expires_at
             existing_otp.attempts = 0
             existing_otp.is_used = False
@@ -144,7 +151,7 @@ class AuthService:
         else:
             email_otp = EmailOTP(
                 email=data.email,
-                otp_code=otp_code,
+                otp_hash=hash_otp(str(data.email), "registration", otp_code),
                 otp_type="registration",
                 expires_at=expires_at,
                 created_at=now_utc(),
@@ -159,8 +166,6 @@ class AuthService:
             otp_type="registration",
             full_name=data.full_name
         )
-        print(otp_code, " :OTP ")
-        
         background_tasks.add_task(
             logger.info,
             f"User registered: {data.email}. OTP sent."
@@ -209,10 +214,20 @@ class AuthService:
         if not otp_record.can_attempt:
             raise CustomError(ErrorCodes.BAD_REQUEST, ErrorCode.OTP_MAX_ATTEMPTS, status_code=status.HTTP_400_BAD_REQUEST)
         
-        if otp_record.otp_code != data.otp:
-            otp_record.increment_attempt()
-            await otp_record.save()
-            remaining_attempts = otp_record.max_attempts - otp_record.attempts
+        valid_otp = (
+            verify_otp_hash(str(data.email), "registration", data.otp, otp_record.otp_hash)
+            if otp_record.otp_hash
+            else secrets.compare_digest(otp_record.otp_code or "", data.otp)
+        )
+        if not valid_otp:
+            await EmailOTP.find_one(
+                {
+                    "_id": otp_record.id,
+                    "is_used": False,
+                    "attempts": {"$lt": otp_record.max_attempts},
+                }
+            ).update({"$inc": {"attempts": 1}, "$set": {"updated_at": now_utc()}})
+            remaining_attempts = max(0, otp_record.max_attempts - otp_record.attempts - 1)
             raise CustomError(
                 ErrorCodes.BAD_REQUEST, 
                 ErrorCode.INVALID_OTP, 
@@ -220,8 +235,19 @@ class AuthService:
                 details={"remaining_attempts": remaining_attempts}
             )
         
-        otp_record.mark_as_used()
-        await otp_record.save()
+        used_result = await EmailOTP.find_one(
+            {
+                "_id": otp_record.id,
+                "is_used": False,
+                "attempts": otp_record.attempts,
+            }
+        ).update({"$set": {"is_used": True, "updated_at": now_utc()}})
+        if not used_result or getattr(used_result, "modified_count", 0) != 1:
+            raise CustomError(
+                ErrorCodes.BAD_REQUEST,
+                ErrorCode.OTP_ALREADY_USED,
+                status_code=status.HTTP_400_BAD_REQUEST,
+            )
         
         user = await UserRepository.get_user_by_email(data.email)
         if not user:
@@ -266,7 +292,6 @@ class AuthService:
             raise CustomError(ErrorCodes.BAD_REQUEST, "User already verified", status_code=status.HTTP_400_BAD_REQUEST)
         
         otp_code = generate_otp()
-        print(otp_code)
         expires_at = now_utc() + timedelta(minutes=settings.OTP_EXPIRY_MINUTES)
         
         existing_otp = await EmailOTP.find_one({
@@ -276,15 +301,16 @@ class AuthService:
         })
         
         if existing_otp:
-            time_since_creation = now_utc() - ensure_utc(existing_otp.created_at)
-            if time_since_creation < timedelta(seconds=30):
+            time_since_last_send = now_utc() - ensure_utc(existing_otp.updated_at)
+            if time_since_last_send < timedelta(seconds=30):
                 raise CustomError(
                     ErrorCodes.RATE_LIMIT, 
                     "Please wait before requesting another OTP", 
                     status_code=status.HTTP_429_TOO_MANY_REQUESTS
                 )
             
-            existing_otp.otp_code = otp_code
+            existing_otp.otp_code = None
+            existing_otp.otp_hash = hash_otp(str(data.email), "registration", otp_code)
             existing_otp.expires_at = expires_at
             existing_otp.attempts = 0
             existing_otp.is_used = False
@@ -293,7 +319,7 @@ class AuthService:
         else:
             email_otp = EmailOTP(
                 email=data.email,
-                otp_code=otp_code,
+                otp_hash=hash_otp(str(data.email), "registration", otp_code),
                 otp_type="registration",
                 expires_at=expires_at,
                 created_at=now_utc(),
@@ -302,6 +328,13 @@ class AuthService:
             await email_otp.insert()
         
         background_tasks.add_task(logger.info, f"OTP resent to: {data.email}")
+        background_tasks.add_task(
+            send_otp_email,
+            email=data.email,
+            otp=otp_code,
+            otp_type="registration",
+            full_name=user.full_name,
+        )
         
         background_tasks.add_task(
             log_security_event,
@@ -390,14 +423,30 @@ class AuthService:
         if not token_payload or token_payload.type != "refresh":
             raise CustomError(ErrorCodes.UNAUTHORIZED, ErrorCode.INVALID_TOKEN_TYPE, status_code=status.HTTP_401_UNAUTHORIZED)
         
-        if await is_token_blacklisted(token):
-            raise CustomError(ErrorCodes.UNAUTHORIZED, ErrorCode.TOKEN_EXPIRED, status_code=status.HTTP_401_UNAUTHORIZED)
-        
         user = await UserRepository.get_user_by_email(token_payload.email)
         if not user or not user.is_active:
             raise CustomError(ErrorCodes.UNAUTHORIZED, ErrorCode.USER_NOT_FOUND, status_code=status.HTTP_401_UNAUTHORIZED)
-        
-        await blacklist_token(token)
+        if token_payload.auth_version != user.auth_version:
+            raise CustomError(
+                ErrorCodes.UNAUTHORIZED,
+                ErrorCode.TOKEN_EXPIRED,
+                status_code=status.HTTP_401_UNAUTHORIZED,
+            )
+
+        remaining_seconds = None
+        if token_payload.exp:
+            from datetime import datetime, timezone
+
+            remaining_seconds = max(
+                1,
+                int(token_payload.exp - datetime.now(timezone.utc).timestamp()),
+            )
+        if not await consume_refresh_token(token, remaining_seconds):
+            raise CustomError(
+                ErrorCodes.UNAUTHORIZED,
+                ErrorCode.TOKEN_EXPIRED,
+                status_code=status.HTTP_401_UNAUTHORIZED,
+            )
         
         token_pair = create_token_pair(user=user, scopes=token_payload.scopes or [])
         

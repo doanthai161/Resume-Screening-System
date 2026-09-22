@@ -115,12 +115,9 @@ class AuditLogService:
         
         try:
             await AuditLogService.create_log(log_data)
-        except Exception as e:
+        except Exception:
             import logging
-            logging.error(f"Failed to create security audit log: {e}")
-            print(f"ERROR in create_log: {e}")
-            import traceback
-            traceback.print_exc()
+            logging.exception("Failed to create security audit log")
             
     @staticmethod
     async def search_logs(query: AuditLogQuery) -> AuditLogListResponse:

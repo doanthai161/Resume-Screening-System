@@ -11,7 +11,7 @@ async def test_get_user_api(async_client: AsyncClient, mock_user, current_user):
     from app.main import app
     
     app.dependency_overrides[get_current_user] = lambda: current_user
-    app.dependency_overrides[require_permission("user:read")] = lambda: current_user
+    app.dependency_overrides[require_permission("users:view")] = lambda: current_user
 
     with patch("app.api.users.UserService.get_user", new_callable=AsyncMock) as mock_get_user:
         mock_get_user.return_value = mock_user

@@ -5,6 +5,8 @@ from pymongo.errors import DuplicateKeyError
 import logging
 import bcrypt
 import secrets
+import hashlib
+import re
 from app.models.user import User
 from app.schemas.user import (
     UserCreate, 
@@ -12,18 +14,18 @@ from app.schemas.user import (
     UserFilter
 )
 from app.core.redis import get_redis, is_redis_available
+from app.core import cache as shared_cache
 from app.core.monitoring import monitor_db_operation, monitor_cache_operation, monitor
 from app.utils.time import now_utc
 from app.core.config import settings
 from app.core.database import get_database_info
-from motor.motor_asyncio import AsyncIOMotorClient
 from app.core.security import get_password_hash, verify_password 
 
 logger = logging.getLogger(__name__)
 
 
 class UserRepository:
-    CACHE_PREFIX = "user:"
+    CACHE_PREFIX = shared_cache.cache_key("user")
     USER_CACHE_TTL = 1800 
     USER_LIST_CACHE_TTL = 300 
     USER_SEARCH_CACHE_TTL = 300  
@@ -34,17 +36,19 @@ class UserRepository:
     
     @staticmethod
     def _get_user_cache_key(user_id: str) -> str:
-        return f"{UserRepository.CACHE_PREFIX}user:{user_id}"
+        return f"{UserRepository.CACHE_PREFIX}:id:{user_id}"
     
     @staticmethod
     def _get_user_email_cache_key(email: str) -> str:
-        return f"{UserRepository.CACHE_PREFIX}user_email:{email}"
+        digest = hashlib.sha256(str(email).strip().lower().encode("utf-8")).hexdigest()
+        return f"{UserRepository.CACHE_PREFIX}:email:{digest}"
     
     @staticmethod
     def _get_user_username_cache_key(username: str) -> str:
-        return f"{UserRepository.CACHE_PREFIX}user_username:{username}"
+        digest = hashlib.sha256(str(username).strip().lower().encode("utf-8")).hexdigest()
+        return f"{UserRepository.CACHE_PREFIX}:username:{digest}"
     
-    LIST_VERSION_KEY = f"{CACHE_PREFIX}list_version"
+    LIST_VERSION_KEY = f"{CACHE_PREFIX}:list-version"
     @staticmethod
     async def _get_list_cache_version() -> str:
         if not is_redis_available():
@@ -74,28 +78,24 @@ class UserRepository:
             logger.warning(f"Error incrementing list version: {e}")
     @staticmethod
     async def _get_user_list_cache_key(page: int, size: int, filters: dict) -> str:
-        filter_str = str(sorted(filters.items()))
+        import json
+
+        filter_str = json.dumps(filters, sort_keys=True, default=str, separators=(",", ":"))
+        filter_hash = hashlib.sha256(filter_str.encode("utf-8")).hexdigest()
         version = await UserRepository._get_list_cache_version()
-        
-        return f"{UserRepository.CACHE_PREFIX}list:v{version}:{page}:{size}:{filter_str}"
+
+        return f"{UserRepository.CACHE_PREFIX}:list:v{version}:{page}:{size}:{filter_hash}"
     
     @staticmethod
     def _get_user_search_cache_key(search_term: str, skip: int, limit: int) -> str:
-        return f"{UserRepository.CACHE_PREFIX}search:{search_term}:{skip}:{limit}"
+        digest = hashlib.sha256(search_term.strip().lower().encode("utf-8")).hexdigest()
+        return f"{UserRepository.CACHE_PREFIX}:search:{digest}:{skip}:{limit}"
     
     @staticmethod
     def _get_reset_token_cache_key(token: str) -> str:
-        return f"{UserRepository.CACHE_PREFIX}reset_token:{token}"
+        digest = hashlib.sha256(token.encode("utf-8")).hexdigest()
+        return f"{UserRepository.CACHE_PREFIX}reset_token:{digest}"
     
-
-    @staticmethod
-    def _get_db_client():
-        return AsyncIOMotorClient(settings.MONGODB_URI)
-    
-    @staticmethod
-    def _get_db():
-        client = AsyncIOMotorClient(settings.MONGODB_URI)
-        return client[settings.MONGODB_DB_NAME]
 
     @staticmethod
     def _generate_reset_token() -> str:
@@ -105,12 +105,12 @@ class UserRepository:
     @monitor_db_operation("user_create")
     async def create_user(user_data: Union[UserCreate, dict]) -> User:
         if isinstance(user_data, UserCreate):
-            email = user_data.email
+            email = str(user_data.email).strip().lower()
             phone_number = user_data.phone_number
             password = user_data.password
             data = user_data.model_dump(exclude={"password"})
         else:
-            email = user_data.get("email")
+            email = str(user_data.get("email", "")).strip().lower()
             phone_number = user_data.get("phone_number")
             password = user_data.get("password")
             data = user_data.copy() 
@@ -145,7 +145,11 @@ class UserRepository:
             updated_at=now_utc(),
         )
 
-        await user.insert()
+        try:
+            await user.insert()
+        except DuplicateKeyError as exc:
+            raise ValueError("User with this email or phone number already exists") from exc
+        await UserRepository._delete_cache(UserRepository._get_user_email_cache_key(email))
         await UserRepository._clear_user_list_caches()
 
         logger.info(f"User created: {user.id} - {user.email}")
@@ -158,23 +162,12 @@ class UserRepository:
         cache_key = UserRepository._get_user_cache_key(user_id)
         cached_data = await UserRepository._get_from_cache(cache_key)
         
-        if cached_data:
-            if cached_data == UserRepository.NULL_CACHE_VALUE:
-                return None
-            logger.debug(f"Cache hit for user: {user_id}")
-            user = User.model_validate(cached_data)
-            setattr(user, '_from_cache', True)
-            return user
+        if cached_data == UserRepository.NULL_CACHE_VALUE:
+            return None
         
         try:
             user = await User.get(ObjectId(user_id))
-            if user:
-                await UserRepository._set_cache(
-                    cache_key, 
-                    user.dict(exclude={"hashed_password"}),
-                    UserRepository.USER_CACHE_TTL
-                )
-            else:
+            if not user:
                 await UserRepository._set_cache(
                     cache_key, 
                     UserRepository.NULL_CACHE_VALUE, 
@@ -189,15 +182,12 @@ class UserRepository:
     @monitor_db_operation("user_get_by_email")
     @monitor_cache_operation("user_get_by_email")
     async def get_user_by_email(email: str) -> Optional[User]:
+        email = str(email).strip().lower()
         cache_key = UserRepository._get_user_email_cache_key(email)
         cached = await UserRepository._get_from_cache(cache_key)
 
-        if cached:
-            if cached == UserRepository.NULL_CACHE_VALUE:
-                return None            
-            user = User.model_validate(cached)
-            setattr(user, "_from_cache", True)
-            return user
+        if cached == UserRepository.NULL_CACHE_VALUE:
+            return None
 
         user = await User.find_one(User.email == email)
         if not user:
@@ -208,9 +198,6 @@ class UserRepository:
             )
             return None
 
-        data = user.model_dump(exclude={"hashed_password"})
-        await UserRepository._set_cache(cache_key, data, UserRepository.USER_CACHE_TTL)
-
         return user
     
     @staticmethod
@@ -220,28 +207,17 @@ class UserRepository:
         cache_key = UserRepository._get_user_username_cache_key(username)
         cached_data = await UserRepository._get_from_cache(cache_key)
         
-        if cached_data:
-            logger.debug(f"Cache hit for user username: {username}")
-            user = User.model_validate(cached_data)
-            setattr(user, '_from_cache', True)
-            return user
+        if cached_data == UserRepository.NULL_CACHE_VALUE:
+            return None
         
         try:
             user = await User.find_one({"username": username})
-            if user:
-                id_cache_key = UserRepository._get_user_cache_key(str(user.id))
-                await UserRepository._set_cache(
-                    id_cache_key,
-                    user.dict(exclude={"hashed_password"}),
-                    UserRepository.USER_CACHE_TTL
-                )
-                
+            if not user:
                 await UserRepository._set_cache(
                     cache_key,
-                    user.dict(exclude={"hashed_password"}),
-                    UserRepository.USER_CACHE_TTL
+                    UserRepository.NULL_CACHE_VALUE,
+                    UserRepository.NULL_CACHE_TTL,
                 )
-                logger.debug(f"Cache set for user username: {username}")
             return user
         except Exception as e:
             logger.error(f"Error getting user by username {username}: {e}")
@@ -256,9 +232,6 @@ class UserRepository:
                 return None
             
             update_dict = update_data.model_dump(exclude_unset=True, exclude={"password"})
-            
-            if update_data.password:
-                update_dict["hashed_password"] = UserRepository._hash_password(update_data.password)
             
             for field, value in update_dict.items():
                 setattr(user, field, value)
@@ -343,29 +316,16 @@ class UserRepository:
         sort_desc: bool = True
     ) -> Tuple[List[User], int]:
         filter_dict = filters.model_dump(exclude_unset=True) if filters else {}
-        cache_key = await UserRepository._get_user_list_cache_key(page, size, filter_dict)
-        cached_data = await UserRepository._get_from_cache(cache_key)
-        
-        if cached_data:
-            logger.debug(f"Cache hit for user list: page={page}, size={size}")
-            users = [User.model_validate(item) for item in cached_data.get("users", [])]
-            total = cached_data.get("total", 0)
-            for user in users:
-                setattr(user, '_from_cache', True)
-            return users, total
-        
         try:
             query = {"is_active": True}
             
             if filters:
                 if filters.email:
-                    query["email"] = {"$regex": filters.email, "$options": "i"}
+                    query["email"] = {"$regex": re.escape(filters.email), "$options": "i"}
                 if filters.full_name:
-                    query["full_name"] = {"$regex": filters.full_name, "$options": "i"}
-                if filters.full_name:
-                    query["full_name"] = {"$regex": filters.full_name, "$options": "i"}
+                    query["full_name"] = {"$regex": re.escape(filters.full_name), "$options": "i"}
                 if filters.phone:
-                    query["phone"] = {"$regex": filters.phone, "$options": "i"}
+                    query["phone_number"] = {"$regex": re.escape(filters.phone), "$options": "i"}
                 if filters.is_verified is not None:
                     query["is_verified"] = filters.is_verified
                 if filters.role:
@@ -376,25 +336,15 @@ class UserRepository:
             sort_direction = -1 if sort_desc else 1
             cursor = User.find(query).sort([(sort_by, sort_direction)])
             
+            size = min(size, settings.MAX_PAGE_SIZE)
             skip = (page - 1) * size
             users = await cursor.skip(skip).limit(size).to_list()
-            
-            cache_data = {
-                "users": [user.dict(exclude={"hashed_password"}) for user in users],
-                "total": total
-            }
-            await UserRepository._set_cache(
-                cache_key, 
-                cache_data, 
-                UserRepository.USER_LIST_CACHE_TTL
-            )
-            logger.debug(f"Cache set for user list: page={page}, size={size}")
-            
+
             return users, total
             
         except Exception as e:
             logger.error(f"Error listing users: {e}", exc_info=True)
-            return [], 0
+            raise
     
     @staticmethod
     @monitor_db_operation("user_search")
@@ -404,22 +354,11 @@ class UserRepository:
         skip: int = 0,
         limit: int = 20
     ) -> Tuple[List[User], int]:
-        cache_key = UserRepository._get_user_search_cache_key(search_term, skip, limit)
-        cached_data = await UserRepository._get_from_cache(cache_key)
-        
-        if cached_data:
-            logger.debug(f"Cache hit for user search: {search_term}")
-            users = [User.model_validate(item) for item in cached_data.get("users", [])]
-            total = cached_data.get("total", 0)
-            for user in users:
-                setattr(user, '_from_cache', True)
-            return users, total
-        
         try:
             if not search_term or len(search_term.strip()) < 2:
                 return [], 0
             
-            search_term = search_term.strip()
+            search_term = re.escape(search_term.strip()[:100])
             
             query = {
                 "is_active": True,
@@ -427,31 +366,21 @@ class UserRepository:
                     {"email": {"$regex": search_term, "$options": "i"}},
                     {"username": {"$regex": search_term, "$options": "i"}},
                     {"full_name": {"$regex": search_term, "$options": "i"}},
-                    {"phone": {"$regex": search_term, "$options": "i"}},
+                    {"phone_number": {"$regex": search_term, "$options": "i"}},
                 ]
             }
             
             total = await User.find(query).count()
             
+            limit = min(limit, settings.MAX_PAGE_SIZE)
             cursor = User.find(query).sort([("created_at", -1)])
             users = await cursor.skip(skip).limit(limit).to_list()
-            
-            cache_data = {
-                "users": [user.dict(exclude={"hashed_password"}) for user in users],
-                "total": total
-            }
-            await UserRepository._set_cache(
-                cache_key, 
-                cache_data, 
-                UserRepository.USER_SEARCH_CACHE_TTL
-            )
-            logger.debug(f"Cache set for user search: {search_term}")
-            
+
             return users, total
             
         except Exception as e:
             logger.error(f"Error searching users: {e}", exc_info=True)
-            return [], 0
+            raise
     
     
     @staticmethod
@@ -517,11 +446,14 @@ class UserRepository:
                 "email": user.email,
                 "created_at": datetime.now().isoformat()
             }
-            await UserRepository._set_cache(
+            stored = await UserRepository._set_cache(
                 token_cache_key, 
                 token_data, 
                 UserRepository.RESET_TOKEN_TTL
             )
+            if not stored:
+                logger.warning("Password reset token could not be stored")
+                return None
             
             logger.info(f"Password reset token generated for user: {email}")
             return token
@@ -559,7 +491,16 @@ class UserRepository:
     @monitor_db_operation("user_reset_password")
     async def reset_password(token: str, new_password: str) -> bool:
         try:
-            user_id = await UserRepository.validate_password_reset_token(token)
+            if not is_redis_available():
+                return False
+            import json
+
+            token_cache_key = UserRepository._get_reset_token_cache_key(token)
+            token_payload = await get_redis().getdel(token_cache_key)
+            if not token_payload:
+                return False
+            token_data = json.loads(token_payload)
+            user_id = token_data.get("user_id")
             if not user_id:
                 return False
             
@@ -568,11 +509,10 @@ class UserRepository:
                 return False
             
             user.hashed_password=get_password_hash(new_password)
+            user.auth_version += 1
             user.updated_at = now_utc()
             await user.save()
             
-            token_cache_key = UserRepository._get_reset_token_cache_key(token)
-            await UserRepository._delete_cache(token_cache_key)
             await UserRepository._invalidate_user_caches(user)
             await UserRepository._invalidate_user_sessions(user_id)
             
@@ -600,6 +540,7 @@ class UserRepository:
                 return False
             
             user.hashed_password=get_password_hash(new_password)
+            user.auth_version += 1
             user.updated_at = now_utc()
             await user.save()
             await UserRepository._invalidate_user_caches(user)
@@ -796,9 +737,9 @@ class UserRepository:
         return None
     
     @staticmethod
-    async def _set_cache(key: str, data: Any, ttl: Optional[int] = None) -> None:
+    async def _set_cache(key: str, data: Any, ttl: Optional[int] = None) -> bool:
         if not is_redis_available():
-            return
+            return False
         try:
             redis_client = get_redis()
             import json
@@ -818,8 +759,10 @@ class UserRepository:
                 effective_ttl or UserRepository.USER_CACHE_TTL, 
                 value_to_store
             )
+            return True
         except Exception as e:
             logger.warning(f"Cache set error for key {key}: {e}")
+            return False
     
     @staticmethod
     async def _delete_cache(key: str) -> None:
@@ -872,13 +815,9 @@ class UserRepository:
             return
         
         try:
-            redis_client = get_redis()
-            pattern = f"session:{user_id}:*"
-            keys = await redis_client.keys(pattern)
-            
-            if keys:
-                await redis_client.delete(*keys)
-                logger.debug(f"Invalidated {len(keys)} session keys for user: {user_id}")
+            pattern = shared_cache.cache_key("session", user_id, "*")
+            await shared_cache.delete_pattern(pattern)
+            logger.debug(f"Invalidated session keys for user: {user_id}")
             
         except Exception as e:
             logger.warning(f"Error invalidating user sessions for {user_id}: {e}")
@@ -889,13 +828,9 @@ class UserRepository:
             return
         
         try:
-            redis_client = get_redis()
-            pattern = f"{UserRepository.CACHE_PREFIX}*"
-            keys = await redis_client.keys(pattern)
-            
-            if keys:
-                await redis_client.delete(*keys)
-                logger.info(f"Cleared all user cache ({len(keys)} keys)")
+            pattern = f"{UserRepository.CACHE_PREFIX}:*"
+            await shared_cache.delete_pattern(pattern)
+            logger.info("Cleared all user cache")
             
         except Exception as e:
             logger.warning(f"Error clearing user cache: {e}")

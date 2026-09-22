@@ -1,6 +1,6 @@
 from typing import List, Optional, Union, Dict, Any
 from pathlib import Path
-from pydantic import Field, field_validator, ConfigDict, SecretStr, computed_field
+from pydantic import Field, field_validator, model_validator, ConfigDict, SecretStr, computed_field
 from pydantic_settings import BaseSettings
 import os
 import json
@@ -15,6 +15,10 @@ class Settings(BaseSettings):
     ENVIRONMENT: str = "development"
     HOST: str = "0.0.0.0"
     PORT: int = 8000
+    TRUSTED_PROXY_IPS: str = Field(
+        default="127.0.0.1",
+        description="Comma-separated proxy IPs allowed to supply forwarded headers",
+    )
 
     WORKERS: int = Field(default=1, description="Number of worker processes")
     @computed_field
@@ -55,16 +59,28 @@ class Settings(BaseSettings):
             else:
                 return f"{uri}/{db_name}"
 
-    PASSWORD_MIN_LENGTH: int = Field(default=6, description="pw minimum size")
-    PASSWORD_MAX_LENGTH: int = Field(default=40, description="pw maximum size")
+    PASSWORD_MIN_LENGTH: int = Field(default=8, ge=8, le=64, description="Password minimum length")
+    PASSWORD_MAX_LENGTH: int = Field(default=72, ge=32, le=256, description="Password maximum length")
     OTP_EXPIRY_MINUTES: int= Field(default=30, description="OTP expiry")
-    API_KEY_HEADER:str
+    API_KEY_HEADER: str = "X-API-Key"
     
     REDIS_URL: str = Field(default="redis://localhost:6379/0", description="Redis connection URL")
     REDIS_MAX_CONNECTIONS: int = Field(default=10, description="Maximum Redis connections in pool")
     REDIS_SOCKET_TIMEOUT: int = Field(default=5, description="Redis socket timeout in seconds")
     REDIS_SOCKET_CONNECT_TIMEOUT: int = Field(default=5, description="Redis connection timeout in seconds")
     REDIS_CACHE_TTL: int = Field(default=3600, description="Default Redis cache TTL in seconds (1 hour)")
+    REDIS_KEY_PREFIX: str = Field(default="resume-screening", description="Namespace for application Redis keys")
+    CANDIDATE_CACHE_TTL: int = Field(default=300, ge=30, le=3600)
+    APPLICATION_CACHE_TTL: int = Field(default=120, ge=30, le=1800)
+    SCORECARD_CACHE_TTL: int = Field(default=600, ge=30, le=3600)
+    AUTHZ_CACHE_TTL: int = Field(default=60, ge=10, le=300)
+    IDEMPOTENCY_TTL: int = Field(default=86400, ge=60, le=604800)
+    REDIS_QUEUE_MAX_LENGTH: int = Field(default=10000, ge=100, le=1000000)
+    QUEUE_REDELIVERY_SECONDS: int = Field(default=600, ge=60, le=86400)
+    MAINTENANCE_INTERVAL_SECONDS: int = Field(default=60, ge=15, le=3600)
+    MAX_PAGE_SIZE: int = Field(default=100, ge=10, le=500)
+    AUDIT_LOG_RETENTION_DAYS: int = Field(default=90, ge=7, le=3650)
+    AUDIT_CRITICAL_RETENTION_DAYS: int = Field(default=365, ge=30, le=3650)
 
     PROJECT_ROOT_DIR: Optional[Path] = Field(default=None, description="Override for project root, typically in Docker")
 
@@ -84,9 +100,17 @@ class Settings(BaseSettings):
     UPLOAD_BASE_DIR: Path = Field(default=Path("uploads"), description="Base directory for uploads")
     MAX_UPLOAD_SIZE: int = Field(default=10 * 1024 * 1024, description="Maximum upload size in bytes (10MB)")
     MAX_RESUME_SIZE: int = Field(default=5 * 1024 * 1024, description="Maximum resume size in bytes (5MB)")
+    MAX_DOCX_UNCOMPRESSED_SIZE: int = Field(
+        default=50 * 1024 * 1024,
+        description="Maximum total uncompressed DOCX content size",
+    )
+    MAX_DOCX_ENTRIES: int = Field(default=1000, ge=10, le=10000)
     MAX_IMAGE_SIZE: int = Field(default=2 * 1024 * 1024, description="Maximum image size in bytes (2MB)")
     
-    ALLOWED_RESUME_EXTENSIONS: str = Field(default="pdf,docx,doc", description="Allowed resume extensions")
+    ALLOWED_RESUME_EXTENSIONS: str = Field(
+        default="pdf,docx",
+        description="Allowed resume extensions; enable legacy DOC only with malware scanning",
+    )
     ALLOWED_IMAGE_EXTENSIONS: str = Field(default="jpg,jpeg,png,gif", description="Allowed image extensions")
     ALLOWED_DOCUMENT_EXTENSIONS: str = Field(default="pdf,docx,doc,txt,rtf", description="Allowed document extensions")
     
@@ -121,6 +145,8 @@ class Settings(BaseSettings):
     RATE_LIMIT_UPLOAD: str = Field(default="10/hour", description="Upload rate limit")
     RATE_LIMIT_AUTH: str = Field(default="5/minute", description="Authentication rate limit")
     RATE_LIMIT_SCREENING: str = Field(default="20/hour", description="Resume screening rate limit")
+    RATE_LIMIT_WRITE: str = Field(default="30/minute", description="Default authenticated write limit")
+    RATE_LIMIT_READ: str = Field(default="120/minute", description="Default authenticated read limit")
     
     CORS_ORIGINS: str = Field(default="http://localhost:3000,http://localhost:8080", description="CORS allowed origins")
     CORS_ALLOW_CREDENTIALS: bool = Field(default=True, description="Allow CORS credentials")
@@ -142,6 +168,49 @@ class Settings(BaseSettings):
     FIRST_SUPERUSER_PASSWORD: str = Field(default="changethis", description="First superuser password")
     FIRST_SUPERUSER_FULL_NAME: str = Field(default="Admin User", description="First superuser full name")
     CREATE_FIRST_SUPERUSER: bool = Field(default=True, description="Create first superuser on startup")
+
+    @field_validator("DEBUG", mode="before")
+    @classmethod
+    def parse_debug(cls, value: Any) -> Any:
+        if isinstance(value, str):
+            normalized = value.strip().lower()
+            if normalized in {"release", "production", "prod", "off"}:
+                return False
+            if normalized in {"development", "dev", "on"}:
+                return True
+        return value
+
+    @model_validator(mode="after")
+    def validate_production_secrets(self) -> "Settings":
+        if self.ENVIRONMENT == "production":
+            if "SECRET_KEY" not in self.model_fields_set:
+                raise ValueError("SECRET_KEY must be explicitly configured in production")
+            secret_value = self.SECRET_KEY.get_secret_value().strip().lower()
+            if secret_value.startswith(("your-", "replace-", "changeme")):
+                raise ValueError("SECRET_KEY still contains an example placeholder")
+            if self.CREATE_FIRST_SUPERUSER and self.FIRST_SUPERUSER_PASSWORD == "changethis":
+                raise ValueError("FIRST_SUPERUSER_PASSWORD must be changed in production")
+            if self.CREATE_FIRST_SUPERUSER and self.FIRST_SUPERUSER_PASSWORD.lower().startswith(
+                ("changeme", "change-me", "replace-")
+            ):
+                raise ValueError("FIRST_SUPERUSER_PASSWORD still contains an example placeholder")
+            if self.CREATE_FIRST_SUPERUSER and (
+                len(self.FIRST_SUPERUSER_PASSWORD) < self.PASSWORD_MIN_LENGTH
+                or not any(character.isupper() for character in self.FIRST_SUPERUSER_PASSWORD)
+                or not any(character.islower() for character in self.FIRST_SUPERUSER_PASSWORD)
+            ):
+                raise ValueError("FIRST_SUPERUSER_PASSWORD does not meet password requirements")
+            if self.DEBUG:
+                raise ValueError("DEBUG must be disabled in production")
+            if "*" in self.cors_origins_list:
+                raise ValueError("Wildcard CORS origins are not allowed in production")
+            if "*" in self.trusted_proxy_ips_list:
+                raise ValueError("Wildcard trusted proxies are not allowed in production")
+        if self.AUDIT_CRITICAL_RETENTION_DAYS < self.AUDIT_LOG_RETENTION_DAYS:
+            raise ValueError(
+                "AUDIT_CRITICAL_RETENTION_DAYS must be at least AUDIT_LOG_RETENTION_DAYS"
+            )
+        return self
     @field_validator("CORS_ORIGINS", "CORS_ALLOW_METHODS", "CORS_ALLOW_HEADERS", "CORS_EXPOSE_HEADERS", mode="before")
     @classmethod
     def parse_comma_separated(cls, v: Any) -> str:
@@ -214,6 +283,10 @@ class Settings(BaseSettings):
     @property
     def cors_origins_list(self) -> List[str]:
         return [origin.strip() for origin in self.CORS_ORIGINS.split(",") if origin.strip()]
+
+    @property
+    def trusted_proxy_ips_list(self) -> List[str]:
+        return [item.strip() for item in self.TRUSTED_PROXY_IPS.split(",") if item.strip()]
     
     @property
     def allowed_resume_extensions_list(self) -> List[str]:
@@ -375,6 +448,8 @@ class Settings(BaseSettings):
             "upload": self.RATE_LIMIT_UPLOAD,
             "auth": self.RATE_LIMIT_AUTH,
             "screening": self.RATE_LIMIT_SCREENING,
+            "write": self.RATE_LIMIT_WRITE,
+            "read": self.RATE_LIMIT_READ,
         }
     
     model_config = ConfigDict(

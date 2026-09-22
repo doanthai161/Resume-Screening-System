@@ -6,6 +6,7 @@ from app.models.user_actor import UserActor
 from app.schemas.user import UserActorResponse
 from app.schemas.actor import ActorResponse
 from app.core.errors import CustomError, ErrorCodes
+from app.core import cache
 
 class UserActorService:
     @staticmethod
@@ -37,19 +38,16 @@ class UserActorService:
                     status_code=status.HTTP_404_NOT_FOUND
                 )
 
-            user_actor = await UserActorRepository.get_user_actor_by_user(user_id)
+            user_actor = await UserActorRepository.get_user_actor_link(user_id, actor_id)
 
             try:
-                if user_actor:
-                    user_actor.updated_by = ObjectId(updater_id)
-                    user_actor.actor_id = ObjectId(actor_id)
-                    await UserActorRepository.save_user_actor(user_actor)
-                else:
+                if not user_actor:
                     user_actor = await UserActorRepository.create_user_actor(
                         user_id=user_id,
                         actor_id=actor_id,
                         created_by=updater_id
                     )
+                await cache.invalidate_user_authorization(user_id)
             except Exception as exc:
                 if "E11000" in str(exc):
                     raise CustomError(
@@ -144,6 +142,7 @@ class UserActorService:
                 )
 
             await UserActorRepository.delete_user_actor(user_actor)
+            await cache.invalidate_user_authorization(str(user_actor.user_id))
         except CustomError:
             raise
         except Exception as e:

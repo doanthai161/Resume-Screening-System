@@ -4,6 +4,7 @@ from app.repositories.actor_repository import ActorRepository
 from app.schemas.actor import ActorCreate, ActorUpdate
 from app.models.actor import Actor
 from app.core.errors import CustomError, ErrorCodes
+from app.core import cache
 
 class ActorService:
     @staticmethod
@@ -48,7 +49,9 @@ class ActorService:
                     "Actor not found",
                     status_code=status.HTTP_404_NOT_FOUND
                 )
-            return await ActorRepository.update(actor, data)
+            actor = await ActorRepository.update(actor, data)
+            await cache.invalidate_actor_authorization(actor_id)
+            return actor
         except CustomError:
             raise
         except Exception as e:
@@ -89,6 +92,7 @@ class ActorService:
                     status_code=status.HTTP_404_NOT_FOUND
                 )
             await ActorRepository.soft_delete(actor)
+            await cache.invalidate_actor_authorization(actor_id)
         except CustomError:
             raise
         except Exception as e:

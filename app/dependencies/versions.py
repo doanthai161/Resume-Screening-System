@@ -10,6 +10,9 @@ from app.api import (
     user_company,
     register,
     job_requirements,
+    candidates,
+    recruitment,
+    upload,
 )
 
 
@@ -25,3 +28,6 @@ api_router.include_router(companies.router, prefix="/companies", tags=["Companie
 api_router.include_router(company_branches.router, prefix="/company-branches", tags=["Company branches"])
 api_router.include_router(user_company.router, prefix="/user-company-branch", tags=["User Company Branch"])
 api_router.include_router(job_requirements.router, prefix="/job-requirements", tags=["Jobs"])
+api_router.include_router(candidates.router, prefix="/candidates", tags=["Candidates"])
+api_router.include_router(recruitment.router, prefix="/recruitment", tags=["Recruitment"])
+api_router.include_router(upload.router, prefix="/resumes", tags=["Resumes"])

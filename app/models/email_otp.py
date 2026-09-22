@@ -1,14 +1,16 @@
 from beanie import Document, Indexed
-from pydantic import Field, EmailStr
+from pydantic import Field, field_validator
 from datetime import datetime
 from typing import Optional
 from bson import ObjectId
 from app.utils.time import now_utc, is_expired_check
+from pymongo import ASCENDING, DESCENDING, IndexModel
 
 
 class EmailOTP(Document):
     email: str = Field(..., description="Email address")
-    otp_code: str = Field(..., max_length=6, min_length=6)
+    otp_code: Optional[str] = Field(None, max_length=6, min_length=6, description="Legacy plaintext OTP")
+    otp_hash: Optional[str] = Field(None, min_length=64, max_length=64)
     otp_type: str = Field(...)
     expires_at: datetime = Field(...)
     attempts: int = 0
@@ -16,15 +18,18 @@ class EmailOTP(Document):
     is_used: bool = False
     created_at: datetime = Field(default_factory=now_utc)
     updated_at: datetime = Field(default_factory=now_utc)
+
+    @field_validator("email", mode="before")
+    @classmethod
+    def normalize_email(cls, value: str) -> str:
+        return str(value).strip().lower()
+
     class Settings:
         name = "email_otps"
         indexes = [
-            [("email", 1)],
-            [("expires_at", 1)],
-            [("otp_type", 1)],
-            [("is_used", 1)],
-            [("created_at", -1)],
-            [("email", 1), ("otp_type", 1)],
+            IndexModel([("expires_at", ASCENDING)], expireAfterSeconds=0, name="ttl_email_otp"),
+            IndexModel([("email", ASCENDING), ("otp_type", ASCENDING), ("is_used", ASCENDING)]),
+            IndexModel([("created_at", DESCENDING)]),
         ]
 
     class Config:

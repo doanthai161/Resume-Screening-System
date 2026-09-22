@@ -150,6 +150,7 @@ class AuditLog(Document):
             [("event_type", 1), ("timestamp", -1)],
             [("resource_type", 1), ("resource_id", 1)],
             [("timestamp", -1), ("severity", 1)],
+            [("severity", 1), ("created_at", 1)],
         ]
     class Config:
         arbitrary_types_allowed = True

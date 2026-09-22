@@ -168,6 +168,7 @@ async def login(
         raise CustomError(ErrorCodes.INTERNAL, "Login failed", status_code=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 @router.post("/logout", status_code=status.HTTP_200_OK, response_model=ApiResponse[Dict])
+@limiter.limit("10/minute")
 async def logout(
     request: Request,
     current_user: CurrentUser = Depends(get_current_user),
@@ -199,6 +200,7 @@ async def logout(
         return ApiResponse.ok({"message": "Logged out successfully"})
 
 @router.post("/refresh", response_model=ApiResponse[AccessToken])
+@limiter.limit("10/minute")
 async def refresh_token(
     request: Request,
     background_tasks: BackgroundTasks

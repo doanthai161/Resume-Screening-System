@@ -4,6 +4,7 @@ from typing import Optional
 from datetime import datetime
 from app.utils.time import now_utc
 from bson import ObjectId
+from pymongo import ASCENDING, DESCENDING, IndexModel
 
 class UserActor(Document):
     user_id: ObjectId = Field(..., description="ID of the user")
@@ -16,10 +17,13 @@ class UserActor(Document):
     class Settings:
         name = "user_actors"
         indexes = [
-            [("user_id", 1)],
-            [("actor_id", 1)],
-            [("created_at", -1)],
-            [("user_id", 1), ("actor_id", 1)],
+            IndexModel(
+                [("user_id", ASCENDING), ("actor_id", ASCENDING)],
+                unique=True,
+                name="uq_user_actor",
+            ),
+            IndexModel([("actor_id", ASCENDING)]),
+            IndexModel([("created_at", DESCENDING)]),
         ]
 
     class Config:

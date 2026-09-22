@@ -3,12 +3,16 @@ from datetime import datetime, timedelta, timezone
 from typing import Callable, List, Optional, Set, Dict, Any, Union
 from functools import lru_cache
 import logging
+import hashlib
 
 from fastapi import Depends, HTTPException, status, Request
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer, OAuth2PasswordBearer
 from jose import JWTError, jwt
 from passlib.context import CryptContext
-from redis.asyncio import Redis
+try:
+    from redis.asyncio import Redis
+except ImportError:
+    Redis = Any
 
 from app.core.config import settings
 from app.models.user import User
@@ -17,6 +21,7 @@ from app.models.permission import Permission
 from app.models.actor import Actor
 from app.models.actor_permission import ActorPermission
 from app.core.redis import get_redis
+from app.core import cache
 
 logger = logging.getLogger(__name__)
 
@@ -46,7 +51,7 @@ security_bearer = HTTPBearer(
 )
 
 oauth2_scheme = OAuth2PasswordBearer(
-    tokenUrl=f"{settings.API_V1_STR}/auth/login",
+    tokenUrl=f"{settings.API_V1_STR}/register/login",
     scheme_name="OAuth2",
     auto_error=False
 )
@@ -61,6 +66,7 @@ class TokenPayload:
         self.iat: Optional[datetime] = kwargs.get("iat")
         self.exp: Optional[datetime] = kwargs.get("exp")
         self.type: Optional[str] = kwargs.get("type", "access")
+        self.auth_version: int = int(kwargs.get("auth_version", 0))
 
 class TokenPair:
     def __init__(self, access_token: str, refresh_token: str):
@@ -104,6 +110,7 @@ def create_token_pair(user: User, scopes: List[str] = None) -> TokenPair:
         "email": user.email,
         "user_id": str(user.id),
         "scopes": scopes or [],
+        "auth_version": user.auth_version,
     }
     
     access_token = create_access_token(data, token_type="access")
@@ -170,9 +177,11 @@ async def is_token_blacklisted(token: str, redis: Optional[Redis] = None) -> boo
         
         if not redis:
             from app.core.security import _in_memory_blacklist
-            return token in _in_memory_blacklist
+            return hashlib.sha256(token.encode("utf-8")).hexdigest() in _in_memory_blacklist
         
-        token_key = f"blacklist:token:{token}"
+        token_key = cache.cache_key(
+            "blacklist", "token", hashlib.sha256(token.encode("utf-8")).hexdigest()
+        )
         return await redis.exists(token_key) > 0
     except Exception as e:
         logger.error(f"Error checking token blacklist: {e}")
@@ -189,10 +198,12 @@ async def blacklist_token(
         
         if not redis:
             from app.core.security import _in_memory_blacklist
-            _in_memory_blacklist.add(token)
+            _in_memory_blacklist.add(hashlib.sha256(token.encode("utf-8")).hexdigest())
             return
         
-        token_key = f"blacklist:token:{token}"
+        token_key = cache.cache_key(
+            "blacklist", "token", hashlib.sha256(token.encode("utf-8")).hexdigest()
+        )
         expire_seconds = expires_in or settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60
         
         await redis.setex(token_key, expire_seconds, "1")
@@ -200,12 +211,38 @@ async def blacklist_token(
     except Exception as e:
         logger.error(f"Error blacklisting token: {e}")
 
+
+async def consume_refresh_token(token: str, expires_in: Optional[int] = None) -> bool:
+    """Atomically mark a refresh token as consumed.
+
+    The SET NX operation closes the race where two concurrent refresh requests
+    both pass a separate blacklist check before either request stores the key.
+    """
+    digest = hashlib.sha256(token.encode("utf-8")).hexdigest()
+    redis = get_redis()
+    if not redis:
+        if settings.is_production:
+            logger.error("Redis is unavailable; refusing refresh-token rotation")
+            return False
+        if digest in _in_memory_blacklist:
+            return False
+        _in_memory_blacklist.add(digest)
+        return True
+
+    token_key = cache.cache_key("blacklist", "token", digest)
+    expire_seconds = expires_in or settings.REFRESH_TOKEN_EXPIRE_DAYS * 24 * 60 * 60
+    try:
+        return bool(await redis.set(token_key, "1", ex=max(1, expire_seconds), nx=True))
+    except Exception:
+        logger.exception("Could not atomically rotate refresh token")
+        return False
+
 async def blacklist_token_by_jti(jti: str, expires_in: Optional[int] = None, redis: Optional[Redis] = None):
     try:
         if not redis:
             redis = get_redis()
         
-        jti_key = f"blacklist:jti:{jti}"
+        jti_key = cache.cache_key("blacklist", "jti", jti)
         expire_seconds = expires_in or settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60
         
         await redis.setex(jti_key, expire_seconds, "1")
@@ -217,16 +254,19 @@ class CurrentUser:
     def __init__(
         self, 
         user: User, 
-        actors: List[Actor], 
-        permissions: List[Permission],
-        token_payload: Optional[TokenPayload] = None
+        actors: Optional[List[Actor]] = None,
+        permissions: Optional[List[Permission]] = None,
+        token_payload: Optional[TokenPayload] = None,
+        actor_names: Optional[Set[str]] = None,
+        permission_names: Optional[Set[str]] = None,
+        **_: Any,
     ):
         self.user = user
-        self.actors = actors
-        self.permissions = permissions
+        self.actors = actors or []
+        self.permissions = permissions or []
         self.token_payload = token_payload
-        self._permission_names = {perm.name for perm in permissions}
-        self._actor_names = {actor.name for actor in actors}
+        self._permission_names = permission_names or {perm.name for perm in self.permissions}
+        self._actor_names = actor_names or {actor.name for actor in self.actors}
         self._scopes = set(token_payload.scopes if token_payload else [])
     
     def __getattr__(self, item):
@@ -242,7 +282,7 @@ class CurrentUser:
     
     @property
     def is_admin(self) -> bool:
-        return settings.ADMIN_ROLE_NAME in self._actor_names
+        return self.is_superuser or settings.ADMIN_ROLE_NAME in self._actor_names
     
     @property
     def is_recruiter(self) -> bool:
@@ -257,13 +297,13 @@ class CurrentUser:
         return self.user.is_superuser if hasattr(self.user, 'is_superuser') else False
     
     def has_permission(self, permission: str) -> bool:
-        return permission in self._permission_names
+        return self.is_superuser or permission in self._permission_names
     
     def has_any_permission(self, *permissions: str) -> bool:
-        return any(perm in self._permission_names for perm in permissions)
+        return self.is_superuser or any(perm in self._permission_names for perm in permissions)
     
     def has_all_permissions(self, *permissions: str) -> bool:
-        return all(perm in self._permission_names for perm in permissions)
+        return self.is_superuser or all(perm in self._permission_names for perm in permissions)
     
     def has_scope(self, scope: str) -> bool:
         return scope in self._scopes
@@ -290,14 +330,6 @@ async def get_token_from_request(
     
     if token:
         return token
-    
-    api_key = request.headers.get(settings.API_KEY_HEADER)
-    if api_key:
-        return api_key
-    
-    api_key = request.query_params.get("api_key")
-    if api_key:
-        return api_key
     
     return None
 
@@ -340,37 +372,48 @@ async def get_current_user(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail=ErrorCode.USER_NOT_FOUND,
         )
+    if token_payload.auth_version != user.auth_version:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail=ErrorCode.TOKEN_EXPIRED,
+        )
     
-    actor_links = await UserActor.find(
-        UserActor.user_id == user.id
-    ).to_list()
-    
-    actor_ids = list({link.actor_id for link in actor_links})
+    authz_key = cache.authorization_key(str(user.id))
+    cached_authz = await cache.get_json(authz_key)
     actors = []
-    if actor_ids:
-        actors = await Actor.find(
-            {"_id": {"$in": actor_ids}, "is_active": True}
-        ).to_list()
-    
-    active_actor_ids = [actor.id for actor in actors]
     permissions = []
-    if active_actor_ids:
-        perm_links = await ActorPermission.find(
-            {"actor_id": {"$in": active_actor_ids}}
-        ).to_list()
-        permission_ids = list({link.permission_id for link in perm_links})
-        if permission_ids:
-            permissions = await Permission.find(
-                {"_id": {"$in": permission_ids}, "is_active": True}
-            ).to_list()
-    
-    logger.info(f"User authenticated: {user.email}, roles: {[a.name for a in actors]}")
-    
+    actor_names: Set[str] = set()
+    permission_names: Set[str] = set()
+    if cached_authz:
+        actor_names = set(cached_authz.get("actors", []))
+        permission_names = set(cached_authz.get("permissions", []))
+    else:
+        actor_links = await UserActor.find(UserActor.user_id == user.id).to_list()
+        actor_ids = list({link.actor_id for link in actor_links})
+        if actor_ids:
+            actors = await Actor.find({"_id": {"$in": actor_ids}, "is_active": True}).to_list()
+        active_actor_ids = [actor.id for actor in actors]
+        if active_actor_ids:
+            perm_links = await ActorPermission.find({"actor_id": {"$in": active_actor_ids}}).to_list()
+            permission_ids = list({link.permission_id for link in perm_links})
+            if permission_ids:
+                permissions = await Permission.find(
+                    {"_id": {"$in": permission_ids}, "is_active": True}
+                ).to_list()
+        actor_names = {actor.name for actor in actors}
+        permission_names = {permission.name for permission in permissions}
+        await cache.set_json(
+            authz_key,
+            {"actors": sorted(actor_names), "permissions": sorted(permission_names)},
+            settings.AUTHZ_CACHE_TTL,
+        )
     return CurrentUser(
         user=user,
         actors=actors,
         permissions=permissions,
-        token_payload=token_payload
+        token_payload=token_payload,
+        actor_names=actor_names,
+        permission_names=permission_names,
     )
 
 async def get_current_active_user(
@@ -384,6 +427,7 @@ async def get_current_active_user(
         )
     return current_user
 
+@lru_cache(maxsize=256)
 def require_permission(permission: str) -> Callable:
     async def permission_dependency(
         current_user: CurrentUser = Depends(get_current_active_user)
@@ -403,6 +447,7 @@ def require_permission(permission: str) -> Callable:
     
     return permission_dependency
 
+@lru_cache(maxsize=256)
 def require_any_permission(*permissions: str) -> Callable:
     async def any_permission_dependency(
         current_user: CurrentUser = Depends(get_current_active_user)
@@ -447,7 +492,7 @@ def require_role(role_name: str) -> Callable:
     ) -> CurrentUser:
         from app.dependencies.error_code import ErrorCode
         
-        if role_name not in current_user._actor_names:
+        if not current_user.is_superuser and role_name not in current_user._actor_names:
             logger.warning(
                 f"Role denied for user {current_user.email}. "
                 f"Required role: {role_name}, Has roles: {current_user._actor_names}"
@@ -469,26 +514,6 @@ def require_recruiter() -> Callable:
 def require_candidate() -> Callable:
     return require_role(settings.CANDIDATE_ROLE_NAME)
 
-async def validate_api_key(api_key: str) -> Optional[User]:
-    """Validate API key and return associated user"""
-    # Implement API key validation logic
-    # This could check against a database of API keys
-    # For now, return None (to be implemented)
-    return None
-
-async def get_current_api_user(
-    request: Request,
-    api_key: Optional[str] = Depends(get_token_from_request)
-) -> Optional[User]:
-    if not api_key:
-        return None
-    
-    user = await validate_api_key(api_key)
-    if not user or not user.is_active:
-        return None
-    
-    return user
-
 def get_client_identifier(request: Request) -> str:
     auth_header = request.headers.get("Authorization")
     if auth_header and auth_header.startswith("Bearer "):
@@ -497,11 +522,9 @@ def get_client_identifier(request: Request) -> str:
         if payload and payload.user_id:
             return f"user:{payload.user_id}"
     
-    forwarded = request.headers.get("X-Forwarded-For")
-    if forwarded:
-        ip = forwarded.split(",")[0]
-    else:
-        ip = request.client.host if request.client else "unknown"
+    # Do not trust X-Forwarded-For unless a trusted-proxy middleware has
+    # validated it. An attacker can otherwise choose the rate-limit key.
+    ip = request.client.host if request.client else "unknown"
     
     return f"ip:{ip}"
 

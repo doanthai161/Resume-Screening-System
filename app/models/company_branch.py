@@ -4,6 +4,7 @@ from datetime import datetime
 from app.utils.time import now_utc
 from bson import ObjectId
 from typing import Optional, List
+from pymongo import ASCENDING, DESCENDING, IndexModel
 class CompanyBranch(Document):
     company_id: ObjectId = Field(..., description="ID of the parent company")
     bussiness_type: str = Field(..., description="Type of business the branch is involved in")
@@ -27,14 +28,15 @@ class CompanyBranch(Document):
     class Settings:
         name = "company_branches"
         indexes = [
-            [("company_id", 1)],
-            [("branch_name", 1)],
-            [("city", 1)],
-            [("country", 1)],
-            [("is_active", 1)],
-            [("created_at", -1)],
-            [("company_id", 1), ("is_active", 1)],
-            [("city", 1), ("country", 1)],
+            IndexModel(
+                [("company_id", ASCENDING), ("branch_name", ASCENDING), ("is_active", ASCENDING)],
+                unique=True,
+                name="uq_active_company_branch_name",
+                partialFilterExpression={"is_active": True},
+            ),
+            IndexModel([("company_id", ASCENDING), ("is_active", ASCENDING)]),
+            IndexModel([("city", ASCENDING), ("country", ASCENDING)]),
+            IndexModel([("created_at", DESCENDING)]),
         ]
     class Config:
         arbitrary_types_allowed = True
