@@ -3,6 +3,7 @@ services:
     environment:
       ENVIRONMENT: development
       DEBUG: "true"
+      REFRESH_COOKIE_SECURE: "false"
       WATCHFILES_FORCE_POLLING: "true"
     command:
       - uvicorn

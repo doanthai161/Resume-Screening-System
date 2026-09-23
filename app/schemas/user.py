@@ -136,8 +136,6 @@ class AccessToken(BaseModel):
     access_token: str
     token_type: str = "bearer"
     expires_in: Optional[int] = 0
-    refresh_token: Optional[str] = None
-    refresh_token_expires_in: Optional[int] = 0
     user: Optional[UserResponse] = None
 
 class VerifyOTPResponse(BaseModel):

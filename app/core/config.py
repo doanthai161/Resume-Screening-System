@@ -92,6 +92,17 @@ class Settings(BaseSettings):
     ALGORITHM: str = Field(default="HS256", description="JWT algorithm")
     ACCESS_TOKEN_EXPIRE_MINUTES: int = Field(default=30, description="Access token expiry in minutes")
     REFRESH_TOKEN_EXPIRE_DAYS: int = Field(default=7, description="Refresh token expiry in days")
+    REFRESH_COOKIE_NAME: str = Field(default="refresh_token", min_length=1, max_length=64)
+    CSRF_COOKIE_NAME: str = Field(default="csrf_token", min_length=1, max_length=64)
+    CSRF_HEADER_NAME: str = Field(default="X-CSRF-Token", min_length=1, max_length=64)
+    REFRESH_COOKIE_PATH: str = Field(default="/api/v1/register", min_length=1, max_length=200)
+    CSRF_COOKIE_PATH: str = Field(default="/", min_length=1, max_length=200)
+    REFRESH_COOKIE_DOMAIN: Optional[str] = Field(default=None, max_length=253)
+    REFRESH_COOKIE_SECURE: bool = Field(
+        default=False,
+        description="Require HTTPS when sending refresh and CSRF cookies",
+    )
+    REFRESH_COOKIE_SAMESITE: str = Field(default="lax", description="strict, lax, or none")
     
     BREVO_API_KEY: Optional[SecretStr] = Field(default=None, description="Brevo (Sendinblue) API key")
     BREVO_SENDER_EMAIL: Optional[str] = Field(default=None, description="Default sender email")
@@ -152,7 +163,7 @@ class Settings(BaseSettings):
     CORS_ALLOW_CREDENTIALS: bool = Field(default=True, description="Allow CORS credentials")
     CORS_ALLOW_METHODS: str = Field(default="GET,POST,PUT,DELETE,OPTIONS,PATCH", description="Allowed HTTP methods")
     CORS_ALLOW_HEADERS: str = Field(default="*", description="Allowed HTTP headers")
-    CORS_EXPOSE_HEADERS: str = Field(default="", description="Exposed HTTP headers")
+    CORS_EXPOSE_HEADERS: str = Field(default="X-CSRF-Token", description="Exposed HTTP headers")
     CORS_MAX_AGE: int = Field(default=600, description="CORS max age in seconds")
     
     LOG_LEVEL: str = Field(default="INFO", description="Logging level")
@@ -180,6 +191,14 @@ class Settings(BaseSettings):
                 return True
         return value
 
+    @field_validator("REFRESH_COOKIE_SAMESITE", mode="before")
+    @classmethod
+    def validate_refresh_cookie_samesite(cls, value: Any) -> str:
+        normalized = str(value).strip().lower()
+        if normalized not in {"strict", "lax", "none"}:
+            raise ValueError("REFRESH_COOKIE_SAMESITE must be strict, lax, or none")
+        return normalized
+
     @model_validator(mode="after")
     def validate_production_secrets(self) -> "Settings":
         if self.ENVIRONMENT == "production":
@@ -202,6 +221,8 @@ class Settings(BaseSettings):
                 raise ValueError("FIRST_SUPERUSER_PASSWORD does not meet password requirements")
             if self.DEBUG:
                 raise ValueError("DEBUG must be disabled in production")
+            if not self.REFRESH_COOKIE_SECURE:
+                raise ValueError("REFRESH_COOKIE_SECURE must be enabled in production")
             if "*" in self.cors_origins_list:
                 raise ValueError("Wildcard CORS origins are not allowed in production")
             if "*" in self.trusted_proxy_ips_list:
@@ -210,6 +231,8 @@ class Settings(BaseSettings):
             raise ValueError(
                 "AUDIT_CRITICAL_RETENTION_DAYS must be at least AUDIT_LOG_RETENTION_DAYS"
             )
+        if self.REFRESH_COOKIE_SAMESITE == "none" and not self.REFRESH_COOKIE_SECURE:
+            raise ValueError("SameSite=None cookies must also set Secure")
         return self
     @field_validator("CORS_ORIGINS", "CORS_ALLOW_METHODS", "CORS_ALLOW_HEADERS", "CORS_EXPOSE_HEADERS", mode="before")
     @classmethod

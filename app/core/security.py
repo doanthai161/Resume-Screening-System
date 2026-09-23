@@ -4,6 +4,8 @@ from typing import Callable, List, Optional, Set, Dict, Any, Union
 from functools import lru_cache
 import logging
 import hashlib
+import secrets
+import uuid
 
 from fastapi import Depends, HTTPException, status, Request
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer, OAuth2PasswordBearer
@@ -67,11 +69,21 @@ class TokenPayload:
         self.exp: Optional[datetime] = kwargs.get("exp")
         self.type: Optional[str] = kwargs.get("type", "access")
         self.auth_version: int = int(kwargs.get("auth_version", 0))
+        self.sid: Optional[str] = kwargs.get("sid")
+        self.csrf_hash: Optional[str] = kwargs.get("csrf_hash")
 
 class TokenPair:
-    def __init__(self, access_token: str, refresh_token: str):
+    def __init__(
+        self,
+        access_token: str,
+        refresh_token: str,
+        csrf_token: str,
+        session_id: str,
+    ):
         self.access_token = access_token
         self.refresh_token = refresh_token
+        self.csrf_token = csrf_token
+        self.session_id = session_id
         self.token_type = "bearer"
 
 def create_access_token(
@@ -104,19 +116,39 @@ def create_access_token(
         algorithm=jwt_settings["algorithm"]
     )
 
-def create_token_pair(user: User, scopes: List[str] = None) -> TokenPair:
+def csrf_token_digest(token: str) -> str:
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+
+def create_token_pair(
+    user: User,
+    scopes: Optional[List[str]] = None,
+    *,
+    session_id: Optional[str] = None,
+) -> TokenPair:
+    session_id = session_id or uuid.uuid4().hex
+    csrf_token = secrets.token_urlsafe(32)
     data = {
         "sub": user.email,
         "email": user.email,
         "user_id": str(user.id),
         "scopes": scopes or [],
         "auth_version": user.auth_version,
+        "sid": session_id,
     }
     
     access_token = create_access_token(data, token_type="access")
-    refresh_token = create_access_token(data, token_type="refresh")
+    refresh_token = create_access_token(
+        {**data, "csrf_hash": csrf_token_digest(csrf_token)},
+        token_type="refresh",
+    )
     
-    return TokenPair(access_token=access_token, refresh_token=refresh_token)
+    return TokenPair(
+        access_token=access_token,
+        refresh_token=refresh_token,
+        csrf_token=csrf_token,
+        session_id=session_id,
+    )
 
 def decode_jwt_token(token: str) -> Optional[TokenPayload]:
     jwt_settings = get_jwt_settings()
@@ -235,6 +267,45 @@ async def consume_refresh_token(token: str, expires_in: Optional[int] = None) ->
         return bool(await redis.set(token_key, "1", ex=max(1, expire_seconds), nx=True))
     except Exception:
         logger.exception("Could not atomically rotate refresh token")
+        return False
+
+
+async def is_refresh_session_revoked(session_id: str) -> bool:
+    if not session_id:
+        return True
+    redis = get_redis()
+    if not redis:
+        if settings.is_production:
+            logger.error("Redis is unavailable; refusing refresh-session validation")
+            return True
+        return session_id in _in_memory_revoked_sessions
+
+    key = cache.cache_key("blacklist", "refresh-session", session_id)
+    try:
+        return bool(await redis.exists(key))
+    except Exception:
+        logger.exception("Could not validate refresh session")
+        return True
+
+
+async def revoke_refresh_session(session_id: str, expires_in: Optional[int] = None) -> bool:
+    if not session_id:
+        return False
+    redis = get_redis()
+    if not redis:
+        if settings.is_production:
+            logger.error("Redis is unavailable; could not revoke refresh session")
+            return False
+        _in_memory_revoked_sessions.add(session_id)
+        return True
+
+    key = cache.cache_key("blacklist", "refresh-session", session_id)
+    ttl = expires_in or settings.REFRESH_TOKEN_EXPIRE_DAYS * 24 * 60 * 60
+    try:
+        await redis.setex(key, max(1, ttl), "1")
+        return True
+    except Exception:
+        logger.exception("Could not revoke refresh session")
         return False
 
 async def blacklist_token_by_jti(jti: str, expires_in: Optional[int] = None, redis: Optional[Redis] = None):
@@ -358,6 +429,16 @@ async def get_current_user(
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail=ErrorCode.INVALID_CREDENTIALS,
+        )
+    if token_payload.type != "access":
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail=ErrorCode.INVALID_TOKEN_TYPE,
+        )
+    if not token_payload.sid or await is_refresh_session_revoked(token_payload.sid):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail=ErrorCode.TOKEN_EXPIRED,
         )
     
     if token_payload.exp and datetime.fromtimestamp(token_payload.exp, tz=timezone.utc) < datetime.now(timezone.utc):
@@ -574,3 +655,4 @@ async def log_security_event(
 
 # In-memory fallback for blacklist (when Redis is not available)
 _in_memory_blacklist: Set[str] = set()
+_in_memory_revoked_sessions: Set[str] = set()

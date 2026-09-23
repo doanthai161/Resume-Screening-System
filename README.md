@@ -239,6 +239,39 @@ Base path: `/api/v1`
 | Recruitment | `/api/v1/recruitment` | Applications, stages, scorecards, screenings, reviews |
 | Resumes | `/api/v1/resumes` | Upload và parse runs |
 
+### Authentication cookie và CSRF
+
+`POST /api/v1/register/login` và `POST /api/v1/register/verify-otp` chỉ trả access token trong JSON. Refresh token được đặt vào cookie `HttpOnly`; CSRF token được đặt vào cookie riêng và đồng thời trả qua response header `X-CSRF-Token`.
+
+Frontend phải dùng `credentials: "include"`, giữ access token và CSRF token trong memory, sau đó gửi CSRF header khi refresh hoặc logout:
+
+```javascript
+const loginResponse = await fetch("http://localhost:8000/api/v1/register/login", {
+  method: "POST",
+  credentials: "include",
+  headers: { "Content-Type": "application/json" },
+  body: JSON.stringify({ email, password }),
+});
+
+const loginPayload = await loginResponse.json();
+let accessToken = loginPayload.data.access_token;
+let csrfToken = loginResponse.headers.get("X-CSRF-Token");
+
+const refreshResponse = await fetch("http://localhost:8000/api/v1/register/refresh", {
+  method: "POST",
+  credentials: "include",
+  headers: { "X-CSRF-Token": csrfToken },
+});
+
+const refreshPayload = await refreshResponse.json();
+accessToken = refreshPayload.data.access_token;
+csrfToken = refreshResponse.headers.get("X-CSRF-Token");
+```
+
+Logout cũng cần `credentials: "include"` và `X-CSRF-Token`. Có thể gửi access token hiện tại trong `Authorization: Bearer ...`; backend sẽ revoke toàn bộ refresh session bằng `sid`, đánh dấu refresh token hiện tại đã dùng và blacklist access token tương ứng.
+
+Mỗi lần refresh sẽ rotate cả refresh token và CSRF token. Nếu refresh token cũ bị dùng lại, toàn bộ session family bị revoke. Refresh token không được chấp nhận làm Bearer token cho các protected endpoint.
+
 Các write endpoint quan trọng như tạo application, đổi stage, tạo scorecard, screening và parse run yêu cầu header:
 
 ```http
@@ -252,7 +285,7 @@ Xem đầy đủ tại [`.env.example`](.env.example) và [`app/core/config.py`]
 | Nhóm | Biến tiêu biểu |
 | --- | --- |
 | Application | `APP_NAME`, `ENVIRONMENT`, `DEBUG`, `HOST`, `PORT` |
-| Security | `SECRET_KEY`, `ACCESS_TOKEN_EXPIRE_MINUTES`, `REFRESH_TOKEN_EXPIRE_DAYS` |
+| Security | `SECRET_KEY`, `ACCESS_TOKEN_EXPIRE_MINUTES`, `REFRESH_TOKEN_EXPIRE_DAYS`, `REFRESH_COOKIE_*`, `CSRF_*` |
 | MongoDB | `MONGODB_URI`, `MONGODB_DB_NAME`, `MONGO_*` |
 | Redis | `REDIS_URL`, `REDIS_PASSWORD`, `REDIS_KEY_PREFIX`, các TTL |
 | Queue | `REDIS_QUEUE_MAX_LENGTH`, `QUEUE_REDELIVERY_SECONDS` |
@@ -267,7 +300,8 @@ Storage mặc định là `STORAGE_TYPE=local`. Code có cấu hình nền cho S
 ## Các lớp bảo vệ hiện có
 
 - Hash mật khẩu bằng Argon2 và giới hạn độ dài đầu vào.
-- JWT access/refresh token và token blacklist.
+- Access JWT trong response; refresh JWT trong HttpOnly cookie với rotation và session revocation.
+- Double-submit CSRF cookie/header được ràng buộc bằng hash trong refresh JWT.
 - OTP được hash, có thời hạn và rate limit.
 - RBAC kết hợp kiểm tra tenant/company ở service layer.
 - Authorization membership không cache để tránh quyền cũ còn hiệu lực sau khi bị thu hồi.

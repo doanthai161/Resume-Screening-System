@@ -13,6 +13,7 @@ services:
       - REDIS_URL=redis://:${REDIS_PASSWORD:?REDIS_PASSWORD is required}@redis:6379/0
       - ENVIRONMENT=production
       - DEBUG=false
+      - REFRESH_COOKIE_SECURE=true
     depends_on:
       mongo:
         condition: service_healthy

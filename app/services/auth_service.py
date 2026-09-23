@@ -1,6 +1,6 @@
 from typing import Optional, Tuple, Dict, Any
 import secrets
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 from bson import ObjectId
 from fastapi import status, BackgroundTasks, Request
 from pymongo.errors import DuplicateKeyError
@@ -16,6 +16,9 @@ from app.core.security import (
     create_token_pair,
     decode_jwt_token,
     consume_refresh_token,
+    is_refresh_session_revoked,
+    revoke_refresh_session,
+    blacklist_token,
 )
 from app.core.errors import CustomError, ErrorCodes
 from app.dependencies.error_code import ErrorCode
@@ -256,6 +259,14 @@ class AuthService:
         success = await UserRepository.verify_user(str(user.id))
         if not success:
             raise CustomError(ErrorCodes.INTERNAL, "Failed to verify user", status_code=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+        user = await UserRepository.get_user_by_email(data.email)
+        if not user or not user.is_active or not user.is_verified:
+            raise CustomError(
+                ErrorCodes.INTERNAL,
+                "Verified user could not be reloaded",
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
         
         token_pair = create_token_pair(
             user=user,
@@ -420,8 +431,15 @@ class AuthService:
         background_tasks: BackgroundTasks
     ) -> Tuple[Any, User]:
         token_payload = decode_jwt_token(token)
-        if not token_payload or token_payload.type != "refresh":
+        if not token_payload or token_payload.type != "refresh" or not token_payload.sid:
             raise CustomError(ErrorCodes.UNAUTHORIZED, ErrorCode.INVALID_TOKEN_TYPE, status_code=status.HTTP_401_UNAUTHORIZED)
+
+        if await is_refresh_session_revoked(token_payload.sid):
+            raise CustomError(
+                ErrorCodes.UNAUTHORIZED,
+                ErrorCode.TOKEN_EXPIRED,
+                status_code=status.HTTP_401_UNAUTHORIZED,
+            )
         
         user = await UserRepository.get_user_by_email(token_payload.email)
         if not user or not user.is_active:
@@ -435,20 +453,24 @@ class AuthService:
 
         remaining_seconds = None
         if token_payload.exp:
-            from datetime import datetime, timezone
-
             remaining_seconds = max(
                 1,
                 int(token_payload.exp - datetime.now(timezone.utc).timestamp()),
             )
         if not await consume_refresh_token(token, remaining_seconds):
+            # Reuse of any token in a rotation family revokes the entire session.
+            await revoke_refresh_session(token_payload.sid)
             raise CustomError(
                 ErrorCodes.UNAUTHORIZED,
                 ErrorCode.TOKEN_EXPIRED,
                 status_code=status.HTTP_401_UNAUTHORIZED,
             )
         
-        token_pair = create_token_pair(user=user, scopes=token_payload.scopes or [])
+        token_pair = create_token_pair(
+            user=user,
+            scopes=token_payload.scopes or [],
+            session_id=token_payload.sid,
+        )
         
         background_tasks.add_task(logger.info, f"Token refreshed for user: {user.email}")
         
@@ -464,3 +486,70 @@ class AuthService:
         )
         
         return token_pair, user
+
+    @staticmethod
+    async def logout(
+        refresh_token: str,
+        access_token: Optional[str],
+        request: Request,
+        background_tasks: Optional[BackgroundTasks],
+    ) -> Optional[User]:
+        refresh_payload = decode_jwt_token(refresh_token)
+        if (
+            not refresh_payload
+            or refresh_payload.type != "refresh"
+            or not refresh_payload.sid
+        ):
+            raise CustomError(
+                ErrorCodes.UNAUTHORIZED,
+                ErrorCode.INVALID_REFRESH_TOKEN,
+                status_code=status.HTTP_401_UNAUTHORIZED,
+            )
+
+        remaining_seconds = settings.REFRESH_TOKEN_EXPIRE_DAYS * 24 * 60 * 60
+        if refresh_payload.exp:
+            remaining_seconds = max(
+                1,
+                int(refresh_payload.exp - datetime.now(timezone.utc).timestamp()),
+            )
+
+        if not await revoke_refresh_session(refresh_payload.sid, remaining_seconds):
+            raise CustomError(
+                ErrorCodes.INTERNAL,
+                "Could not revoke refresh session",
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            )
+
+        # Mark the current refresh token consumed as defense in depth. The
+        # session revocation above remains authoritative for the whole family.
+        await consume_refresh_token(refresh_token, remaining_seconds)
+
+        if access_token:
+            access_payload = decode_jwt_token(access_token)
+            if (
+                access_payload
+                and access_payload.type == "access"
+                and access_payload.sid == refresh_payload.sid
+            ):
+                access_remaining = settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60
+                if access_payload.exp:
+                    access_remaining = max(
+                        1,
+                        int(access_payload.exp - datetime.now(timezone.utc).timestamp()),
+                    )
+                await blacklist_token(access_token, access_remaining)
+
+        user = await UserRepository.get_user_by_email(refresh_payload.email)
+        if background_tasks:
+            background_tasks.add_task(
+                log_security_event,
+                event_type=AuditEventType.USER_LOGOUT,
+                event_name="logout",
+                user_id=str(user.id) if user else refresh_payload.user_id,
+                email=user.email if user else refresh_payload.email,
+                ip_address=request.client.host if request.client else None,
+                user_agent=request.headers.get("user-agent"),
+                details={"session_id": refresh_payload.sid},
+                success=True,
+            )
+        return user

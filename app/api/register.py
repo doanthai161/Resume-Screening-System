@@ -1,5 +1,5 @@
-from fastapi import APIRouter, Depends, HTTPException, status, BackgroundTasks, Request
-from typing import Optional, Dict
+from fastapi import APIRouter, HTTPException, status, BackgroundTasks, Header, Request, Response
+from typing import Dict, Optional
 
 from app.schemas.user import (
     AccessToken,
@@ -11,16 +11,32 @@ from app.schemas.user import (
 )
 from app.schemas.email_otp import RequestOTPRequest
 from app.schemas.response import ApiResponse
-from app.core.security import get_current_user, CurrentUser, get_token_from_request, blacklist_token
+from app.core.auth_cookies import clear_auth_cookies, set_auth_cookies, validate_refresh_csrf
 from app.core.errors import CustomError, ErrorCodes
 from app.logs.logging_config import logger
 from app.core.rate_limiter import limiter
-from app.models.audit_log import AuditEventType
+from app.core.config import settings
 
-# Import the new AuthService
-from app.services.auth_service import AuthService, log_security_event
+from app.services.auth_service import AuthService
 
 router = APIRouter()
+
+
+def _access_token_response(token_pair, user: UserResponse) -> AccessToken:
+    return AccessToken(
+        access_token=token_pair.access_token,
+        token_type=token_pair.token_type,
+        expires_in=settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60,
+        user=user,
+    )
+
+
+def _optional_bearer_token(request: Request) -> Optional[str]:
+    authorization = request.headers.get("Authorization", "")
+    scheme, _, token = authorization.partition(" ")
+    if scheme.lower() == "bearer" and token:
+        return token.strip()
+    return None
 
 @router.post("/register", status_code=status.HTTP_201_CREATED, response_model=ApiResponse[UserResponse])
 @limiter.limit("3/minute")
@@ -65,25 +81,28 @@ async def register(
 async def verify_otp(
     data: VerifyOTPRegisterRequest,
     request: Request,
+    response: Response,
     background_tasks: BackgroundTasks
 ):
     try:
         token_pair, user = await AuthService.verify_otp(data, request, background_tasks)
         
+        user_response = UserResponse(
+            id=str(user.id),
+            email=user.email,
+            full_name=user.full_name,
+            message="Email verified successfully",
+            phone_number=user.phone_number,
+            address=user.address,
+            is_active=user.is_active,
+            is_verified=user.is_verified,
+            created_at=user.created_at,
+        )
+        set_auth_cookies(response, token_pair.refresh_token, token_pair.csrf_token)
         response_data = VerifyOTPResponse(
-            token=AccessToken(
-                access_token=token_pair.access_token if hasattr(token_pair, 'access_token') else token_pair,
-                token_type="bearer"
-            ),
+            token=_access_token_response(token_pair, user_response),
             success=True,
-            user=UserResponse(
-                id=str(user.id),
-                email=user.email,
-                full_name=user.full_name,
-                message="Email verified successfully",
-                phone_number=user.phone_number,
-                address=user.address,
-            )
+            user=user_response,
         )
         return ApiResponse.ok(response_data)
         
@@ -133,19 +152,16 @@ async def resend_otp(
 async def login(
     data: LoginRequest,
     request: Request,
+    response: Response,
     background_tasks: BackgroundTasks
 ):
     try:
-        from app.core.config import settings
         token_pair, user = await AuthService.login(data, request, background_tasks)
-        
-        response_data = AccessToken(
-            access_token=token_pair.access_token,
-            token_type=token_pair.token_type,
-            expires_in=settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60,
-            refresh_token=token_pair.refresh_token,
-            refresh_token_expires_in=settings.REFRESH_TOKEN_EXPIRE_DAYS * 24 * 60 * 60,
-            user=UserResponse(
+
+        set_auth_cookies(response, token_pair.refresh_token, token_pair.csrf_token)
+        response_data = _access_token_response(
+            token_pair,
+            UserResponse(
                 id=str(user.id),
                 email=user.email,
                 full_name=user.full_name,
@@ -155,7 +171,7 @@ async def login(
                 is_active=user.is_active,
                 is_verified=user.is_verified,
                 created_at=user.created_at
-            )
+            ),
         )
         return ApiResponse.ok(response_data)
         
@@ -171,59 +187,47 @@ async def login(
 @limiter.limit("10/minute")
 async def logout(
     request: Request,
-    current_user: CurrentUser = Depends(get_current_user),
-    background_tasks: BackgroundTasks = None
+    response: Response,
+    background_tasks: BackgroundTasks,
+    csrf_token: Optional[str] = Header(default=None, alias=settings.CSRF_HEADER_NAME),
 ):
     try:
-        token = await get_token_from_request(request)
-        if token:
-            await blacklist_token(token)
-            
-            if background_tasks:
-                background_tasks.add_task(
-                    log_security_event,
-                    event_type=AuditEventType.USER_LOGOUT,
-                    user_id=str(current_user.user.id),
-                    event_name="logout",
-                    email=current_user.user.email,
-                    ip_address=request.client.host if request.client else None,
-                    user_agent=request.headers.get("user-agent"),
-                    success=True
-                )
-            
-            logger.info(f"User logged out: {current_user.user.email}")
-        
+        refresh_token = validate_refresh_csrf(request, csrf_token)
+        user = await AuthService.logout(
+            refresh_token,
+            _optional_bearer_token(request),
+            request,
+            background_tasks,
+        )
+        clear_auth_cookies(response)
+        logger.info("User logged out: %s", user.email if user else "unknown")
         return ApiResponse.ok({"message": "Logged out successfully"})
-        
+    except (CustomError, HTTPException):
+        raise
     except Exception as e:
-        logger.error(f"Logout error for user {current_user.user.email}: {e}")
-        return ApiResponse.ok({"message": "Logged out successfully"})
+        logger.error("Logout error: %s", e, exc_info=True)
+        raise CustomError(
+            ErrorCodes.INTERNAL,
+            "Logout failed",
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        )
 
 @router.post("/refresh", response_model=ApiResponse[AccessToken])
 @limiter.limit("10/minute")
 async def refresh_token(
     request: Request,
-    background_tasks: BackgroundTasks
+    response: Response,
+    background_tasks: BackgroundTasks,
+    csrf_token: Optional[str] = Header(default=None, alias=settings.CSRF_HEADER_NAME),
 ):
     try:
-        from app.core.config import settings
-        token = await get_token_from_request(request)
-        if not token:
-            raise CustomError(
-                ErrorCodes.UNAUTHORIZED, 
-                "No token provided", 
-                status_code=status.HTTP_401_UNAUTHORIZED
-            )
-            
+        token = validate_refresh_csrf(request, csrf_token)
         token_pair, user = await AuthService.refresh_token(token, request, background_tasks)
-        
-        response_data = AccessToken(
-            access_token=token_pair.access_token,
-            token_type=token_pair.token_type,
-            expires_in=settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60,
-            refresh_token=token_pair.refresh_token,
-            refresh_token_expires_in=settings.REFRESH_TOKEN_EXPIRE_DAYS * 24 * 60 * 60,
-            user=UserResponse(
+
+        set_auth_cookies(response, token_pair.refresh_token, token_pair.csrf_token)
+        response_data = _access_token_response(
+            token_pair,
+            UserResponse(
                 id=str(user.id),
                 email=user.email,
                 full_name=user.full_name,
@@ -232,7 +236,7 @@ async def refresh_token(
                 is_active=user.is_active,
                 is_verified=user.is_verified,
                 created_at=user.created_at
-            )
+            ),
         )
         return ApiResponse.ok(response_data)
         
