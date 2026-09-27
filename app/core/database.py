@@ -29,6 +29,7 @@ from app.models.resume_file import ResumeFile
 from app.models.screening_result import ScreeningResult
 from app.models.screening_run import ResumeParseRun, ScreeningRun
 from app.models.user import User
+from app.models.auth_session import AuthSession
 from app.models.user_actor import UserActor
 from app.models.user_company import UserCompany
 from app.utils.time import now_utc
@@ -38,6 +39,7 @@ _mongo_client = None
 
 
 DOCUMENT_MODELS: list[type[Document]] = [
+    AuthSession,
     User,
     Company,
     UserCompany,
@@ -65,7 +67,7 @@ DOCUMENT_MODELS: list[type[Document]] = [
 
 # Internal metadata does not receive API permissions.
 PERMISSION_MODELS: Sequence[type[Document]] = tuple(
-    model for model in DOCUMENT_MODELS if model is not DatabaseMigration
+    model for model in DOCUMENT_MODELS if model not in {DatabaseMigration, AuthSession}
 )
 
 
@@ -132,17 +134,23 @@ async def _get_or_create_actor(
         return actor
 
 
-async def _sync_actor_permissions(actor: Actor, permission_names: Iterable[str]) -> None:
+async def _sync_actor_permissions(
+    actor: Actor, permission_names: Iterable[str]
+) -> None:
     permissions = await Permission.find(
         {"name": {"$in": list(permission_names)}, "is_active": True}
     ).to_list()
-    current_links = await ActorPermission.find(ActorPermission.actor_id == actor.id).to_list()
+    current_links = await ActorPermission.find(
+        ActorPermission.actor_id == actor.id
+    ).to_list()
     current_ids = {link.permission_id for link in current_links}
     for permission in permissions:
         if permission.id in current_ids:
             continue
         try:
-            await ActorPermission(actor_id=actor.id, permission_id=permission.id).insert()
+            await ActorPermission(
+                actor_id=actor.id, permission_id=permission.id
+            ).insert()
         except DuplicateKeyError:
             continue
 
@@ -154,7 +162,9 @@ async def _ensure_default_actors() -> None:
         "Full system administrator",
         is_system=True,
     )
-    await _sync_actor_permissions(admin, (permission.name for permission in all_permissions))
+    await _sync_actor_permissions(
+        admin, (permission.name for permission in all_permissions)
+    )
 
     recruiter = await _get_or_create_actor(
         settings.RECRUITER_ROLE_NAME,
@@ -189,8 +199,6 @@ async def _ensure_default_actors() -> None:
         "Candidate with self-service application access",
     )
     candidate_permissions = {
-        "users:view",
-        "users:edit",
         "job_requirements:view",
         "job_requirements:list",
         "resume_files:upload",
@@ -265,12 +273,12 @@ async def _create_first_superuser() -> None:
     if await User.find_all().limit(1).to_list():
         return
 
-    from app.core.security import get_password_hash
+    from app.core.security import get_password_hash_async
 
     superuser = User(
         email=settings.FIRST_SUPERUSER_EMAIL.lower(),
         full_name=settings.FIRST_SUPERUSER_FULL_NAME,
-        hashed_password=get_password_hash(settings.FIRST_SUPERUSER_PASSWORD),
+        hashed_password=await get_password_hash_async(settings.FIRST_SUPERUSER_PASSWORD),
         is_active=True,
         is_verified=True,
         is_superuser=True,
@@ -278,7 +286,9 @@ async def _create_first_superuser() -> None:
     try:
         await superuser.insert()
     except DuplicateKeyError:
-        superuser = await User.find_one(User.email == settings.FIRST_SUPERUSER_EMAIL.lower())
+        superuser = await User.find_one(
+            User.email == settings.FIRST_SUPERUSER_EMAIL.lower()
+        )
         if superuser is None:
             raise
 
@@ -314,9 +324,47 @@ async def _record_schema_baseline() -> None:
 async def _bootstrap_database() -> None:
     await _ensure_default_permissions()
     await _ensure_default_actors()
+    await _revoke_legacy_candidate_user_permissions()
     await _ensure_default_ai_models()
     await _create_first_superuser()
     await _record_schema_baseline()
+
+
+async def _revoke_legacy_candidate_user_permissions() -> None:
+    """Version 3: remove only the two unsafe default Candidate grants.
+
+    All writes are idempotent, including concurrent/retried startup. Authorization
+    cache keys use policy-v3, so old Redis snapshots cannot preserve these grants.
+    Custom roles and existing user/superuser assignments are not guessed at.
+    """
+    version = 3
+    name = "revoke_candidate_global_user_permissions_v3"
+    checksum = hashlib.sha256(name.encode("utf-8")).hexdigest()
+    existing = await DatabaseMigration.find_one(DatabaseMigration.version == version)
+    if existing:
+        if existing.checksum != checksum:
+            raise RuntimeError("Database migration 3 checksum mismatch")
+        return
+    candidate = await Actor.find_one(Actor.name == settings.CANDIDATE_ROLE_NAME)
+    if not candidate:
+        raise RuntimeError("Candidate role missing during permission migration")
+    permissions = await Permission.find(
+        {"name": {"$in": ["users:view", "users:edit"]}}
+    ).to_list()
+    await ActorPermission.find(
+        {
+            "actor_id": candidate.id,
+            "permission_id": {"$in": [permission.id for permission in permissions]},
+        }
+    ).delete()
+    try:
+        await DatabaseMigration(version=version, name=name, checksum=checksum).insert()
+    except DuplicateKeyError:
+        existing = await DatabaseMigration.find_one(
+            DatabaseMigration.version == version
+        )
+        if not existing or existing.checksum != checksum:
+            raise RuntimeError("Database migration 3 checksum mismatch")
 
 
 async def _run_pre_init_index_migrations(database) -> None:
@@ -339,7 +387,9 @@ async def _run_pre_init_index_migrations(database) -> None:
     if old_phone_index and not old_phone_index.get("unique", False):
         try:
             await database["users"].drop_index("phone_number_1")
-            logger.info("Dropped non-unique users.phone_number_1 before unique replacement")
+            logger.info(
+                "Dropped non-unique users.phone_number_1 before unique replacement"
+            )
         except OperationFailure as exc:
             if exc.code != 27:
                 raise
@@ -356,9 +406,11 @@ async def _run_pre_init_index_migrations(database) -> None:
             raise RuntimeError("Database migration 2 checksum mismatch")
         return
 
-    users = await database["users"].find(
-        {}, {"email": 1, "phone_number": 1}
-    ).to_list(length=None)
+    users = (
+        await database["users"]
+        .find({}, {"email": 1, "phone_number": 1})
+        .to_list(length=None)
+    )
     seen_emails: set[str] = set()
     seen_phones: set[str] = set()
     updates = []
@@ -368,15 +420,21 @@ async def _run_pre_init_index_migrations(database) -> None:
         phone = None
         if raw_phone:
             prefix = "+" if raw_phone.startswith("+") else ""
-            digits = "".join(character for character in raw_phone if character.isdigit())
+            digits = "".join(
+                character for character in raw_phone if character.isdigit()
+            )
             phone = f"{prefix}{digits}" if digits else None
         if email:
             if email in seen_emails:
-                raise RuntimeError("Cannot normalize users: duplicate case-insensitive emails exist")
+                raise RuntimeError(
+                    "Cannot normalize users: duplicate case-insensitive emails exist"
+                )
             seen_emails.add(email)
         if phone:
             if phone in seen_phones:
-                raise RuntimeError("Cannot create unique phone index: duplicate normalized phones exist")
+                raise RuntimeError(
+                    "Cannot create unique phone index: duplicate normalized phones exist"
+                )
             seen_phones.add(phone)
         updates.append(
             UpdateOne(
@@ -410,7 +468,13 @@ async def init_db() -> bool:
             serverSelectionTimeoutMS=settings.MONGODB_SERVER_SELECTION_TIMEOUT,
         )
         await _mongo_client.admin.command("ping")
+        await require_transaction_topology(_mongo_client)
         database = _mongo_client[settings.MONGODB_DB_NAME]
+        # Legacy accounts predate password/session versioning. Backfill only
+        # absent values; never reset a version that has already been advanced.
+        await database["users"].update_many(
+            {"auth_version": {"$exists": False}}, {"$set": {"auth_version": 0}}
+        )
         await _run_pre_init_index_migrations(database)
         # Index creation is part of initialization. Unique-index failures are
         # fatal so the API never runs without its data-integrity guarantees.
@@ -441,13 +505,13 @@ async def check_connection() -> bool:
     client = None
     try:
         if _mongo_client is not None:
-            await _mongo_client.admin.command("ping")
+            await require_transaction_topology(_mongo_client)
             return True
         client = motor.motor_asyncio.AsyncIOMotorClient(
             settings.MONGODB_URL,
             serverSelectionTimeoutMS=settings.MONGODB_SERVER_SELECTION_TIMEOUT,
         )
-        await client.admin.command("ping")
+        await require_transaction_topology(client)
         return True
     except Exception:
         logger.exception("MongoDB connection check failed")
@@ -483,7 +547,11 @@ async def get_database_info() -> dict:
         }
     except Exception as exc:
         logger.exception("Could not read database information")
-        return {"database_name": settings.MONGODB_DB_NAME, "status": "error", "error": str(exc)}
+        return {
+            "database_name": settings.MONGODB_DB_NAME,
+            "status": "error",
+            "error": str(exc),
+        }
     finally:
         if client:
             client.close()
@@ -500,3 +568,13 @@ async def cleanup_expired_data() -> int:
     except Exception:
         logger.exception("Expired-data cleanup failed")
         return 0
+
+
+async def require_transaction_topology(client) -> None:
+    hello = await client.admin.command("hello")
+    if not (hello.get("setName") or hello.get("msg") == "isdbgrid"):
+        raise RuntimeError(
+            "MongoDB replica set or sharded cluster is required for workflow transactions"
+        )
+    if not hello.get("isWritablePrimary", False):
+        raise RuntimeError("MongoDB primary is not writable")

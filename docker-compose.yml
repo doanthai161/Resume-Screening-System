@@ -8,7 +8,7 @@ services:
       - .env
     environment:
       - PROJECT_ROOT_DIR=/app
-      - MONGODB_URI=mongodb://${MONGO_APP_USERNAME:?MONGO_APP_USERNAME is required}:${MONGO_APP_PASSWORD:?MONGO_APP_PASSWORD is required}@mongo:27017/${MONGO_APP_DATABASE:-resume_screening_db}?authSource=${MONGO_APP_DATABASE:-resume_screening_db}
+      - MONGODB_URI=mongodb://${MONGO_APP_USERNAME:?MONGO_APP_USERNAME is required}:${MONGO_APP_PASSWORD:?MONGO_APP_PASSWORD is required}@mongo:27017/${MONGO_APP_DATABASE:-resume_screening_db}?authSource=${MONGO_APP_DATABASE:-resume_screening_db}&replicaSet=rs0
       - MONGODB_DB_NAME=${MONGO_APP_DATABASE:-resume_screening_db}
       - REDIS_URL=redis://:${REDIS_PASSWORD:?REDIS_PASSWORD is required}@redis:6379/0
       - ENVIRONMENT=production
@@ -17,16 +17,21 @@ services:
     depends_on:
       mongo:
         condition: service_healthy
+      mongo-init-replica:
+        condition: service_completed_successfully
       redis:
         condition: service_healthy
     volumes:
-      - ./app:/app/app
       - ./uploads:/app/uploads
       - ./logs:/app/logs
 
   mongo:
     image: mongo:7
     container_name: resume_mongo_db
+    command: ["mongod", "--replSet", "rs0", "--keyFile", "/etc/mongo-key/keyfile", "--bind_ip_all"]
+    depends_on:
+      mongo-key:
+        condition: service_completed_successfully
     environment:
       MONGO_INITDB_ROOT_USERNAME: ${MONGO_USERNAME:?MONGO_USERNAME is required}
       MONGO_INITDB_ROOT_PASSWORD: ${MONGO_PASSWORD:?MONGO_PASSWORD is required}
@@ -35,12 +40,34 @@ services:
       MONGO_APP_PASSWORD: ${MONGO_APP_PASSWORD:?MONGO_APP_PASSWORD is required}
     volumes:
       - mongo_data:/data/db
+      - mongo_key:/etc/mongo-key:ro
       - ./mongo-init.js:/docker-entrypoint-initdb.d/10-app-user.js:ro
     healthcheck:
       test: ["CMD-SHELL", "mongosh --quiet --username $$MONGO_INITDB_ROOT_USERNAME --password $$MONGO_INITDB_ROOT_PASSWORD --authenticationDatabase admin --eval 'db.adminCommand({ ping: 1 })' || exit 1"]
       interval: 10s
       timeout: 5s
       retries: 10
+
+  mongo-key:
+    image: mongo:7
+    user: "0:0"
+    entrypoint: ["bash", "-ec"]
+    command:
+      - "if [ ! -s /key/keyfile ]; then umask 077; openssl rand -base64 756 > /key/keyfile; fi; chown 999:999 /key/keyfile; chmod 400 /key/keyfile"
+    volumes:
+      - mongo_key:/key
+
+  mongo-init-replica:
+    image: mongo:7
+    depends_on:
+      mongo:
+        condition: service_healthy
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: ${MONGO_USERNAME:?MONGO_USERNAME is required}
+      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_PASSWORD:?MONGO_PASSWORD is required}
+    entrypoint: ["mongosh", "--quiet", "--host", "mongo:27017", "/scripts/init-replica.js"]
+    volumes:
+      - ./scripts/init-replica.js:/scripts/init-replica.js:ro
 
   redis:
     image: redis:7-alpine
@@ -56,4 +83,5 @@ services:
 
 volumes:
   mongo_data:
+  mongo_key:
   redis_data:

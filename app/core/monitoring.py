@@ -1,4 +1,7 @@
 import time
+import math
+from collections import deque
+from threading import RLock
 import functools
 import logging
 from typing import Any, Callable, Dict, Optional, Union
@@ -30,7 +33,11 @@ class TraceContext:
             self.tags = {}
 
 
-class Monitoring:  
+class Monitoring:
+    MAX_SERIES = 1024
+    MAX_SAMPLES = 256
+    MAX_KEY_LENGTH = 1024
+
     _instance = None
     
     def __new__(cls):
@@ -44,6 +51,8 @@ class Monitoring:
             return
         
         self._metrics_registry = {}
+        self._metrics_lock = RLock()
+        self._metric_types = {}
         self._tracing_enabled = False
         self._current_trace = None
         self._initialized = True
@@ -62,28 +71,58 @@ class Monitoring:
         tags: Optional[Dict[str, str]] = None,
         help_text: Optional[str] = None
     ):
-        if tags is None:
-            tags = {}
-        
-        metric_key = f"{name}_{'_'.join(f'{k}_{v}' for k, v in sorted(tags.items()))}"
-        
-        if metric_type == MetricType.COUNTER:
-            self._metrics_registry[metric_key] = self._metrics_registry.get(metric_key, 0) + value
-        elif metric_type == MetricType.GAUGE:
-            self._metrics_registry[metric_key] = value
-        elif metric_type == MetricType.HISTOGRAM:
+        if metric_type not in (MetricType.COUNTER, MetricType.GAUGE, MetricType.HISTOGRAM, MetricType.SUMMARY):
+            return
+        try:
+            value = float(value)
+        except (TypeError, ValueError, OverflowError):
+            return
+        if not math.isfinite(value):
+            return
+        tags = tags or {}
+        if len(name) > self.MAX_KEY_LENGTH or len(tags) > 16:
+            return
+        parts = []
+        for key, tag_value in sorted(tags.items()):
+            part = f"{key}_{tag_value}"
+            if len(part) > self.MAX_KEY_LENGTH:
+                return
+            parts.append(part)
+        metric_key = f"{name}_{'_'.join(parts)}"
+        if len(metric_key) > self.MAX_KEY_LENGTH:
+            return
+        with self._metrics_lock:
             if metric_key not in self._metrics_registry:
-                self._metrics_registry[metric_key] = []
-            self._metrics_registry[metric_key].append(value)
-        
-        logger.debug(f"Metric recorded: {name}={value} ({metric_type})")
-    
+                if len(self._metrics_registry) >= self.MAX_SERIES:
+                    return  # Preserve established series; drop new cardinality.
+                self._metric_types[metric_key] = metric_type
+                self._metrics_registry[metric_key] = (
+                    deque(maxlen=self.MAX_SAMPLES)
+                    if metric_type in (MetricType.HISTOGRAM, MetricType.SUMMARY) else 0.0
+                )
+            if self._metric_types[metric_key] != metric_type:
+                return
+            if metric_type == MetricType.COUNTER:
+                total = self._metrics_registry[metric_key] + value
+                if math.isfinite(total):
+                    self._metrics_registry[metric_key] = total
+            elif metric_type == MetricType.GAUGE:
+                self._metrics_registry[metric_key] = value
+            else:
+                self._metrics_registry[metric_key].append(value)
+
     def get_metrics(self) -> Dict[str, Any]:
-        return self._metrics_registry.copy()
-    
+        with self._metrics_lock:
+            return {
+                key: list(value) if isinstance(value, deque) else value
+                for key, value in self._metrics_registry.items()
+            }
+
     def clear_metrics(self):
-        self._metrics_registry.clear()
-    
+        with self._metrics_lock:
+            self._metrics_registry.clear()
+            self._metric_types.clear()
+
     @contextmanager
     def trace_span(self, name: str, tags: Optional[Dict[str, Any]] = None):
         if not self._tracing_enabled:
@@ -121,7 +160,7 @@ class Monitoring:
                 name=f"span_duration_{name}",
                 value=duration,
                 metric_type=MetricType.HISTOGRAM,
-                tags=trace.tags
+                tags={k: v for k, v in trace.tags.items() if k not in {"duration_ms", "error"}}
             )
             
             logger.debug(f"Finished span: {name} (duration: {duration:.3f}s)")

@@ -7,10 +7,15 @@ from app.schemas.user import UserActorResponse
 from app.schemas.actor import ActorResponse
 from app.core.errors import CustomError, ErrorCodes
 from app.core import cache
+from app.core.security import CurrentUser
 
 class UserActorService:
     @staticmethod
-    async def assign_actor(user_id: str, actor_id: str, updater_id: str) -> UserActorResponse:
+    async def assign_actor(user_id: str, actor_id: str, current_user: CurrentUser) -> UserActorResponse:
+        # Actors are global roles, not tenant memberships. Fail closed even when
+        # this service is invoked without the API dependency.
+        if not current_user.is_superuser:
+            raise CustomError(ErrorCodes.FORBIDDEN, "Only superusers can assign global roles", status.HTTP_403_FORBIDDEN)
         try:
             try:
                 ObjectId(user_id)
@@ -31,7 +36,7 @@ class UserActorService:
                 )
 
             actor = await UserActorRepository.get_actor(actor_id)
-            if not actor:
+            if not actor or not actor.is_active:
                 raise CustomError(
                     ErrorCodes.NOT_FOUND,
                     "Actor not found",
@@ -45,7 +50,7 @@ class UserActorService:
                     user_actor = await UserActorRepository.create_user_actor(
                         user_id=user_id,
                         actor_id=actor_id,
-                        created_by=updater_id
+                        created_by=current_user.user_id
                     )
                 await cache.invalidate_user_authorization(user_id)
             except Exception as exc:
@@ -122,7 +127,9 @@ class UserActorService:
             )
 
     @staticmethod
-    async def delete_user_actor(user_actor_id: str) -> None:
+    async def delete_user_actor(user_actor_id: str, current_user: CurrentUser) -> None:
+        if not current_user.is_superuser:
+            raise CustomError(ErrorCodes.FORBIDDEN, "Only superusers can remove global roles", status.HTTP_403_FORBIDDEN)
         try:
             try:
                 ObjectId(user_actor_id)

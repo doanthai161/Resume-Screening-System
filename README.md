@@ -1,5 +1,7 @@
 # Resume Screening System
 
+Quy tắc làm việc cho AI được lưu tại [AGENTS.md](AGENTS.md). Đây là nguồn hướng dẫn chung của repository.
+
 Backend quản lý quy trình tuyển dụng và sàng lọc hồ sơ, xây dựng bằng FastAPI, MongoDB, Redis và Beanie ODM.
 
 Phiên bản hiện tại tập trung vào khung backend: quản lý tenant, ứng viên, hồ sơ, đơn ứng tuyển, scorecard, vòng đời screening, phân quyền, audit log và hàng đợi xử lý. AI inference được thiết kế để tách thành service/worker riêng và chưa nằm trong Docker stack này.
@@ -203,7 +205,7 @@ Khi chạy ngoài Docker, cấu hình kết nối thường là:
 ```dotenv
 ENVIRONMENT=development
 DEBUG=true
-MONGODB_URI=mongodb://127.0.0.1:27017
+MONGODB_URI=mongodb://127.0.0.1:27017/?replicaSet=rs0
 MONGODB_DB_NAME=resume_screening_dev
 REDIS_URL=redis://localhost:6379/0
 ```
@@ -211,7 +213,7 @@ REDIS_URL=redis://localhost:6379/0
 Nếu giữ MongoDB/Redis trong Docker bằng development override nhưng chạy Uvicorn trên Windows, dùng credentials trong `.env` và các địa chỉ:
 
 ```dotenv
-MONGODB_URI=mongodb://<MONGO_APP_USERNAME>:<MONGO_APP_PASSWORD>@127.0.0.1:27018/<MONGO_APP_DATABASE>?authSource=<MONGO_APP_DATABASE>
+MONGODB_URI=mongodb://<MONGO_APP_USERNAME>:<MONGO_APP_PASSWORD>@127.0.0.1:27018/<MONGO_APP_DATABASE>?authSource=<MONGO_APP_DATABASE>&replicaSet=rs0&directConnection=true
 MONGODB_DB_NAME=<MONGO_APP_DATABASE>
 REDIS_URL=redis://:<REDIS_PASSWORD>@127.0.0.1:6379/0
 ```
@@ -268,7 +270,7 @@ accessToken = refreshPayload.data.access_token;
 csrfToken = refreshResponse.headers.get("X-CSRF-Token");
 ```
 
-Logout cũng cần `credentials: "include"` và `X-CSRF-Token`. Có thể gửi access token hiện tại trong `Authorization: Bearer ...`; backend sẽ revoke toàn bộ refresh session bằng `sid`, đánh dấu refresh token hiện tại đã dùng và blacklist access token tương ứng.
+Logout cũng cần `credentials: "include"` và `X-CSRF-Token`. Backend revoke session `sid` trong MongoDB, khiến cả access/refresh token của session mất hiệu lực. Rotation dùng CAS trên digest refresh hiện hành. Session có thời hạn tuyệt đối tính từ login; mất Redis không khôi phục session đã revoke.
 
 Mỗi lần refresh sẽ rotate cả refresh token và CSRF token. Nếu refresh token cũ bị dùng lại, toàn bộ session family bị revoke. Refresh token không được chấp nhận làm Bearer token cho các protected endpoint.
 
@@ -336,7 +338,17 @@ Dockerfile
 mongo-init.js
 ```
 
+## Bản vá P1 và yêu cầu chạy mới
+
+Xem [P1 remediation](docs/reviews/P1_REMEDIATION.md) cho thay đổi quyền, session, worker và hướng triển khai. MongoDB phải là replica set/sharded cluster; standalone không hỗ trợ các transaction mới. Compose tự tạo replica set `rs0` bằng `mongo-key` và `mongo-init-replica`. Người dùng cần đăng nhập lại sau cập nhật vì token cũ không có registry session sẽ bị từ chối.
+
+Worker phải giữ `generation=claimed_run.attempt` khi renew/complete/fail. `/live` kiểm tra process; `/ready` kiểm tra dependency, trả 503 khi production không có Redis hoặc Mongo không sẵn sàng cho transaction.
+
 ## Test
+
+Đánh giá backend, bằng chứng kiểm tra và kế hoạch khắc phục theo ưu tiên:
+[Backend review — 24/09/2026](docs/reviews/BACKEND_REVIEW_2026-09-24.md).
+Tài liệu phản ánh trạng thái tại thời điểm review; các đề xuất chưa đồng nghĩa với bản vá đã triển khai.
 
 ```bash
 pytest -q
@@ -355,3 +367,6 @@ pytest -q tests/unit
 - Không dùng chung Redis với dự án khác.
 - Không commit `.env`, API keys, access tokens hoặc file resume thật.
 - Backup MongoDB và thư mục `uploads/` trước khi xóa volume hoặc redeploy phá hủy dữ liệu.
+# Cập nhật vận hành P2
+
+API Docker chạy bằng UID/GID `10001:10001`; thư mục host `uploads` và `logs` cần cho user này ghi. Production dùng code trong image; source mount/reload chỉ ở Compose dev. Xem [P2 remediation](docs/reviews/P2_REMEDIATION.md) và [danh sách lỗi hiện tại](docs/reviews/ISSUE_STATUS.md) trước triển khai.

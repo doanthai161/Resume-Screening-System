@@ -24,7 +24,7 @@ async def create_actor(
             logger.info,
             f"Creating actor with name: {data.name}"
         )
-        actor = await ActorService.create_actor(data)
+        actor = await ActorService.create_actor(data, current_user)
         background_tasks.add_task(
             logger.info,
             f"Actor created with ID: {actor.id}"
@@ -96,7 +96,7 @@ async def update_actor(
             logger.info,
             f"Updating actor with ID: {actor_id}"
         )
-        actor = await ActorService.update_actor(actor_id, data)
+        actor = await ActorService.update_actor(actor_id, data, current_user)
         background_tasks.add_task(
             logger.info,
             f"Actor updated with ID: {actor.id}"
@@ -166,7 +166,7 @@ async def delete_actor(
             logger.info,
             f"Deleting actor with ID: {actor_id}"
         )
-        await ActorService.delete_actor(actor_id)
+        await ActorService.delete_actor(actor_id, current_user)
         background_tasks.add_task(
             logger.info,
             f"Actor deleted with ID: {actor_id}"

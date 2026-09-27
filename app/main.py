@@ -245,6 +245,8 @@ if settings.CORS_ORIGINS:
     )
 
 app.add_middleware(GZipMiddleware, minimum_size=1000)
+from app.middleware.body_limit import BodyLimitMiddleware
+app.add_middleware(BodyLimitMiddleware, max_bytes=settings.MAX_UPLOAD_SIZE + 1024 * 1024, api_prefix=settings.API_V1_STR)
 
 if settings.is_production:
     app.add_middleware(RequestLoggingMiddleware)
@@ -255,7 +257,9 @@ if settings.is_production:
 
 @app.exception_handler(RequestValidationError)
 async def validation_exception_handler(request: Request, exc: RequestValidationError):
-    logger.warning(f"Validation error: {exc.errors()}")
+    errors = [{"loc": list(error["loc"]), "type": error["type"],
+               "msg": "Invalid value"} for error in exc.errors()]
+    logger.warning("Validation failed: %s", errors)
     return JSONResponse(
         status_code=422,
         content={
@@ -263,7 +267,7 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
             "message": "Validation failed",
             "error": {
                 "code": ErrorCodes.VALIDATION.value,
-                "details": exc.errors(),
+                "details": errors,
             }
         },
     )
@@ -333,7 +337,7 @@ async def root():
     }
 
 @app.get("/health", tags=["Health"])
-@limiter.limit("30/minute")
+@app.get("/ready", tags=["Health"])
 async def health_check(request: Request):
     from app.core.database import check_connection as check_db
     from app.core.redis import get_redis
@@ -380,12 +384,15 @@ async def health_check(request: Request):
             checks["redis"] = {
                 "status": "disabled",
             }
+            if settings.is_production:
+                all_healthy = False
+                status_code = 503
     except Exception as e:
         checks["redis"] = {
             "status": "error",
             "error": str(e) if settings.DEBUG else "Connection failed",
         }
-        if settings.RATE_LIMIT_ENABLED:
+        if settings.is_production or settings.RATE_LIMIT_ENABLED:
             all_healthy = False
             status_code = 503
     
@@ -426,6 +433,11 @@ async def health_check(request: Request):
             "Expires": "0",
         }
     )
+
+
+@app.get("/live", tags=["Health"])
+async def liveness():
+    return {"status": "alive"}
 
 @app.get("/config", tags=["Debug"], include_in_schema=settings.DEBUG)
 async def get_config(request: Request):

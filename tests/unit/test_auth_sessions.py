@@ -8,6 +8,7 @@ from app.core.config import Settings, settings
 from app.core.errors import CustomError
 from app.core.security import (
     create_token_pair,
+    issue_token_pair,
     get_current_user,
     is_refresh_session_revoked,
 )
@@ -66,7 +67,7 @@ def test_production_requires_secure_refresh_cookie():
 async def test_refresh_rotation_reuse_revokes_entire_session(monkeypatch, mock_user):
     redis = FakeRedis()
     monkeypatch.setattr("app.core.security.get_redis", lambda: redis)
-    initial = create_token_pair(mock_user)
+    initial = await issue_token_pair(mock_user)
 
     with patch(
         "app.services.auth_service.UserRepository.get_user_by_email",
@@ -102,7 +103,7 @@ async def test_refresh_rotation_reuse_revokes_entire_session(monkeypatch, mock_u
 async def test_logout_revokes_refresh_session(monkeypatch, mock_user):
     redis = FakeRedis()
     monkeypatch.setattr("app.core.security.get_redis", lambda: redis)
-    token_pair = create_token_pair(mock_user)
+    token_pair = await issue_token_pair(mock_user)
 
     with patch(
         "app.services.auth_service.UserRepository.get_user_by_email",

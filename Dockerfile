@@ -18,9 +18,13 @@ COPY requirements.txt .
 RUN pip install --upgrade pip && \
     pip install --no-cache-dir -r requirements.txt
 
-COPY . .
+COPY app/ ./app/
 
-RUN mkdir -p logs
+RUN groupadd --gid 10001 app && useradd --uid 10001 --gid app --no-create-home app \
+    && mkdir -p logs uploads \
+    && chown app:app logs uploads
+
+USER 10001:10001
 
 EXPOSE 8000
 

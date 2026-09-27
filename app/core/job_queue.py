@@ -4,6 +4,7 @@ from typing import Any, Optional
 from app.core.cache import cache_key
 from app.core.config import settings
 from app.core.redis import get_redis
+from app.core.transactions import current_session, defer_after_commit
 
 logger = logging.getLogger(__name__)
 
@@ -14,6 +15,11 @@ async def enqueue(queue: str, resource_id: str, company_id: str) -> Optional[str
     MongoDB remains the source of truth. If Redis is unavailable, the queued
     database record can be recovered by a low-frequency reconciliation worker.
     """
+    # A queued run is the durable outbox. Maintenance publishes after commit;
+    # never deliver a job whose Mongo transaction could still roll back.
+    if current_session() is not None:
+        defer_after_commit(lambda: publish_committed(queue, resource_id, company_id))
+        return None
     redis = get_redis()
     if not redis:
         return None
@@ -34,7 +40,9 @@ async def ensure_consumer_group(queue: str, group: str) -> None:
     if not redis:
         return
     try:
-        await redis.xgroup_create(cache_key("queue", queue), group, id="0", mkstream=True)
+        await redis.xgroup_create(
+            cache_key("queue", queue), group, id="0", mkstream=True
+        )
     except Exception as exc:
         if "BUSYGROUP" not in str(exc):
             raise
@@ -65,3 +73,28 @@ async def acknowledge(queue: str, group: str, message_id: str) -> None:
     redis = get_redis()
     if redis:
         await redis.xack(cache_key("queue", queue), group, message_id)
+
+
+async def publish_committed(queue: str, resource_id: str, company_id: str) -> None:
+    from beanie import PydanticObjectId
+    from app.models.screening_run import ScreeningRun, ResumeParseRun
+    from app.utils.time import now_utc
+
+    model = ScreeningRun if queue == "screening" else ResumeParseRun
+    run = await model.find_one(
+        {"_id": PydanticObjectId(resource_id), "status": "queued"}
+    )
+    if not run:
+        return
+    message_id = await enqueue(queue, resource_id, company_id)
+    if message_id:
+        await model.find_one(
+            {"_id": run.id, "status": "queued", "attempt": run.attempt}
+        ).update(
+            {
+                "$set": {
+                    "queue_message_id": str(message_id),
+                    "last_enqueued_at": now_utc(),
+                }
+            }
+        )

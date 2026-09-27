@@ -72,3 +72,7 @@ pip-wheel-metadata/
 openapi.json
 docs.json
 .initdb/
+.tmp/
+
+# Local AI instructions
+/AGENTS.md

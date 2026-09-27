@@ -9,10 +9,13 @@ from app.utils.time import now_utc
 from app.core.errors import CustomError, ErrorCodes
 from bson.errors import InvalidId
 from app.core import cache
+from app.core.security import CurrentUser
+from app.core.rbac_policy import authorize_global_rbac_write
 
 class ActorPermissionService:
     @staticmethod
-    async def assign_permissions(actor_id: str, permission_ids: List[str], user_id: str) -> None:
+    async def assign_permissions(actor_id: str, permission_ids: List[str], caller: CurrentUser) -> None:
+        await authorize_global_rbac_write(caller)
         try:
             try:
                 actor_oid = ObjectId(actor_id)
@@ -64,7 +67,8 @@ class ActorPermissionService:
             )
 
     @staticmethod
-    async def unassign_permissions(actor_id: str, permission_ids: List[str]) -> int:
+    async def unassign_permissions(actor_id: str, permission_ids: List[str], caller: CurrentUser) -> int:
+        await authorize_global_rbac_write(caller)
         if not permission_ids:
             raise CustomError(
                 ErrorCodes.BAD_REQUEST,

@@ -3,7 +3,7 @@ from app.schemas.user import UserActorResponse
 from app.schemas.response import ApiResponse
 from app.core.rate_limiter import limiter
 from app.logs.logging_config import logger
-from app.api.permissions import CurrentUser, require_permission
+from app.core.security import CurrentUser, require_permission, require_superuser
 from app.services.user_actor_service import UserActorService
 from app.core.errors import CustomError, ErrorCodes
 
@@ -17,7 +17,7 @@ async def assign_actor_to_user(
     actor_id: str,
     background_tasks: BackgroundTasks,
     current_user: CurrentUser = Depends(
-        require_permission("users:edit")
+        require_superuser
     ),
 ):
     try:
@@ -29,7 +29,7 @@ async def assign_actor_to_user(
         response_data = await UserActorService.assign_actor(
             user_id=user_id,
             actor_id=actor_id,
-            updater_id=current_user.user_id
+            current_user=current_user
         )
 
         return ApiResponse.ok(response_data)
@@ -82,7 +82,7 @@ async def delete_user_actor(
     user_actor_id: str,
     background_tasks: BackgroundTasks,
     current_user: CurrentUser = Depends(
-        require_permission("users:edit")
+        require_superuser
     ),
 ):
     try:
@@ -91,7 +91,7 @@ async def delete_user_actor(
             f"User {current_user.user_id} deleting user_actor ID {user_actor_id}"
         )
 
-        await UserActorService.delete_user_actor(user_actor_id)
+        await UserActorService.delete_user_actor(user_actor_id, current_user)
 
         background_tasks.add_task(
             logger.info,

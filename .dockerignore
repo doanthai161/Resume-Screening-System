@@ -1,34 +1,16 @@
-# .dockerignore
-
-# Git
-.git
-.gitignore
-
-# Python
-__pycache__/
-*.pyc
-*.pyo
-*.pyd
-.venv/
-venv/
-env/
-ENV/
-
-# Virtual environments
-.env
-
-# IDE
-.vscode/
-.idea/
-
-# OS
-.DS_Store
-Thumbs.db
-
-# Logs
-*.log
-
-# Docker
-Dockerfile
-.dockerignore
-docker-compose.yml
+# Only runtime application sources and the dependency manifest enter the build.
+**
+!Dockerfile
+!requirements.txt
+!app/
+!app/**
+# Keep secrets, generated data and local artifacts out even inside app/.
+**/.env
+**/.env.*
+**/*.pem
+**/*.key
+**/__pycache__
+**/*.pyc
+**/*.log
+**/uploads
+**/logs

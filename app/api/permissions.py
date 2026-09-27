@@ -24,7 +24,7 @@ async def create_permission(
             logger.info,
             f"Creating permission with name: {data.name}"
         )
-        permission = await PermissionService.create_permission(data)
+        permission = await PermissionService.create_permission(data, current_user)
         background_tasks.add_task(
             logger.info,
             f"Permission created with ID: {permission.id}"
@@ -101,7 +101,7 @@ async def update_permission(
             logger.info,
             f"Updating permission with ID: {permission_id}"
         )
-        permission = await PermissionService.update_permission(permission_id, data)
+        permission = await PermissionService.update_permission(permission_id, data, current_user)
         background_tasks.add_task(
             logger.info,
             f"Permission updated with ID: {permission.id}"
@@ -168,7 +168,7 @@ async def delete_permission(
             logger.info,
             f"Deleting permission with ID: {permission_id}"
         )
-        await PermissionService.delete_permission(permission_id)
+        await PermissionService.delete_permission(permission_id, current_user)
         background_tasks.add_task(
             logger.info,
             f"Permission deleted with ID: {permission_id}"

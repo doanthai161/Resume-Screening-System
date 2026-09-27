@@ -55,9 +55,9 @@ class Settings(BaseSettings):
         else:
             if '?' in uri:
                 base, query = uri.split('?', 1)
-                return f"{base}/{db_name}?{query}"
+                return f"{base.rstrip('/')}/{db_name}?{query}"
             else:
-                return f"{uri}/{db_name}"
+                return f"{uri.rstrip('/')}/{db_name}"
 
     PASSWORD_MIN_LENGTH: int = Field(default=8, ge=8, le=64, description="Password minimum length")
     PASSWORD_MAX_LENGTH: int = Field(default=72, ge=32, le=256, description="Password maximum length")

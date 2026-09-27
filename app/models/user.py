@@ -17,6 +17,9 @@ class User(Document):
     is_verified: bool = Field(False, description="Is email verified")
     is_superuser: bool = Field(False, description="Is superuser")
     auth_version: int = Field(0, ge=0, description="Incremented to revoke all existing tokens")
+    password_reset_digest: Optional[str] = None
+    password_reset_expires_at: Optional[datetime] = None
+    password_reset_version: Optional[int] = None
     verified_at: Optional[datetime] = Field(None, description="Verify at")
     last_login: Optional[datetime] = Field(None, description="Last login timestamp")
     phone_verified_at: Optional[datetime] = Field(None, description="Phone verification timestamp")

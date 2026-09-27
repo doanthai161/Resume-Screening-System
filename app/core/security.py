@@ -8,9 +8,14 @@ import secrets
 import uuid
 
 from fastapi import Depends, HTTPException, status, Request
-from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer, OAuth2PasswordBearer
+from fastapi.security import (
+    HTTPAuthorizationCredentials,
+    HTTPBearer,
+    OAuth2PasswordBearer,
+)
 from jose import JWTError, jwt
 from passlib.context import CryptContext
+
 try:
     from redis.asyncio import Redis
 except ImportError:
@@ -18,6 +23,9 @@ except ImportError:
 
 from app.core.config import settings
 from app.models.user import User
+from app.models.auth_session import AuthSession
+from app.core.errors import CustomError, ErrorCodes
+from app.utils.time import now_utc, ensure_utc
 from app.models.user_actor import UserActor
 from app.models.permission import Permission
 from app.models.actor import Actor
@@ -27,6 +35,7 @@ from app.core import cache
 
 logger = logging.getLogger(__name__)
 
+
 @lru_cache()
 def get_password_context() -> CryptContext:
     return CryptContext(
@@ -34,29 +43,36 @@ def get_password_context() -> CryptContext:
         argon2__time_cost=2,
         argon2__memory_cost=102400,
         argon2__parallelism=8,
-        deprecated="auto"
+        deprecated="auto",
     )
+
 
 @lru_cache()
 def get_jwt_settings() -> Dict[str, Any]:
     return {
         "algorithm": settings.ALGORITHM,
-        "secret_key": settings.SECRET_KEY.get_secret_value() if hasattr(settings.SECRET_KEY, 'get_secret_value') else settings.SECRET_KEY,
+        "secret_key": (
+            settings.SECRET_KEY.get_secret_value()
+            if hasattr(settings.SECRET_KEY, "get_secret_value")
+            else settings.SECRET_KEY
+        ),
         "access_token_expire_minutes": settings.ACCESS_TOKEN_EXPIRE_MINUTES,
         "refresh_token_expire_days": settings.REFRESH_TOKEN_EXPIRE_DAYS,
     }
 
+
 security_bearer = HTTPBearer(
     scheme_name="JWT",
     description="Enter JWT token as: Bearer <token>",
-    auto_error=False
+    auto_error=False,
 )
 
 oauth2_scheme = OAuth2PasswordBearer(
     tokenUrl=f"{settings.API_V1_STR}/register/login",
     scheme_name="OAuth2",
-    auto_error=False
+    auto_error=False,
 )
+
 
 class TokenPayload:
     def __init__(self, **kwargs):
@@ -72,6 +88,7 @@ class TokenPayload:
         self.sid: Optional[str] = kwargs.get("sid")
         self.csrf_hash: Optional[str] = kwargs.get("csrf_hash")
 
+
 class TokenPair:
     def __init__(
         self,
@@ -86,35 +103,42 @@ class TokenPair:
         self.session_id = session_id
         self.token_type = "bearer"
 
+
 def create_access_token(
     data: Dict[str, Any],
     expires_delta: Optional[timedelta] = None,
-    token_type: str = "access"
+    token_type: str = "access",
 ) -> str:
     jwt_settings = get_jwt_settings()
     to_encode = data.copy()
-    
+
     if expires_delta:
         expire = datetime.now(timezone.utc) + expires_delta
     elif token_type == "refresh":
-        expire = datetime.now(timezone.utc) + timedelta(days=settings.REFRESH_TOKEN_EXPIRE_DAYS)
+        expire = datetime.now(timezone.utc) + timedelta(
+            days=settings.REFRESH_TOKEN_EXPIRE_DAYS
+        )
     else:
-        expire = datetime.now(timezone.utc) + timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
-    
-    to_encode.update({
-        "exp": expire,
-        "iat": datetime.now(timezone.utc),
-        "type": token_type,
-    })
-    
-    import uuid
-    to_encode["jti"] = str(uuid.uuid4())
-    
-    return jwt.encode(
-        to_encode,
-        jwt_settings["secret_key"],
-        algorithm=jwt_settings["algorithm"]
+        expire = datetime.now(timezone.utc) + timedelta(
+            minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES
+        )
+
+    to_encode.update(
+        {
+            "exp": expire,
+            "iat": datetime.now(timezone.utc),
+            "type": token_type,
+        }
     )
+
+    import uuid
+
+    to_encode["jti"] = str(uuid.uuid4())
+
+    return jwt.encode(
+        to_encode, jwt_settings["secret_key"], algorithm=jwt_settings["algorithm"]
+    )
+
 
 def csrf_token_digest(token: str) -> str:
     return hashlib.sha256(token.encode("utf-8")).hexdigest()
@@ -125,6 +149,7 @@ def create_token_pair(
     scopes: Optional[List[str]] = None,
     *,
     session_id: Optional[str] = None,
+    session_expires_at: Optional[datetime] = None,
 ) -> TokenPair:
     session_id = session_id or uuid.uuid4().hex
     csrf_token = secrets.token_urlsafe(32)
@@ -136,13 +161,24 @@ def create_token_pair(
         "auth_version": user.auth_version,
         "sid": session_id,
     }
-    
-    access_token = create_access_token(data, token_type="access")
+
+    remaining = (
+        ensure_utc(session_expires_at) - now_utc() if session_expires_at else None
+    )
+    access_lifetime = (
+        min(remaining, timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES))
+        if remaining
+        else None
+    )
+    access_token = create_access_token(
+        data, expires_delta=access_lifetime, token_type="access"
+    )
     refresh_token = create_access_token(
         {**data, "csrf_hash": csrf_token_digest(csrf_token)},
         token_type="refresh",
+        expires_delta=remaining,
     )
-    
+
     return TokenPair(
         access_token=access_token,
         refresh_token=refresh_token,
@@ -150,14 +186,41 @@ def create_token_pair(
         session_id=session_id,
     )
 
+
+async def require_auth_store() -> None:
+    """Redis outage is an infrastructure error, never a replay signal."""
+    if not settings.is_production:
+        return
+    try:
+        redis = get_redis()
+        if redis is None or not await redis.ping():
+            raise ConnectionError("Redis unavailable")
+    except Exception as exc:
+        raise CustomError(
+            ErrorCodes.INTERNAL, "Authentication temporarily unavailable", 503
+        ) from exc
+
+
+async def issue_token_pair(user: User, scopes: Optional[List[str]] = None) -> TokenPair:
+    await require_auth_store()
+    expires_at = now_utc() + timedelta(days=settings.REFRESH_TOKEN_EXPIRE_DAYS)
+    pair = create_token_pair(user, scopes, session_expires_at=expires_at)
+    await AuthSession(
+        sid=pair.session_id,
+        user_id=user.id,
+        auth_version=user.auth_version,
+        refresh_digest=hashlib.sha256(pair.refresh_token.encode()).hexdigest(),
+        expires_at=expires_at,
+    ).insert()
+    return pair
+
+
 def decode_jwt_token(token: str) -> Optional[TokenPayload]:
     jwt_settings = get_jwt_settings()
-    
+
     try:
         payload = jwt.decode(
-            token,
-            jwt_settings["secret_key"],
-            algorithms=[jwt_settings["algorithm"]]
+            token, jwt_settings["secret_key"], algorithms=[jwt_settings["algorithm"]]
         )
         return TokenPayload(**payload)
     except JWTError as e:
@@ -167,8 +230,20 @@ def decode_jwt_token(token: str) -> Optional[TokenPayload]:
         logger.error(f"Unexpected token decode error: {e}")
         return None
 
+
 def get_password_hash(password: str) -> str:
     return get_password_context().hash(password)
+
+
+async def get_password_hash_async(password: str) -> str:
+    from app.core.password_work import run_password_work
+    return await run_password_work(get_password_hash, password)
+
+
+async def verify_password_async(plain_password: str, hashed_password: str) -> bool:
+    from app.core.password_work import run_password_work
+    return await run_password_work(verify_password, plain_password, hashed_password)
+
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
     try:
@@ -177,16 +252,22 @@ def verify_password(plain_password: str, hashed_password: str) -> bool:
         logger.error(f"Password verification error: {e}")
         return False
 
+
 def password_strength_check(password: str) -> Dict[str, Any]:
     issues = []
-    
+
     if len(password) < settings.PASSWORD_MIN_LENGTH:
-        issues.append(f"Password must be at least {settings.PASSWORD_MIN_LENGTH} characters")
-    
+        issues.append(
+            f"Password must be at least {settings.PASSWORD_MIN_LENGTH} characters"
+        )
+
     if len(password) > settings.PASSWORD_MAX_LENGTH:
-        issues.append(f"Password must be at most {settings.PASSWORD_MAX_LENGTH} characters")
-    
+        issues.append(
+            f"Password must be at most {settings.PASSWORD_MAX_LENGTH} characters"
+        )
+
     import re
+
     if not re.search(r"[A-Z]", password):
         issues.append("Password must contain at least one uppercase letter")
     if not re.search(r"[a-z]", password):
@@ -195,22 +276,27 @@ def password_strength_check(password: str) -> Dict[str, Any]:
     #     issues.append("Password must contain at least one digit")
     # if not re.search(r"[!@#$%^&*(),.?\":{}|<>]", password):
     #     issues.append("Password must contain at least one special character")
-    
+
     return {
         "is_valid": len(issues) == 0,
         "issues": issues,
-        "score": max(0, 100 - len(issues) * 20)  # Simple score calculation
+        "score": max(0, 100 - len(issues) * 20),  # Simple score calculation
     }
+
 
 async def is_token_blacklisted(token: str, redis: Optional[Redis] = None) -> bool:
     try:
         if not redis:
             redis = get_redis()
-        
+
         if not redis:
             from app.core.security import _in_memory_blacklist
-            return hashlib.sha256(token.encode("utf-8")).hexdigest() in _in_memory_blacklist
-        
+
+            return (
+                hashlib.sha256(token.encode("utf-8")).hexdigest()
+                in _in_memory_blacklist
+            )
+
         token_key = cache.cache_key(
             "blacklist", "token", hashlib.sha256(token.encode("utf-8")).hexdigest()
         )
@@ -219,25 +305,25 @@ async def is_token_blacklisted(token: str, redis: Optional[Redis] = None) -> boo
         logger.error(f"Error checking token blacklist: {e}")
         return False
 
+
 async def blacklist_token(
-    token: str, 
-    expires_in: Optional[int] = None,
-    redis: Optional[Redis] = None
+    token: str, expires_in: Optional[int] = None, redis: Optional[Redis] = None
 ):
     try:
         if not redis:
             redis = get_redis()
-        
+
         if not redis:
             from app.core.security import _in_memory_blacklist
+
             _in_memory_blacklist.add(hashlib.sha256(token.encode("utf-8")).hexdigest())
             return
-        
+
         token_key = cache.cache_key(
             "blacklist", "token", hashlib.sha256(token.encode("utf-8")).hexdigest()
         )
         expire_seconds = expires_in or settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60
-        
+
         await redis.setex(token_key, expire_seconds, "1")
         logger.debug(f"Token blacklisted: {token_key}")
     except Exception as e:
@@ -273,58 +359,69 @@ async def consume_refresh_token(token: str, expires_in: Optional[int] = None) ->
 async def is_refresh_session_revoked(session_id: str) -> bool:
     if not session_id:
         return True
-    redis = get_redis()
-    if not redis:
-        if settings.is_production:
-            logger.error("Redis is unavailable; refusing refresh-session validation")
-            return True
-        return session_id in _in_memory_revoked_sessions
-
-    key = cache.cache_key("blacklist", "refresh-session", session_id)
+    await require_auth_store()
     try:
-        return bool(await redis.exists(key))
-    except Exception:
-        logger.exception("Could not validate refresh session")
-        return True
+        session = await AuthSession.find_one(
+            {"sid": session_id, "revoked_at": None, "expires_at": {"$gt": now_utc()}}
+        )
+        return session is None
+    except Exception as exc:
+        raise CustomError(
+            ErrorCodes.INTERNAL, "Authentication temporarily unavailable", 503
+        ) from exc
 
 
-async def revoke_refresh_session(session_id: str, expires_in: Optional[int] = None) -> bool:
+async def revoke_refresh_session(
+    session_id: str, expires_in: Optional[int] = None
+) -> bool:
     if not session_id:
         return False
-    redis = get_redis()
-    if not redis:
-        if settings.is_production:
-            logger.error("Redis is unavailable; could not revoke refresh session")
-            return False
-        _in_memory_revoked_sessions.add(session_id)
-        return True
-
-    key = cache.cache_key("blacklist", "refresh-session", session_id)
-    ttl = expires_in or settings.REFRESH_TOKEN_EXPIRE_DAYS * 24 * 60 * 60
+    await require_auth_store()
     try:
-        await redis.setex(key, max(1, ttl), "1")
+        # expires_in from an old token must never shorten the session lifetime.
+        # Missing/deleted sessions are invalid; revocation cannot be undone.
+        await AuthSession.find_one({"sid": session_id, "revoked_at": None}).update(
+            {"$set": {"revoked_at": now_utc()}}
+        )
         return True
     except Exception:
         logger.exception("Could not revoke refresh session")
         return False
 
-async def blacklist_token_by_jti(jti: str, expires_in: Optional[int] = None, redis: Optional[Redis] = None):
+
+async def blacklist_token_by_jti(
+    jti: str, expires_in: Optional[int] = None, redis: Optional[Redis] = None
+):
     try:
         if not redis:
             redis = get_redis()
-        
+
         jti_key = cache.cache_key("blacklist", "jti", jti)
         expire_seconds = expires_in or settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60
-        
+
         await redis.setex(jti_key, expire_seconds, "1")
         logger.debug(f"Token JTI blacklisted: {jti_key}")
     except Exception as e:
         logger.error(f"Error blacklisting token JTI: {e}")
 
-class CurrentUser:    
+
+class CurrentUser:
+    # Global RBAC changes can indirectly grant every application permission.
+    # They cannot be delegated through the same roles they are able to modify.
+    SUPERUSER_ONLY_PERMISSIONS = frozenset(
+        {
+            "actors:create",
+            "actors:edit",
+            "actors:delete",
+            "permissions:create",
+            "permissions:edit",
+            "permissions:delete",
+        }
+    )
+
     def __init__(
-        self, 
-        user: User, 
+        self,
+        user: User,
         actors: Optional[List[Actor]] = None,
         permissions: Optional[List[Permission]] = None,
         token_payload: Optional[TokenPayload] = None,
@@ -336,13 +433,15 @@ class CurrentUser:
         self.actors = actors or []
         self.permissions = permissions or []
         self.token_payload = token_payload
-        self._permission_names = permission_names or {perm.name for perm in self.permissions}
+        self._permission_names = permission_names or {
+            perm.name for perm in self.permissions
+        }
         self._actor_names = actor_names or {actor.name for actor in self.actors}
         self._scopes = set(token_payload.scopes if token_payload else [])
-    
+
     def __getattr__(self, item):
         return getattr(self.user, item)
-    
+
     @property
     def email(self) -> str:
         return self.user.email
@@ -350,35 +449,44 @@ class CurrentUser:
     @property
     def user_id(self) -> Optional[str]:
         return str(self.user.id) if self.user.id else None
-    
+
     @property
     def is_admin(self) -> bool:
         return self.is_superuser or settings.ADMIN_ROLE_NAME in self._actor_names
-    
+
     @property
     def is_recruiter(self) -> bool:
         return settings.RECRUITER_ROLE_NAME in self._actor_names
-    
+
     @property
     def is_candidate(self) -> bool:
         return settings.CANDIDATE_ROLE_NAME in self._actor_names
-    
+
     @property
     def is_superuser(self) -> bool:
-        return self.user.is_superuser if hasattr(self.user, 'is_superuser') else False
-    
+        return self.user.is_superuser if hasattr(self.user, "is_superuser") else False
+
     def has_permission(self, permission: str) -> bool:
-        return self.is_superuser or permission in self._permission_names
-    
+        if self.is_superuser:
+            return True
+        return (
+            permission not in self.SUPERUSER_ONLY_PERMISSIONS
+            and permission in self._permission_names
+        )
+
     def has_any_permission(self, *permissions: str) -> bool:
-        return self.is_superuser or any(perm in self._permission_names for perm in permissions)
-    
+        return self.is_superuser or any(
+            self.has_permission(perm) for perm in permissions
+        )
+
     def has_all_permissions(self, *permissions: str) -> bool:
-        return self.is_superuser or all(perm in self._permission_names for perm in permissions)
-    
+        return self.is_superuser or all(
+            self.has_permission(perm) for perm in permissions
+        )
+
     def has_scope(self, scope: str) -> bool:
         return scope in self._scopes
-    
+
     def to_dict(self) -> Dict[str, Any]:
         return {
             "user_id": self.user_id,
@@ -391,39 +499,40 @@ class CurrentUser:
             "scopes": list(self._scopes),
         }
 
+
 async def get_token_from_request(
     request: Request,
     credentials: Optional[HTTPAuthorizationCredentials] = Depends(security_bearer),
-    token: Optional[str] = Depends(oauth2_scheme)
+    token: Optional[str] = Depends(oauth2_scheme),
 ) -> Optional[str]:
     if credentials:
         return credentials.credentials
-    
+
     if token:
         return token
-    
+
     return None
 
+
 async def get_current_user(
-    request: Request,
-    token: Optional[str] = Depends(get_token_from_request)
+    request: Request, token: Optional[str] = Depends(get_token_from_request)
 ) -> CurrentUser:
     from app.dependencies.error_code import ErrorCode
-    
+
     if not token:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail=ErrorCode.INVALID_CREDENTIALS,
             headers={"WWW-Authenticate": "Bearer"},
         )
-    
+
     if await is_token_blacklisted(token):
         logger.warning(f"Blacklisted token attempt: {token[:20]}...")
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail=ErrorCode.TOKEN_EXPIRED,
         )
-    
+
     token_payload = decode_jwt_token(token)
     if not token_payload or not token_payload.sub:
         raise HTTPException(
@@ -440,54 +549,51 @@ async def get_current_user(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail=ErrorCode.TOKEN_EXPIRED,
         )
-    
-    if token_payload.exp and datetime.fromtimestamp(token_payload.exp, tz=timezone.utc) < datetime.now(timezone.utc):
+
+    if token_payload.exp and datetime.fromtimestamp(
+        token_payload.exp, tz=timezone.utc
+    ) < datetime.now(timezone.utc):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail=ErrorCode.TOKEN_EXPIRED,
         )
-    
-    user = await User.find_one(User.email == token_payload.email, User.is_active == True)
+
+    user = await User.find_one(
+        User.email == token_payload.email, User.is_active == True
+    )
     if not user:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail=ErrorCode.USER_NOT_FOUND,
         )
-    if token_payload.auth_version != user.auth_version:
+    if token_payload.auth_version != user.auth_version or token_payload.user_id != str(
+        user.id
+    ):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail=ErrorCode.TOKEN_EXPIRED,
         )
-    
-    authz_key = cache.authorization_key(str(user.id))
-    cached_authz = await cache.get_json(authz_key)
+
     actors = []
     permissions = []
-    actor_names: Set[str] = set()
-    permission_names: Set[str] = set()
-    if cached_authz:
-        actor_names = set(cached_authz.get("actors", []))
-        permission_names = set(cached_authz.get("permissions", []))
-    else:
-        actor_links = await UserActor.find(UserActor.user_id == user.id).to_list()
-        actor_ids = list({link.actor_id for link in actor_links})
-        if actor_ids:
-            actors = await Actor.find({"_id": {"$in": actor_ids}, "is_active": True}).to_list()
-        active_actor_ids = [actor.id for actor in actors]
-        if active_actor_ids:
-            perm_links = await ActorPermission.find({"actor_id": {"$in": active_actor_ids}}).to_list()
-            permission_ids = list({link.permission_id for link in perm_links})
-            if permission_ids:
-                permissions = await Permission.find(
-                    {"_id": {"$in": permission_ids}, "is_active": True}
-                ).to_list()
-        actor_names = {actor.name for actor in actors}
-        permission_names = {permission.name for permission in permissions}
-        await cache.set_json(
-            authz_key,
-            {"actors": sorted(actor_names), "permissions": sorted(permission_names)},
-            settings.AUTHZ_CACHE_TTL,
-        )
+    actor_links = await UserActor.find(UserActor.user_id == user.id).to_list()
+    actor_ids = list({link.actor_id for link in actor_links})
+    if actor_ids:
+        actors = await Actor.find(
+            {"_id": {"$in": actor_ids}, "is_active": True}
+        ).to_list()
+    active_actor_ids = [actor.id for actor in actors]
+    if active_actor_ids:
+        perm_links = await ActorPermission.find(
+            {"actor_id": {"$in": active_actor_ids}}
+        ).to_list()
+        permission_ids = list({link.permission_id for link in perm_links})
+        if permission_ids:
+            permissions = await Permission.find(
+                {"_id": {"$in": permission_ids}, "is_active": True}
+            ).to_list()
+    actor_names = {actor.name for actor in actors}
+    permission_names = {permission.name for permission in permissions}
     return CurrentUser(
         user=user,
         actors=actors,
@@ -497,10 +603,12 @@ async def get_current_user(
         permission_names=permission_names,
     )
 
+
 async def get_current_active_user(
-    current_user: CurrentUser = Depends(get_current_user)
+    current_user: CurrentUser = Depends(get_current_user),
 ) -> CurrentUser:
     from app.dependencies.error_code import ErrorCode
+
     if not current_user.user.is_active:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -508,13 +616,24 @@ async def get_current_active_user(
         )
     return current_user
 
+
+async def require_superuser(
+    current_user: CurrentUser = Depends(get_current_active_user),
+) -> CurrentUser:
+    if not current_user.is_superuser:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN, detail="Superuser required"
+        )
+    return current_user
+
+
 @lru_cache(maxsize=256)
 def require_permission(permission: str) -> Callable:
     async def permission_dependency(
-        current_user: CurrentUser = Depends(get_current_active_user)
+        current_user: CurrentUser = Depends(get_current_active_user),
     ) -> CurrentUser:
         from app.dependencies.error_code import ErrorCode
-        
+
         if not current_user.has_permission(permission):
             logger.warning(
                 f"Permission denied for user {current_user.email}. "
@@ -525,16 +644,17 @@ def require_permission(permission: str) -> Callable:
                 detail=ErrorCode.FORBIDDEN,
             )
         return current_user
-    
+
     return permission_dependency
+
 
 @lru_cache(maxsize=256)
 def require_any_permission(*permissions: str) -> Callable:
     async def any_permission_dependency(
-        current_user: CurrentUser = Depends(get_current_active_user)
+        current_user: CurrentUser = Depends(get_current_active_user),
     ) -> CurrentUser:
         from app.dependencies.error_code import ErrorCode
-        
+
         if not current_user.has_any_permission(*permissions):
             logger.warning(
                 f"Any permission denied for user {current_user.email}. "
@@ -545,15 +665,16 @@ def require_any_permission(*permissions: str) -> Callable:
                 detail=ErrorCode.FORBIDDEN,
             )
         return current_user
-    
+
     return any_permission_dependency
+
 
 def require_all_permissions(*permissions: str) -> Callable:
     async def all_permission_dependency(
-        current_user: CurrentUser = Depends(get_current_active_user)
+        current_user: CurrentUser = Depends(get_current_active_user),
     ) -> CurrentUser:
         from app.dependencies.error_code import ErrorCode
-        
+
         if not current_user.has_all_permissions(*permissions):
             logger.warning(
                 f"All permissions denied for user {current_user.email}. "
@@ -564,15 +685,16 @@ def require_all_permissions(*permissions: str) -> Callable:
                 detail=ErrorCode.FORBIDDEN,
             )
         return current_user
-    
+
     return all_permission_dependency
+
 
 def require_role(role_name: str) -> Callable:
     async def role_dependency(
-        current_user: CurrentUser = Depends(get_current_active_user)
+        current_user: CurrentUser = Depends(get_current_active_user),
     ) -> CurrentUser:
         from app.dependencies.error_code import ErrorCode
-        
+
         if not current_user.is_superuser and role_name not in current_user._actor_names:
             logger.warning(
                 f"Role denied for user {current_user.email}. "
@@ -583,17 +705,21 @@ def require_role(role_name: str) -> Callable:
                 detail=ErrorCode.FORBIDDEN,
             )
         return current_user
-    
+
     return role_dependency
+
 
 def require_admin() -> Callable:
     return require_role(settings.ADMIN_ROLE_NAME)
 
+
 def require_recruiter() -> Callable:
     return require_role(settings.RECRUITER_ROLE_NAME)
 
+
 def require_candidate() -> Callable:
     return require_role(settings.CANDIDATE_ROLE_NAME)
+
 
 def get_client_identifier(request: Request) -> str:
     auth_header = request.headers.get("Authorization")
@@ -602,25 +728,27 @@ def get_client_identifier(request: Request) -> str:
         payload = decode_jwt_token(token)
         if payload and payload.user_id:
             return f"user:{payload.user_id}"
-    
+
     # Do not trust X-Forwarded-For unless a trusted-proxy middleware has
     # validated it. An attacker can otherwise choose the rate-limit key.
     ip = request.client.host if request.client else "unknown"
-    
+
     return f"ip:{ip}"
 
+
 from app.models.audit_log import AuditEventType, AuditSeverity
- 
+
+
 async def log_security_event(
     event_type: str,
-    event_name:str,
+    event_name: str,
     user_id: Optional[str] = None,
-    description: Optional[str]= None,
+    description: Optional[str] = None,
     email: Optional[str] = None,
     ip_address: Optional[str] = None,
     user_agent: Optional[str] = None,
     details: Optional[Dict] = None,
-    success: bool = True
+    success: bool = True,
 ):
     try:
         from app.services.audit_log_service import AuditLogService
@@ -636,22 +764,24 @@ async def log_security_event(
                 audit_event_type = AuditEventType.USER_LOGIN_FAILED
             else:
                 audit_event_type = AuditEventType.CUSTOM_EVENT
-        
+
         await AuditLogService.log_security_event(
             event_type=audit_event_type,
-            description= description,
+            description=description,
             user_id=user_id,
             event_name=event_name,
             user_email=email,
             user_ip=ip_address,
             user_agent=user_agent,
             details=details or {},
-            success=success
+            success=success,
         )
-        
+
     except Exception as e:
         from app.logs.logging_config import logger
+
         logger.error(f"Failed to log security event: {e}", exc_info=True)
+
 
 # In-memory fallback for blacklist (when Redis is not available)
 _in_memory_blacklist: Set[str] = set()

@@ -48,7 +48,7 @@ async def test_update_user_success(mock_user, current_user):
             user = await UserService.update_user(str(mock_user.id), update_data, current_user)
             
             assert user.full_name == "New Name"
-            mock_update.assert_called_once_with(str(mock_user.id), update_data)
+            mock_update.assert_called_once_with(str(mock_user.id), update_data, allow_superuser=False)
 
 @pytest.mark.asyncio
 async def test_update_user_forbidden_field(mock_user, current_user):

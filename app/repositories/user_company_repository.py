@@ -1,3 +1,4 @@
+from app.core.transactions import current_session, defer_after_commit
 from typing import List, Optional, Dict, Any, Tuple
 from datetime import datetime, timedelta
 from bson import ObjectId
@@ -10,7 +11,7 @@ from app.models.user import User
 from app.schemas.user_company import (
     AssignUserToCompanyBranch,
     UserCompanyResponse,
-    UserCompanyStats
+    UserCompanyStats,
 )
 from app.core.redis import get_redis, is_redis_available
 from app.core import cache as shared_cache
@@ -22,30 +23,32 @@ logger = logging.getLogger(__name__)
 
 class UserCompanyRepository:
     CACHE_PREFIX = shared_cache.cache_key("user-company") + ":"
-    ASSIGNMENT_CACHE_TTL = 3600  
-    USER_ASSIGNMENTS_CACHE_TTL = 1800  
-    BRANCH_ASSIGNMENTS_CACHE_TTL = 1800  
-    
+    ASSIGNMENT_CACHE_TTL = 3600
+    USER_ASSIGNMENTS_CACHE_TTL = 1800
+    BRANCH_ASSIGNMENTS_CACHE_TTL = 1800
+
     @staticmethod
     def _get_assignment_cache_key(assignment_id: str) -> str:
         return f"{UserCompanyRepository.CACHE_PREFIX}assignment:{assignment_id}"
-    
+
     @staticmethod
     def _get_user_assignments_cache_key(user_id: str, active_only: bool = True) -> str:
         return f"{UserCompanyRepository.CACHE_PREFIX}user_assignments:{user_id}:{'active' if active_only else 'all'}"
-    
+
     @staticmethod
-    def _get_branch_assignments_cache_key(branch_id: str, active_only: bool = True) -> str:
+    def _get_branch_assignments_cache_key(
+        branch_id: str, active_only: bool = True
+    ) -> str:
         return f"{UserCompanyRepository.CACHE_PREFIX}branch_assignments:{branch_id}:{'active' if active_only else 'all'}"
-    
+
     @staticmethod
     def _get_user_branch_cache_key(user_id: str, branch_id: str) -> str:
         return f"{UserCompanyRepository.CACHE_PREFIX}user_branch:{user_id}:{branch_id}"
-    
+
     @staticmethod
     def _get_branch_stats_cache_key(branch_id: str) -> str:
         return f"{UserCompanyRepository.CACHE_PREFIX}branch_stats:{branch_id}"
-    
+
     @staticmethod
     @monitor_db_operation("user_company_assign")
     async def assign_user_to_branch(
@@ -55,24 +58,30 @@ class UserCompanyRepository:
         role: str = "member",
         permissions: Optional[List[str]] = None,
         start_date: Optional[datetime] = None,
-        end_date: Optional[datetime] = None
+        end_date: Optional[datetime] = None,
     ) -> Optional[UserCompany]:
         try:
-            existing_assignment = await UserCompany.find_one({
-                "user_id": ObjectId(user_id),
-                "company_branch_id": ObjectId(company_branch_id),
-                "is_active": True
-            })
-            
+            existing_assignment = await UserCompany.find_one(
+                {
+                    "user_id": ObjectId(user_id),
+                    "company_branch_id": ObjectId(company_branch_id),
+                    "is_active": True,
+                },
+                session=current_session(),
+            )
+
             if existing_assignment:
                 raise ValueError("User is already assigned to this branch")
-            
-            inactive_assignment = await UserCompany.find_one({
-                "user_id": ObjectId(user_id),
-                "company_branch_id": ObjectId(company_branch_id),
-                "is_active": False
-            })
-            
+
+            inactive_assignment = await UserCompany.find_one(
+                {
+                    "user_id": ObjectId(user_id),
+                    "company_branch_id": ObjectId(company_branch_id),
+                    "is_active": False,
+                },
+                session=current_session(),
+            )
+
             if inactive_assignment:
                 inactive_assignment.is_active = True
                 inactive_assignment.role = role
@@ -82,10 +91,12 @@ class UserCompanyRepository:
                 inactive_assignment.unassigned_at = None
                 inactive_assignment.unassigned_by = None
                 inactive_assignment.updated_at = now_utc()
-                await inactive_assignment.save()
-                
+                await inactive_assignment.save(session=current_session())
+
                 assignment = inactive_assignment
-                logger.info(f"Reactivated assignment: {assignment.id} for user {user_id} to branch {company_branch_id}")
+                logger.info(
+                    f"Reactivated assignment: {assignment.id} for user {user_id} to branch {company_branch_id}"
+                )
             else:
                 assignment = UserCompany(
                     user_id=ObjectId(user_id),
@@ -98,15 +109,17 @@ class UserCompanyRepository:
                     end_date=end_date,
                     is_active=True,
                     created_at=now_utc(),
-                    updated_at=now_utc()
+                    updated_at=now_utc(),
                 )
-                await assignment.insert()
-                logger.info(f"Created new assignment: {assignment.id} for user {user_id} to branch {company_branch_id}")
-            
+                await assignment.insert(session=current_session())
+                logger.info(
+                    f"Created new assignment: {assignment.id} for user {user_id} to branch {company_branch_id}"
+                )
+
             await UserCompanyRepository._invalidate_assignment_caches(assignment)
-            
+
             return assignment
-            
+
         except ValueError as e:
             raise
         except DuplicateKeyError as e:
@@ -115,179 +128,144 @@ class UserCompanyRepository:
         except Exception as e:
             logger.error(f"Error assigning user to branch: {e}", exc_info=True)
             raise
-    
+
     @staticmethod
     @monitor_db_operation("user_company_unassign")
     async def unassign_user_from_branch(
         user_id: str,
         company_branch_id: str,
         unassigned_by: str,
-        reason: Optional[str] = None
+        reason: Optional[str] = None,
     ) -> bool:
         try:
-            assignment = await UserCompany.find_one({
-                "user_id": ObjectId(user_id),
-                "company_branch_id": ObjectId(company_branch_id),
-                "is_active": True
-            })
-            
+            assignment = await UserCompany.find_one(
+                {
+                    "user_id": ObjectId(user_id),
+                    "company_branch_id": ObjectId(company_branch_id),
+                    "is_active": True,
+                },
+                session=current_session(),
+            )
+
             if not assignment:
                 return False
-            
+
             assignment.is_active = False
             assignment.unassigned_at = now_utc()
             assignment.unassigned_by = ObjectId(unassigned_by)
             assignment.unassign_reason = reason
             assignment.updated_at = now_utc()
-            await assignment.save()
-            
+            await assignment.save(session=current_session())
+
             await UserCompanyRepository._invalidate_assignment_caches(assignment)
-            
+
             logger.info(f"Unassigned user {user_id} from branch {company_branch_id}")
             return True
-            
+
         except Exception as e:
             logger.error(f"Error unassigning user from branch: {e}", exc_info=True)
             return False
-    
+
     @staticmethod
     @monitor_db_operation("user_company_delete")
-    async def delete_assignment(
-        assignment_id: str,
-        deleted_by: str
-    ) -> bool:
+    async def delete_assignment(assignment_id: str, deleted_by: str) -> bool:
         try:
-            assignment = await UserCompany.get(ObjectId(assignment_id))
+            assignment = await UserCompany.get(
+                ObjectId(assignment_id), session=current_session()
+            )
             if not assignment:
                 return False
-            
+
             audit_data = {
                 "deleted_assignment": assignment.dict(),
                 "deleted_by": deleted_by,
-                "deleted_at": now_utc()
+                "deleted_at": now_utc(),
             }
-            
-            await assignment.delete()
-            
+
+            await assignment.delete(session=current_session())
+
             await UserCompanyRepository._invalidate_assignment_caches(assignment)
-            
+
             logger.warning(f"HARD DELETE assignment {assignment_id}: {audit_data}")
-            
+
             return True
-            
+
         except Exception as e:
-            logger.error(f"Error deleting assignment {assignment_id}: {e}", exc_info=True)
+            logger.error(
+                f"Error deleting assignment {assignment_id}: {e}", exc_info=True
+            )
             return False
-        
+
     @staticmethod
     @monitor_db_operation("user_company_get")
     @monitor_cache_operation("user_company_get")
     async def get_assignment(assignment_id: str) -> Optional[UserCompany]:
-        cache_key = UserCompanyRepository._get_assignment_cache_key(assignment_id)
-        cached_data = await UserCompanyRepository._get_from_cache(cache_key)
-        
-        if cached_data:
-            logger.debug(f"Cache hit for assignment: {assignment_id}")
-            assignment = UserCompany.model_validate(cached_data)
-            setattr(assignment, '_from_cache', True)
-            return assignment
-        
-        try:
-            assignment = await UserCompany.get(ObjectId(assignment_id))
-            if assignment:
-                await UserCompanyRepository._set_cache(
-                    cache_key,
-                    assignment.dict(),
-                    UserCompanyRepository.ASSIGNMENT_CACHE_TTL
-                )
-                logger.debug(f"Cache set for assignment: {assignment_id}")
-            return assignment
-        except Exception as e:
-            logger.error(f"Error getting assignment {assignment_id}: {e}")
-            return None
-    
+        return await UserCompany.get(ObjectId(assignment_id), session=current_session())
+
     @staticmethod
     @monitor_db_operation("user_company_get_user_branch")
     @monitor_cache_operation("user_company_get_user_branch")
     async def get_user_branch_assignment(
-        user_id: str,
-        company_branch_id: str
+        user_id: str, company_branch_id: str
     ) -> Optional[UserCompany]:
-        cache_key = UserCompanyRepository._get_user_branch_cache_key(user_id, company_branch_id)
-        cached_data = await UserCompanyRepository._get_from_cache(cache_key)
-        
-        if cached_data:
-            logger.debug(f"Cache hit for user-branch assignment: {user_id}:{company_branch_id}")
-            assignment = UserCompany.model_validate(cached_data)
-            setattr(assignment, '_from_cache', True)
-            return assignment
-        
-        try:
-            assignment = await UserCompany.find_one({
+        from app.core.tenant_policy import active_membership_filter
+
+        return await UserCompany.find_one(
+            {
                 "user_id": ObjectId(user_id),
                 "company_branch_id": ObjectId(company_branch_id),
-                "is_active": True
-            })
-            
-            if assignment:
-                await UserCompanyRepository._set_cache(
-                    cache_key,
-                    assignment.dict(),
-                    UserCompanyRepository.ASSIGNMENT_CACHE_TTL
-                )
-                logger.debug(f"Cache set for user-branch assignment: {user_id}:{company_branch_id}")
-            
-            return assignment
-        except Exception as e:
-            logger.error(f"Error getting user-branch assignment: {e}")
-            return None
-    
+                **active_membership_filter(),
+            },
+            session=current_session(),
+        )
+
     @staticmethod
     @monitor_db_operation("user_company_list_user")
     @monitor_cache_operation("user_company_list_user")
     async def list_user_assignments(
-        user_id: str,
-        active_only: bool = True,
-        skip: int = 0,
-        limit: int = 100
+        user_id: str, active_only: bool = True, skip: int = 0, limit: int = 100
     ) -> List[UserCompany]:
-        cache_key = UserCompanyRepository._get_user_assignments_cache_key(user_id, active_only)
+        cache_key = UserCompanyRepository._get_user_assignments_cache_key(
+            user_id, active_only
+        )
         cached_data = await UserCompanyRepository._get_from_cache(cache_key)
-        
+
         if cached_data:
             logger.debug(f"Cache hit for user assignments: {user_id}")
             assignments = [UserCompany.model_validate(item) for item in cached_data]
             for assignment in assignments:
-                setattr(assignment, '_from_cache', True)
+                setattr(assignment, "_from_cache", True)
             return assignments
-        
+
         try:
             query = {"user_id": ObjectId(user_id)}
             if active_only:
                 query["is_active"] = True
-            
-            cursor = UserCompany.find(query).sort([("assigned_at", -1)])
-            
+
+            cursor = UserCompany.find(query, session=current_session()).sort(
+                [("assigned_at", -1), ("_id", -1)]
+            )
+
             if skip > 0:
                 cursor = cursor.skip(skip)
             if limit > 0:
                 cursor = cursor.limit(limit)
-            
+
             assignments = await cursor.to_list()
-            
+
             if assignments:
                 await UserCompanyRepository._set_cache(
                     cache_key,
                     [assignment.dict() for assignment in assignments],
-                    UserCompanyRepository.USER_ASSIGNMENTS_CACHE_TTL
+                    UserCompanyRepository.USER_ASSIGNMENTS_CACHE_TTL,
                 )
                 logger.debug(f"Cache set for user assignments: {user_id}")
-            
+
             return assignments
         except Exception as e:
             logger.error(f"Error listing user assignments: {e}")
             return []
-    
+
     @staticmethod
     @monitor_db_operation("user_company_list_branch")
     @monitor_cache_operation("user_company_list_branch")
@@ -295,52 +273,31 @@ class UserCompanyRepository:
         company_branch_id: str,
         active_only: bool = True,
         skip: int = 0,
-        limit: int = 100
+        limit: int = 100,
     ) -> Tuple[List[UserCompany], int]:
-        cache_key = UserCompanyRepository._get_branch_assignments_cache_key(company_branch_id, active_only)
-        cached_data = await UserCompanyRepository._get_from_cache(cache_key)
-        
-        if cached_data:
-            logger.debug(f"Cache hit for branch assignments: {company_branch_id}")
-            assignments = [UserCompany.model_validate(item) for item in cached_data.get("assignments", [])]
-            total = cached_data.get("total", 0)
-            for assignment in assignments:
-                setattr(assignment, '_from_cache', True)
-            return assignments, total
-        
         try:
             query = {"company_branch_id": ObjectId(company_branch_id)}
             if active_only:
                 query["is_active"] = True
-            
-            total = await UserCompany.find(query).count()
-            
-            cursor = UserCompany.find(query).sort([("assigned_at", -1)])
-            
+
+            total = await UserCompany.find(query, session=current_session()).count()
+
+            cursor = UserCompany.find(query, session=current_session()).sort(
+                [("assigned_at", -1), ("_id", -1)]
+            )
+
             if skip > 0:
                 cursor = cursor.skip(skip)
             if limit > 0:
                 cursor = cursor.limit(limit)
-            
+
             assignments = await cursor.to_list()
-            
-            if assignments:
-                cache_data = {
-                    "assignments": [assignment.dict() for assignment in assignments],
-                    "total": total
-                }
-                await UserCompanyRepository._set_cache(
-                    cache_key,
-                    cache_data,
-                    UserCompanyRepository.BRANCH_ASSIGNMENTS_CACHE_TTL
-                )
-                logger.debug(f"Cache set for branch assignments: {company_branch_id}")
-            
+
             return assignments, total
         except Exception as e:
             logger.error(f"Error listing branch assignments: {e}")
-            return [], 0
-    
+            raise
+
     @staticmethod
     @monitor_db_operation("user_company_search")
     async def search_assignments(
@@ -351,236 +308,246 @@ class UserCompanyRepository:
         start_date: Optional[datetime] = None,
         end_date: Optional[datetime] = None,
         skip: int = 0,
-        limit: int = 100
+        limit: int = 100,
     ) -> Tuple[List[UserCompany], int]:
         try:
             query = {}
-            
+
             if company_branch_id:
                 query["company_branch_id"] = ObjectId(company_branch_id)
-            
+
             if user_id:
                 query["user_id"] = ObjectId(user_id)
-            
+
             if role:
                 query["role"] = role
-            
+
             if is_active is not None:
                 query["is_active"] = is_active
-            
+
             # Date range filters
             date_filters = {}
             if start_date:
                 date_filters["$gte"] = start_date
             if end_date:
                 date_filters["$lte"] = end_date
-            
+
             if date_filters:
                 query["assigned_at"] = date_filters
-            
-            total = await UserCompany.find(query).count()
-            
-            cursor = UserCompany.find(query).sort([("assigned_at", -1)])
-            
+
+            total = await UserCompany.find(query, session=current_session()).count()
+
+            cursor = UserCompany.find(query, session=current_session()).sort(
+                [("assigned_at", -1), ("_id", -1)]
+            )
+
             if skip > 0:
                 cursor = cursor.skip(skip)
             if limit > 0:
                 cursor = cursor.limit(limit)
-            
+
             assignments = await cursor.to_list()
-            
+
             return assignments, total
-            
+
         except Exception as e:
             logger.error(f"Error searching assignments: {e}")
             return [], 0
-    
-    
+
     @staticmethod
     @monitor_db_operation("user_company_update_role")
     async def update_assignment_role(
-        assignment_id: str,
-        role: str,
-        updated_by: str
+        assignment_id: str, role: str, updated_by: str
     ) -> Optional[UserCompany]:
         try:
-            assignment = await UserCompany.get(ObjectId(assignment_id))
+            assignment = await UserCompany.get(
+                ObjectId(assignment_id), session=current_session()
+            )
             if not assignment:
                 return None
-            
+
             if not assignment.is_active:
                 raise ValueError("Cannot update role of inactive assignment")
-            
+
             old_role = assignment.role
             assignment.role = role
             assignment.updated_by = ObjectId(updated_by)
             assignment.updated_at = now_utc()
-            await assignment.save()
-            
+            await assignment.save(session=current_session())
+
             await UserCompanyRepository._invalidate_assignment_caches(assignment)
-            
-            logger.info(f"Updated assignment {assignment_id} role from {old_role} to {role}")
+
+            logger.info(
+                f"Updated assignment {assignment_id} role from {old_role} to {role}"
+            )
             return assignment
-            
+
         except ValueError as e:
             raise
         except Exception as e:
             logger.error(f"Error updating assignment role: {e}")
             return None
-    
+
     @staticmethod
     @monitor_db_operation("user_company_update_permissions")
     async def update_assignment_permissions(
-        assignment_id: str,
-        permissions: List[str],
-        updated_by: str
+        assignment_id: str, permissions: List[str], updated_by: str
     ) -> Optional[UserCompany]:
         try:
-            assignment = await UserCompany.get(ObjectId(assignment_id))
+            assignment = await UserCompany.get(
+                ObjectId(assignment_id), session=current_session()
+            )
             if not assignment:
                 return None
-            
+
             if not assignment.is_active:
                 raise ValueError("Cannot update permissions of inactive assignment")
-            
+
             assignment.permissions = permissions
             assignment.updated_by = ObjectId(updated_by)
             assignment.updated_at = now_utc()
-            await assignment.save()
-            
+            await assignment.save(session=current_session())
+
             await UserCompanyRepository._invalidate_assignment_caches(assignment)
-            
+
             logger.info(f"Updated assignment {assignment_id} permissions")
             return assignment
-            
+
         except ValueError as e:
             raise
         except Exception as e:
             logger.error(f"Error updating assignment permissions: {e}")
             return None
-    
+
     @staticmethod
     @monitor_db_operation("user_company_update_dates")
     async def update_assignment_dates(
         assignment_id: str,
         start_date: Optional[datetime] = None,
         end_date: Optional[datetime] = None,
-        updated_by: str = None
+        updated_by: str = None,
     ) -> Optional[UserCompany]:
         try:
-            assignment = await UserCompany.get(ObjectId(assignment_id))
+            assignment = await UserCompany.get(
+                ObjectId(assignment_id), session=current_session()
+            )
             if not assignment:
                 return None
-            
+
             if start_date:
                 assignment.start_date = start_date
-            
+
             if end_date is not None:
                 assignment.end_date = end_date
-            
+
             if updated_by:
                 assignment.updated_by = ObjectId(updated_by)
-            
+
             assignment.updated_at = now_utc()
-            await assignment.save()
-            
+            await assignment.save(session=current_session())
+
             await UserCompanyRepository._invalidate_assignment_caches(assignment)
-            
+
             logger.info(f"Updated assignment {assignment_id} dates")
             return assignment
-            
+
         except Exception as e:
             logger.error(f"Error updating assignment dates: {e}")
             return None
-    
+
     @staticmethod
     @monitor_db_operation("user_company_reactivate")
     async def reactivate_assignment(
         assignment_id: str,
         reactivated_by: str,
         new_role: Optional[str] = None,
-        new_permissions: Optional[List[str]] = None
+        new_permissions: Optional[List[str]] = None,
     ) -> Optional[UserCompany]:
         try:
-            assignment = await UserCompany.get(ObjectId(assignment_id))
+            assignment = await UserCompany.get(
+                ObjectId(assignment_id), session=current_session()
+            )
             if not assignment:
                 return None
-            
+
             if assignment.is_active:
                 raise ValueError("Assignment is already active")
-            
+
             assignment.is_active = True
             assignment.unassigned_at = None
             assignment.unassigned_by = None
             assignment.unassign_reason = None
-            
+
             if new_role:
                 assignment.role = new_role
-            
+
             if new_permissions:
                 assignment.permissions = new_permissions
-            
+
             assignment.updated_by = ObjectId(reactivated_by)
             assignment.updated_at = now_utc()
-            await assignment.save()
-            
+            await assignment.save(session=current_session())
+
             await UserCompanyRepository._invalidate_assignment_caches(assignment)
-            
+
             logger.info(f"Reactivated assignment {assignment_id}")
             return assignment
-            
+
         except ValueError as e:
             raise
         except Exception as e:
             logger.error(f"Error reactivating assignment: {e}")
             return None
-    
-    
+
     @staticmethod
     @monitor_db_operation("user_company_get_stats")
     @monitor_cache_operation("user_company_get_stats")
     async def get_branch_assignment_stats(company_branch_id: str) -> UserCompanyStats:
         cache_key = UserCompanyRepository._get_branch_stats_cache_key(company_branch_id)
         cached_data = await UserCompanyRepository._get_from_cache(cache_key)
-        
+
         if cached_data:
             logger.debug(f"Cache hit for branch stats: {company_branch_id}")
             return UserCompanyStats(**cached_data)
-        
+
         try:
-            active_count = await UserCompany.find({
-                "company_branch_id": ObjectId(company_branch_id),
-                "is_active": True
-            }).count()
-            
-            inactive_count = await UserCompany.find({
-                "company_branch_id": ObjectId(company_branch_id),
-                "is_active": False
-            }).count()
-            
+            active_count = await UserCompany.find(
+                {"company_branch_id": ObjectId(company_branch_id), "is_active": True},
+                session=current_session(),
+            ).count()
+
+            inactive_count = await UserCompany.find(
+                {"company_branch_id": ObjectId(company_branch_id), "is_active": False},
+                session=current_session(),
+            ).count()
+
             pipeline = [
-                {"$match": {
-                    "company_branch_id": ObjectId(company_branch_id),
-                    "is_active": True
-                }},
-                {"$group": {
-                    "_id": "$role",
-                    "count": {"$sum": 1}
-                }}
+                {
+                    "$match": {
+                        "company_branch_id": ObjectId(company_branch_id),
+                        "is_active": True,
+                    }
+                },
+                {"$group": {"_id": "$role", "count": {"$sum": 1}}},
             ]
-            
+
             role_counts = {}
             async for doc in UserCompany.aggregate(pipeline):
                 role_counts[doc["_id"]] = doc["count"]
-            
+
             thirty_days_ago = now_utc() - timedelta(days=30)
 
-            recent_assignments = await UserCompany.find({
-                "company_branch_id": ObjectId(company_branch_id),
-                "assigned_at": {"$gte": thirty_days_ago}
-            }).count()
+            recent_assignments = await UserCompany.find(
+                {
+                    "company_branch_id": ObjectId(company_branch_id),
+                    "assigned_at": {"$gte": thirty_days_ago},
+                },
+                session=current_session(),
+            ).count()
 
-            branch = await CompanyBranch.get(ObjectId(company_branch_id))
+            branch = await CompanyBranch.get(
+                ObjectId(company_branch_id), session=current_session()
+            )
 
             stats = UserCompanyStats(
                 total_users=active_count + inactive_count,
@@ -588,14 +555,10 @@ class UserCompanyRepository:
                 inactive_users=inactive_count,
                 total_branches=1,
                 active_branches=1 if branch and branch.is_active else 0,
-                inactive_branches=0 if branch and branch.is_active else 1
+                inactive_branches=0 if branch and branch.is_active else 1,
             )
 
-            await UserCompanyRepository._set_cache(
-                cache_key,
-                stats.model_dump(),
-                900
-            )
+            await UserCompanyRepository._set_cache(cache_key, stats.model_dump(), 900)
             logger.debug(f"Cache set for branch stats: {company_branch_id}")
 
             return stats
@@ -608,59 +571,54 @@ class UserCompanyRepository:
                 inactive_users=0,
                 total_branches=0,
                 active_branches=0,
-                inactive_branches=0
+                inactive_branches=0,
             )
-    
+
     @staticmethod
     @monitor_db_operation("user_company_get_user_stats")
     async def get_user_assignment_stats(user_id: str) -> Dict[str, Any]:
         try:
-            total_assignments = await UserCompany.find({
-                "user_id": ObjectId(user_id)
-            }).count()
-            
-            active_assignments = await UserCompany.find({
-                "user_id": ObjectId(user_id),
-                "is_active": True
-            }).count()
-            
+            total_assignments = await UserCompany.find(
+                {"user_id": ObjectId(user_id)}, session=current_session()
+            ).count()
+
+            active_assignments = await UserCompany.find(
+                {"user_id": ObjectId(user_id), "is_active": True},
+                session=current_session(),
+            ).count()
+
             pipeline = [
-                {"$match": {
-                    "user_id": ObjectId(user_id),
-                    "is_active": True
-                }},
-                {"$group": {
-                    "_id": "$role",
-                    "count": {"$sum": 1}
-                }}
+                {"$match": {"user_id": ObjectId(user_id), "is_active": True}},
+                {"$group": {"_id": "$role", "count": {"$sum": 1}}},
             ]
-            
+
             role_counts = {}
             async for doc in UserCompany.aggregate(pipeline):
                 role_counts[doc["_id"]] = doc["count"]
-            
+
             pipeline = [
-                {"$match": {
-                    "user_id": ObjectId(user_id),
-                    "is_active": True
-                }},
-                {"$lookup": {
-                    "from": "company_branches",
-                    "localField": "company_branch_id",
-                    "foreignField": "_id",
-                    "as": "branch"
-                }},
+                {"$match": {"user_id": ObjectId(user_id), "is_active": True}},
+                {
+                    "$lookup": {
+                        "from": "company_branches",
+                        "localField": "company_branch_id",
+                        "foreignField": "_id",
+                        "as": "branch",
+                    }
+                },
                 {"$unwind": "$branch"},
-                {"$group": {
-                    "_id": "$branch.company_id",
-                    "branches": {"$addToSet": "$branch._id"}
-                }}
+                {
+                    "$group": {
+                        "_id": "$branch.company_id",
+                        "branches": {"$addToSet": "$branch._id"},
+                    }
+                },
             ]
-            
+
             company_ids = []
             async for doc in UserCompany.aggregate(pipeline):
                 company_ids.append(str(doc["_id"]))
-            
+
             stats = {
                 "user_id": user_id,
                 "total_assignments": total_assignments,
@@ -669,76 +627,47 @@ class UserCompanyRepository:
                 "assignments_by_role": role_counts,
                 "current_companies": len(company_ids),
                 "company_ids": company_ids,
-                "calculated_at": datetime.now().isoformat()
+                "calculated_at": datetime.now().isoformat(),
             }
-            
+
             return stats
-            
+
         except Exception as e:
             logger.error(f"Error getting user assignment stats: {e}")
             return {
                 "user_id": user_id,
                 "error": str(e),
-                "calculated_at": datetime.now().isoformat()
+                "calculated_at": datetime.now().isoformat(),
             }
-    
-    
+
     @staticmethod
     @monitor_db_operation("user_company_validate_access")
-    async def validate_user_branch_access(
-        user_id: str,
-        company_branch_id: str
-    ) -> bool:
-        try:
-            assignment = await UserCompanyRepository.get_user_branch_assignment(user_id, company_branch_id)
-            
-            if not assignment:
-                return False
-            
-            current_time = now_utc()
-            if assignment.start_date and assignment.start_date > current_time:
-                return False
-            
-            if assignment.end_date and assignment.end_date < current_time:
-                if assignment.is_active:
-                    assignment.is_active = False
-                    assignment.updated_at = current_time
-                    await assignment.save()
-                    await UserCompanyRepository._invalidate_assignment_caches(assignment)
-                
-                return False
-            
-            return assignment.is_active
-            
-        except Exception as e:
-            logger.error(f"Error validating user branch access: {e}")
-            return False
-    
+    async def validate_user_branch_access(user_id: str, company_branch_id: str) -> bool:
+        from app.core.tenant_policy import branch_role
+
+        return await branch_role(user_id, company_branch_id) is not None
+
     @staticmethod
     async def get_user_role_in_branch(
-        user_id: str,
-        company_branch_id: str
+        user_id: str, company_branch_id: str
     ) -> Optional[str]:
-        try:
-            assignment = await UserCompanyRepository.get_user_branch_assignment(user_id, company_branch_id)
-            return assignment.role if assignment else None
-        except Exception as e:
-            logger.error(f"Error getting user role in branch: {e}")
-            return None
-    
+        from app.core.tenant_policy import branch_role
+
+        return await branch_role(user_id, company_branch_id)
+
     @staticmethod
     async def get_user_permissions_in_branch(
-        user_id: str,
-        company_branch_id: str
+        user_id: str, company_branch_id: str
     ) -> List[str]:
         try:
-            assignment = await UserCompanyRepository.get_user_branch_assignment(user_id, company_branch_id)
+            assignment = await UserCompanyRepository.get_user_branch_assignment(
+                user_id, company_branch_id
+            )
             return assignment.permissions if assignment else []
         except Exception as e:
             logger.error(f"Error getting user permissions in branch: {e}")
             return []
-    
-    
+
     @staticmethod
     @monitor_db_operation("user_company_bulk_assign")
     async def bulk_assign_users(
@@ -746,12 +675,12 @@ class UserCompanyRepository:
         company_branch_id: str,
         assigned_by: str,
         role: str = "member",
-        permissions: Optional[List[str]] = None
+        permissions: Optional[List[str]] = None,
     ) -> Tuple[int, List[str]]:
         try:
             successful = []
             failed = []
-            
+
             for user_id in user_ids:
                 try:
                     assignment = await UserCompanyRepository.assign_user_to_branch(
@@ -759,149 +688,176 @@ class UserCompanyRepository:
                         company_branch_id=company_branch_id,
                         assigned_by=assigned_by,
                         role=role,
-                        permissions=permissions
+                        permissions=permissions,
                     )
-                    
+
                     if assignment:
                         successful.append(user_id)
                     else:
                         failed.append(user_id)
-                        
+
                 except Exception as e:
-                    logger.error(f"Failed to assign user {user_id} to branch {company_branch_id}: {e}")
+                    logger.error(
+                        f"Failed to assign user {user_id} to branch {company_branch_id}: {e}"
+                    )
                     failed.append(user_id)
-            
-            logger.info(f"Bulk assignment completed: {len(successful)} successful, {len(failed)} failed")
+
+            logger.info(
+                f"Bulk assignment completed: {len(successful)} successful, {len(failed)} failed"
+            )
             return len(successful), failed
-            
+
         except Exception as e:
             logger.error(f"Error in bulk assign users: {e}")
             return 0, user_ids
-    
+
     @staticmethod
     @monitor_db_operation("user_company_bulk_unassign")
     async def bulk_unassign_users(
         user_ids: List[str],
         company_branch_id: str,
         unassigned_by: str,
-        reason: Optional[str] = None
+        reason: Optional[str] = None,
     ) -> Tuple[int, List[str]]:
         try:
             successful = []
             failed = []
-            
+
             for user_id in user_ids:
                 try:
                     success = await UserCompanyRepository.unassign_user_from_branch(
                         user_id=user_id,
                         company_branch_id=company_branch_id,
                         unassigned_by=unassigned_by,
-                        reason=reason
+                        reason=reason,
                     )
-                    
+
                     if success:
                         successful.append(user_id)
                     else:
                         failed.append(user_id)
-                        
+
                 except Exception as e:
-                    logger.error(f"Failed to unassign user {user_id} from branch {company_branch_id}: {e}")
+                    logger.error(
+                        f"Failed to unassign user {user_id} from branch {company_branch_id}: {e}"
+                    )
                     failed.append(user_id)
-            
-            logger.info(f"Bulk unassignment completed: {len(successful)} successful, {len(failed)} failed")
+
+            logger.info(
+                f"Bulk unassignment completed: {len(successful)} successful, {len(failed)} failed"
+            )
             return len(successful), failed
-            
+
         except Exception as e:
             logger.error(f"Error in bulk unassign users: {e}")
             return 0, user_ids
-    
-    
+
     @staticmethod
     async def _get_from_cache(key: str) -> Optional[Any]:
         if not is_redis_available():
             return None
-        
+
         try:
             redis_client = get_redis()
             import json
+
             cached = await redis_client.get(key)
             if cached:
                 return json.loads(cached)
         except Exception as e:
             logger.warning(f"Cache get error for key {key}: {e}")
         return None
-    
+
     @staticmethod
     async def _set_cache(key: str, data: Any, ttl: Optional[int] = None) -> None:
         if not is_redis_available():
             return
-        
+
         try:
             redis_client = get_redis()
             import json
+
             await redis_client.setex(
                 key,
                 ttl or UserCompanyRepository.ASSIGNMENT_CACHE_TTL,
-                json.dumps(data, default=str)
+                json.dumps(data, default=str),
             )
         except Exception as e:
             logger.warning(f"Cache set error for key {key}: {e}")
-    
+
     @staticmethod
     async def _delete_cache(key: str) -> None:
         if not is_redis_available():
             return
-        
+
         try:
             redis_client = get_redis()
             await redis_client.delete(key)
         except Exception as e:
             logger.warning(f"Cache delete error for key {key}: {e}")
-    
+
     @staticmethod
     async def _invalidate_assignment_caches(assignment: UserCompany) -> None:
+        if defer_after_commit(
+            lambda: UserCompanyRepository._invalidate_assignment_caches(assignment)
+        ):
+            return
         if not is_redis_available():
             return
-        
+
         try:
             redis_client = get_redis()
-            
+
             keys_to_delete = [
                 UserCompanyRepository._get_assignment_cache_key(str(assignment.id)),
-                UserCompanyRepository._get_user_branch_cache_key(str(assignment.user_id), str(assignment.company_branch_id)),
-                UserCompanyRepository._get_branch_stats_cache_key(str(assignment.company_branch_id)),
+                UserCompanyRepository._get_user_branch_cache_key(
+                    str(assignment.user_id), str(assignment.company_branch_id)
+                ),
+                UserCompanyRepository._get_branch_stats_cache_key(
+                    str(assignment.company_branch_id)
+                ),
             ]
-            
+
             keys_to_delete.append(
-                UserCompanyRepository._get_user_assignments_cache_key(str(assignment.user_id), True)
+                UserCompanyRepository._get_user_assignments_cache_key(
+                    str(assignment.user_id), True
+                )
             )
             keys_to_delete.append(
-                UserCompanyRepository._get_user_assignments_cache_key(str(assignment.user_id), False)
+                UserCompanyRepository._get_user_assignments_cache_key(
+                    str(assignment.user_id), False
+                )
             )
-            
+
             keys_to_delete.append(
-                UserCompanyRepository._get_branch_assignments_cache_key(str(assignment.company_branch_id), True)
+                UserCompanyRepository._get_branch_assignments_cache_key(
+                    str(assignment.company_branch_id), True
+                )
             )
             keys_to_delete.append(
-                UserCompanyRepository._get_branch_assignments_cache_key(str(assignment.company_branch_id), False)
+                UserCompanyRepository._get_branch_assignments_cache_key(
+                    str(assignment.company_branch_id), False
+                )
             )
-            
+
             if keys_to_delete:
                 await redis_client.delete(*keys_to_delete)
                 logger.debug(f"Invalidated caches for assignment: {assignment.id}")
-            
+
         except Exception as e:
-            logger.warning(f"Error invalidating assignment caches for {assignment.id}: {e}")
-    
+            logger.warning(
+                f"Error invalidating assignment caches for {assignment.id}: {e}"
+            )
+
     @staticmethod
     async def clear_all_cache() -> None:
         if not is_redis_available():
             return
-        
+
         try:
             pattern = f"{UserCompanyRepository.CACHE_PREFIX}*"
             await shared_cache.delete_pattern(pattern)
             logger.info("Cleared all user_company cache")
-            
+
         except Exception as e:
             logger.warning(f"Error clearing user_company cache: {e}")

@@ -9,6 +9,7 @@ from bson import ObjectId
 
 from app.core.config import settings
 from app.core.redis import get_redis
+from app.core.transactions import defer_after_commit, current_session
 
 logger = logging.getLogger(__name__)
 
@@ -37,6 +38,8 @@ def idempotency_key(scope: str, tenant_id: str, raw_key: str) -> str:
 
 
 async def get_json(key: str) -> Optional[Any]:
+    if current_session() is not None:
+        return None
     redis = get_redis()
     if not redis:
         return None
@@ -49,6 +52,8 @@ async def get_json(key: str) -> Optional[Any]:
 
 
 async def set_json(key: str, value: Any, ttl: Optional[int] = None) -> bool:
+    if defer_after_commit(lambda: set_json(key, value, ttl)):
+        return True
     redis = get_redis()
     if not redis:
         return False
@@ -62,6 +67,8 @@ async def set_json(key: str, value: Any, ttl: Optional[int] = None) -> bool:
 
 
 async def delete_keys(*keys: str) -> None:
+    if defer_after_commit(lambda: delete_keys(*keys)):
+        return
     redis = get_redis()
     if not redis or not keys:
         return
@@ -80,6 +87,8 @@ async def iter_keys(pattern: str, count: int = 100) -> AsyncIterator[str]:
 
 
 async def delete_pattern(pattern: str) -> None:
+    if defer_after_commit(lambda: delete_pattern(pattern)):
+        return
     # SCAN is intentionally used instead of KEYS to avoid blocking Redis.
     batch: list[str] = []
     async for key in iter_keys(pattern):
@@ -97,6 +106,8 @@ async def reserve_idempotency(
     raw_key: str,
     owner_token: str,
 ) -> bool:
+    if current_session() is not None:
+        return True
     redis = get_redis()
     if not redis:
         return True
@@ -123,6 +134,12 @@ async def complete_idempotency(
     resource_id: str,
     owner_token: str,
 ) -> None:
+    if defer_after_commit(
+        lambda: complete_idempotency(
+            scope, tenant_id, raw_key, resource_id, owner_token
+        )
+    ):
+        return
     redis = get_redis()
     if not redis:
         return
@@ -148,7 +165,9 @@ async def complete_idempotency(
         logger.warning("Redis idempotency completion failed", exc_info=True)
 
 
-async def get_idempotency_result(scope: str, tenant_id: str, raw_key: str) -> Optional[str]:
+async def get_idempotency_result(
+    scope: str, tenant_id: str, raw_key: str
+) -> Optional[str]:
     redis = get_redis()
     if not redis:
         return None
@@ -185,7 +204,9 @@ async def release_idempotency(
 
 
 def authorization_key(user_id: str) -> str:
-    return cache_key("authz", user_id)
+    # Do not reuse pre-migration role/permission caches, even if Redis was
+    # unavailable during database bootstrap.
+    return cache_key("authz", "policy-v3", user_id)
 
 
 async def invalidate_user_authorization(user_id: str) -> None:
@@ -208,6 +229,8 @@ async def invalidate_permission_authorization(permission_id: str) -> None:
 
     if not ObjectId.is_valid(permission_id):
         return
-    links = await ActorPermission.find({"permission_id": ObjectId(permission_id)}).to_list()
+    links = await ActorPermission.find(
+        {"permission_id": ObjectId(permission_id)}
+    ).to_list()
     for link in links:
         await invalidate_actor_authorization(str(link.actor_id))

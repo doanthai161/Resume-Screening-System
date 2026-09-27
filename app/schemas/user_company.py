@@ -1,13 +1,13 @@
-from typing import Optional
+from typing import Optional, Literal
 from app.schemas.user import UserResponse
 from app.schemas.company_branch import CompanyBranchResponse
 from datetime import datetime
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 class AssignUserToCompanyBranch(BaseModel):
-    user_id: str
-    company_branch_id: str
-    role: Optional[str] = "member"
+    user_id: str = Field(pattern=r"^[a-fA-F0-9]{24}$")
+    company_branch_id: str = Field(pattern=r"^[a-fA-F0-9]{24}$")
+    role: Literal["member", "manager", "admin"] = "member"
     permissions: Optional[list[str]] = None
 
 class ListUserCompanyBranchResponse:

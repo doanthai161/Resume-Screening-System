@@ -6,6 +6,13 @@ from app.services.actor_service import ActorService
 from app.schemas.actor import ActorCreate, ActorUpdate
 from app.core.errors import CustomError, ErrorCodes
 from app.models.actor import Actor
+from app.models.user import User
+from app.core.security import CurrentUser
+
+@pytest.fixture
+async def super_caller(mock_db):
+    user = await User(email="actor-admin@example.com", hashed_password="unused", is_active=True, is_superuser=True).insert()
+    return CurrentUser(user=user)
 
 @pytest.fixture
 def mock_actor():
@@ -36,7 +43,7 @@ async def test_get_actor_not_found():
         assert exc_info.value.code == ErrorCodes.NOT_FOUND
 
 @pytest.mark.asyncio
-async def test_create_actor_success(mock_actor):
+async def test_create_actor_success(mock_actor, super_caller):
     create_data = ActorCreate(name="New Actor", description="Description")
     
     with patch("app.services.actor_service.ActorRepository.get_by_name", new_callable=AsyncMock) as mock_get_name:
@@ -46,20 +53,20 @@ async def test_create_actor_success(mock_actor):
             created_actor = Actor(id=ObjectId(), name="New Actor", description="Description", is_active=True)
             mock_create.return_value = created_actor
             
-            actor = await ActorService.create_actor(create_data)
+            actor = await ActorService.create_actor(create_data, super_caller)
             
             assert actor.name == "New Actor"
             mock_create.assert_called_once_with(create_data)
 
 @pytest.mark.asyncio
-async def test_create_actor_already_exists(mock_actor):
+async def test_create_actor_already_exists(mock_actor, super_caller):
     create_data = ActorCreate(name="Test Actor", description="Description")
     
     with patch("app.services.actor_service.ActorRepository.get_by_name", new_callable=AsyncMock) as mock_get_name:
         mock_get_name.return_value = mock_actor
         
         with pytest.raises(CustomError) as exc_info:
-            await ActorService.create_actor(create_data)
+            await ActorService.create_actor(create_data, super_caller)
             
         assert exc_info.value.code == ErrorCodes.BAD_REQUEST
         assert exc_info.value.status_code == status.HTTP_400_BAD_REQUEST

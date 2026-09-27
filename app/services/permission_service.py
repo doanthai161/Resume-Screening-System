@@ -5,10 +5,13 @@ from app.schemas.permission import PermissionCreate, PermissionUpdate
 from app.models.permission import Permission
 from app.core.errors import CustomError, ErrorCodes
 from app.core import cache
+from app.core.security import CurrentUser
+from app.core.rbac_policy import authorize_global_rbac_write
 
 class PermissionService:
     @staticmethod
-    async def create_permission(data: PermissionCreate) -> Permission:
+    async def create_permission(data: PermissionCreate, caller: CurrentUser) -> Permission:
+        await authorize_global_rbac_write(caller)
         try:
             existing_permission = await PermissionRepository.get_by_name(data.name)
             if existing_permission:
@@ -41,7 +44,8 @@ class PermissionService:
             )
 
     @staticmethod
-    async def update_permission(permission_id: str, data: PermissionUpdate) -> Permission:
+    async def update_permission(permission_id: str, data: PermissionUpdate, caller: CurrentUser) -> Permission:
+        await authorize_global_rbac_write(caller)
         try:
             permission = await PermissionRepository.get_by_id(permission_id)
             if not permission or not permission.is_active:
@@ -83,7 +87,8 @@ class PermissionService:
             )
 
     @staticmethod
-    async def delete_permission(permission_id: str) -> None:
+    async def delete_permission(permission_id: str, caller: CurrentUser) -> None:
+        await authorize_global_rbac_write(caller)
         try:
             permission = await PermissionRepository.get_by_id(permission_id)
             if not permission or not permission.is_active:

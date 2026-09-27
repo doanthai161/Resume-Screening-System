@@ -102,6 +102,12 @@ class ResumeParseRun(Document):
         name = "resume_parse_runs"
         indexes = [
             IndexModel(
+                [("resume_file_id", ASCENDING)],
+                unique=True,
+                name="uq_active_parse_resume",
+                partialFilterExpression={"is_terminal": False},
+            ),
+            IndexModel(
                 [("company_id", ASCENDING), ("idempotency_key", ASCENDING)],
                 unique=True,
                 name="uq_parse_run_idempotency",

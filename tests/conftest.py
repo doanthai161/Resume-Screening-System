@@ -1,5 +1,5 @@
 import pytest
-from httpx import AsyncClient
+from httpx import AsyncClient, ASGITransport
 from app.main import app
 from app.models.user import User
 from bson import ObjectId
@@ -73,5 +73,5 @@ async def mock_db():
 
 @pytest.fixture
 async def async_client(mock_db):
-    async with AsyncClient(app=app, base_url="http://test") as client:
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         yield client

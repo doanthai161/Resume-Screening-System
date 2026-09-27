@@ -44,18 +44,10 @@ class CompanyBranchService:
     @staticmethod
     async def list_company_branches(company_id: str, user_id: str, is_superuser: bool, permissions: List[str]) -> List[CompanyBranch]:
         try:
-            user_branches = await CompanyBranchRepository.get_user_company_branches(user_id)
-            has_access = any(str(b.company_id) == company_id for b in user_branches)
+            role = await CompanyRepository.get_user_company_role(user_id, company_id)
+            if not is_superuser and not role:
+                raise CustomError(ErrorCodes.FORBIDDEN, "Access denied", status.HTTP_403_FORBIDDEN)
 
-            permission_names = [getattr(p, "name", p) for p in permissions]
-
-            if not has_access and not (is_superuser or "admin" in permission_names):
-                raise CustomError(
-                    ErrorCodes.FORBIDDEN,
-                    "Access denied",
-                    status_code=status.HTTP_403_FORBIDDEN
-                )
-            
             branches = await CompanyBranchRepository.get_company_branches(company_id)
             return branches
         except CustomError:

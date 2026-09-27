@@ -1,3 +1,4 @@
+from app.core.transactions import current_session, transactional
 import asyncio
 import hashlib
 import os
@@ -25,7 +26,6 @@ from app.models.screening_run import ResumeParseRun
 from app.schemas.resume import ParseResumeRequest
 from app.services.tenant_access_service import TenantAccessService
 from app.utils.time import now_utc
-
 
 FILE_SIGNATURES = {
     "pdf": (b"%PDF-",),
@@ -75,11 +75,23 @@ class ResumeService:
         current_user: CurrentUser,
     ) -> ResumeFile:
         if not ObjectId.is_valid(company_id):
-            raise CustomError(ErrorCodes.VALIDATION, "Invalid company ID", status.HTTP_422_UNPROCESSABLE_ENTITY)
+            raise CustomError(
+                ErrorCodes.VALIDATION,
+                "Invalid company ID",
+                status.HTTP_422_UNPROCESSABLE_ENTITY,
+            )
         if not ObjectId.is_valid(candidate_id):
-            raise CustomError(ErrorCodes.VALIDATION, "Invalid candidate ID", status.HTTP_422_UNPROCESSABLE_ENTITY)
+            raise CustomError(
+                ErrorCodes.VALIDATION,
+                "Invalid candidate ID",
+                status.HTTP_422_UNPROCESSABLE_ENTITY,
+            )
         if company_branch_id and not ObjectId.is_valid(company_branch_id):
-            raise CustomError(ErrorCodes.VALIDATION, "Invalid company branch ID", status.HTTP_422_UNPROCESSABLE_ENTITY)
+            raise CustomError(
+                ErrorCodes.VALIDATION,
+                "Invalid company branch ID",
+                status.HTTP_422_UNPROCESSABLE_ENTITY,
+            )
         candidate = await Candidate.find_one(
             {
                 "_id": PydanticObjectId(candidate_id),
@@ -88,10 +100,14 @@ class ResumeService:
             }
         )
         if not candidate:
-            raise CustomError(ErrorCodes.NOT_FOUND, "Candidate not found", status.HTTP_404_NOT_FOUND)
+            raise CustomError(
+                ErrorCodes.NOT_FOUND, "Candidate not found", status.HTTP_404_NOT_FOUND
+            )
         company = await Company.get(PydanticObjectId(company_id))
         if not company or not company.is_active:
-            raise CustomError(ErrorCodes.NOT_FOUND, "Company not found", status.HTTP_404_NOT_FOUND)
+            raise CustomError(
+                ErrorCodes.NOT_FOUND, "Company not found", status.HTTP_404_NOT_FOUND
+            )
 
         is_own_candidate = (
             current_user.is_candidate
@@ -113,17 +129,33 @@ class ResumeService:
                 }
             )
             if not branch:
-                raise CustomError(ErrorCodes.NOT_FOUND, "Company branch not found", status.HTTP_404_NOT_FOUND)
+                raise CustomError(
+                    ErrorCodes.NOT_FOUND,
+                    "Company branch not found",
+                    status.HTTP_404_NOT_FOUND,
+                )
             branch_id = branch.id
 
         original_name = Path((file.filename or "resume").replace("\\", "/")).name
         if len(original_name) > 255:
-            raise CustomError(ErrorCodes.BAD_REQUEST, "Resume filename is too long", status.HTTP_400_BAD_REQUEST)
+            raise CustomError(
+                ErrorCodes.BAD_REQUEST,
+                "Resume filename is too long",
+                status.HTTP_400_BAD_REQUEST,
+            )
         extension = Path(original_name).suffix.lower().lstrip(".")
         if extension not in settings.allowed_resume_extensions_list:
-            raise CustomError(ErrorCodes.BAD_REQUEST, "Unsupported resume extension", status.HTTP_400_BAD_REQUEST)
+            raise CustomError(
+                ErrorCodes.BAD_REQUEST,
+                "Unsupported resume extension",
+                status.HTTP_400_BAD_REQUEST,
+            )
         if file.content_type not in settings.allowed_resume_mime_types:
-            raise CustomError(ErrorCodes.BAD_REQUEST, "Unsupported resume MIME type", status.HTTP_400_BAD_REQUEST)
+            raise CustomError(
+                ErrorCodes.BAD_REQUEST,
+                "Unsupported resume MIME type",
+                status.HTTP_400_BAD_REQUEST,
+            )
 
         settings.temp_upload_path.mkdir(parents=True, exist_ok=True)
         settings.resume_upload_path.mkdir(parents=True, exist_ok=True)
@@ -154,7 +186,11 @@ class ResumeService:
                     await asyncio.to_thread(handle.write, chunk)
 
             if total_size == 0:
-                raise CustomError(ErrorCodes.BAD_REQUEST, "Resume file is empty", status.HTTP_400_BAD_REQUEST)
+                raise CustomError(
+                    ErrorCodes.BAD_REQUEST,
+                    "Resume file is empty",
+                    status.HTTP_400_BAD_REQUEST,
+                )
             if not _matches_signature(extension, header):
                 raise CustomError(
                     ErrorCodes.BAD_REQUEST,
@@ -224,6 +260,7 @@ class ResumeService:
                 await asyncio.to_thread(temp_path.unlink, True)
 
     @staticmethod
+    @transactional
     async def start_parse(
         resume_id: str,
         data: ParseResumeRequest,
@@ -236,10 +273,13 @@ class ResumeService:
                 "_id": PydanticObjectId(resume_id),
                 "company_id": PydanticObjectId(data.company_id),
                 "is_deleted": False,
-            }
+            },
+            session=current_session(),
         )
         if not resume:
-            raise CustomError(ErrorCodes.NOT_FOUND, "Resume not found", status.HTTP_404_NOT_FOUND)
+            raise CustomError(
+                ErrorCodes.NOT_FOUND, "Resume not found", status.HTTP_404_NOT_FOUND
+            )
 
         parser_model_id = None
         if data.parser_model_id:
@@ -248,14 +288,21 @@ class ResumeService:
                     "_id": PydanticObjectId(data.parser_model_id),
                     "model_type": "resume_parser",
                     "is_active": True,
-                }
+                },
+                session=current_session(),
             )
             if not model:
-                raise CustomError(ErrorCodes.NOT_FOUND, "Parser model not found", status.HTTP_404_NOT_FOUND)
+                raise CustomError(
+                    ErrorCodes.NOT_FOUND,
+                    "Parser model not found",
+                    status.HTTP_404_NOT_FOUND,
+                )
             parser_model_id = model.id
 
         input_hash = hashlib.sha256(
-            f"{resume.checksum}:{data.parser_version}:{parser_model_id or 'default'}".encode("utf-8")
+            f"{resume.checksum}:{data.parser_version}:{parser_model_id or 'default'}".encode(
+                "utf-8"
+            )
         ).hexdigest()
         existing = await ResumeParseRun.find_one(
             {
@@ -264,10 +311,14 @@ class ResumeService:
                     {"idempotency_key": idempotency_key},
                     {"input_hash": input_hash, "is_terminal": False},
                 ],
-            }
+            },
+            session=current_session(),
         )
         if existing:
-            if existing.idempotency_key == idempotency_key and existing.input_hash != input_hash:
+            if (
+                existing.idempotency_key == idempotency_key
+                and existing.input_hash != input_hash
+            ):
                 raise CustomError(
                     ErrorCodes.CONFLICT,
                     "Idempotency key was already used for a different request",
@@ -276,8 +327,14 @@ class ResumeService:
             return existing
 
         owner_token = uuid.uuid4().hex
-        if not await cache.reserve_idempotency("parse", data.company_id, idempotency_key, owner_token):
-            raise CustomError(ErrorCodes.CONFLICT, "Parse request is already processing", status.HTTP_409_CONFLICT)
+        if not await cache.reserve_idempotency(
+            "parse", data.company_id, idempotency_key, owner_token
+        ):
+            raise CustomError(
+                ErrorCodes.CONFLICT,
+                "Parse request is already processing",
+                status.HTTP_409_CONFLICT,
+            )
         try:
             run = ResumeParseRun(
                 company_id=PydanticObjectId(data.company_id),
@@ -288,11 +345,13 @@ class ResumeService:
                 input_hash=input_hash,
                 parser_version=data.parser_version,
             )
-            await run.insert()
-            message_id = await job_queue.enqueue("resume-parse", str(run.id), data.company_id)
+            await run.insert(session=current_session())
+            message_id = await job_queue.enqueue(
+                "resume-parse", str(run.id), data.company_id
+            )
             if message_id:
                 await ResumeParseRun.find_one(
-                    {"_id": run.id, "status": "queued"}
+                    {"_id": run.id, "status": "queued"}, session=current_session()
                 ).update(
                     {
                         "$set": {
@@ -300,34 +359,14 @@ class ResumeService:
                             "last_enqueued_at": now_utc(),
                             "updated_at": now_utc(),
                         }
-                    }
+                    },
+                    session=current_session(),
                 )
             await cache.complete_idempotency(
                 "parse", data.company_id, idempotency_key, str(run.id), owner_token
             )
             return run
-        except DuplicateKeyError:
-            duplicate = await ResumeParseRun.find_one(
-                {
-                    "company_id": PydanticObjectId(data.company_id),
-                    "$or": [
-                        {"idempotency_key": idempotency_key},
-                        {"input_hash": input_hash, "is_terminal": False},
-                    ],
-                }
-            )
-            if duplicate:
-                if duplicate.idempotency_key == idempotency_key and duplicate.input_hash != input_hash:
-                    raise CustomError(
-                        ErrorCodes.CONFLICT,
-                        "Idempotency key was already used for a different request",
-                        status.HTTP_409_CONFLICT,
-                    )
-                await cache.complete_idempotency(
-                    "parse", data.company_id, idempotency_key, str(duplicate.id), owner_token
-                )
-                return duplicate
-            raise
         except Exception:
-            await cache.release_idempotency("parse", data.company_id, idempotency_key, owner_token)
+            # Transaction abort removes the run; unique/CAS conflicts are mapped
+            # by the transaction boundary. Retry with the same idempotency key.
             raise

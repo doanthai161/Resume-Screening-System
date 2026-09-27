@@ -21,7 +21,7 @@ async def assign_permission_to_actor(
         await ActorPermissionService.assign_permissions(
             actor_id=payload.actor_id,
             permission_ids=payload.permission_ids,
-            user_id=current_user.user_id
+            caller=current_user
         )
 
         background_tasks.add_task(
@@ -53,7 +53,8 @@ async def unassign_permission_from_actor(
     try:
         count = await ActorPermissionService.unassign_permissions(
             actor_id=actor_id,
-            permission_ids=permission_ids
+            permission_ids=permission_ids,
+            caller=current_user
         )
 
         background_tasks.add_task(

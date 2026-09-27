@@ -5,10 +5,13 @@ from app.schemas.actor import ActorCreate, ActorUpdate
 from app.models.actor import Actor
 from app.core.errors import CustomError, ErrorCodes
 from app.core import cache
+from app.core.security import CurrentUser
+from app.core.rbac_policy import authorize_global_rbac_write
 
 class ActorService:
     @staticmethod
-    async def create_actor(data: ActorCreate) -> Actor:
+    async def create_actor(data: ActorCreate, caller: CurrentUser) -> Actor:
+        await authorize_global_rbac_write(caller)
         try:
             existing_actor = await ActorRepository.get_by_name(data.name)
             if existing_actor:
@@ -40,7 +43,8 @@ class ActorService:
             )
 
     @staticmethod
-    async def update_actor(actor_id: str, data: ActorUpdate) -> Actor:
+    async def update_actor(actor_id: str, data: ActorUpdate, caller: CurrentUser) -> Actor:
+        await authorize_global_rbac_write(caller)
         try:
             actor = await ActorRepository.get_by_id(actor_id)
             if not actor:
@@ -82,7 +86,8 @@ class ActorService:
             )
 
     @staticmethod
-    async def delete_actor(actor_id: str) -> None:
+    async def delete_actor(actor_id: str, caller: CurrentUser) -> None:
+        await authorize_global_rbac_write(caller)
         try:
             actor = await ActorRepository.get_by_id(actor_id)
             if not actor:

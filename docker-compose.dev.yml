@@ -1,5 +1,7 @@
 services:
   api:
+    volumes:
+      - ./app:/app/app:ro
     environment:
       ENVIRONMENT: development
       DEBUG: "true"
