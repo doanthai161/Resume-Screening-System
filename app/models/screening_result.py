@@ -7,6 +7,7 @@ from pydantic import Field
 from pymongo import ASCENDING, DESCENDING, IndexModel
 
 from app.utils.time import now_utc
+from app.schemas.scoring import CriterionEvaluation
 
 
 class ScreeningResultStatus(str, Enum):
@@ -31,14 +32,20 @@ class ScreeningResult(Document):
     ai_model_id: Optional[PydanticObjectId] = None
     evaluator_user_id: Optional[PydanticObjectId] = None
     evaluator_id: Optional[PydanticObjectId] = None  # legacy
-    overall_score: float = Field(..., ge=0.0, le=100.0)
-    match_percentage: float = Field(..., ge=0.0, le=100.0)
+    overall_score: Optional[float] = Field(None, ge=0, le=100, allow_inf_nan=False)
+    match_percentage: Optional[float] = Field(None, ge=0, le=100, allow_inf_nan=False)
     decision: ScreeningDecision = ScreeningDecision.HOLD
-    skill_score: float = Field(0.0, ge=0.0, le=100.0)
-    experience_score: float = Field(0.0, ge=0.0, le=100.0)
-    education_score: float = Field(0.0, ge=0.0, le=100.0)
-    language_score: float = Field(0.0, ge=0.0, le=100.0)
-    criteria_scores: Dict[str, float] = Field(default_factory=dict)
+    skill_score: Optional[float] = Field(None, ge=0, le=100, allow_inf_nan=False)
+    experience_score: Optional[float] = Field(None, ge=0, le=100, allow_inf_nan=False)
+    education_score: Optional[float] = Field(None, ge=0, le=100, allow_inf_nan=False)
+    language_score: Optional[float] = Field(None, ge=0, le=100, allow_inf_nan=False)
+    criteria_scores: Dict[str, Optional[float]] = Field(default_factory=dict)
+    # Version 1 denotes historical results; coverage cannot be inferred for them.
+    scoring_version: int = 1
+    criteria_evaluations: Dict[str, CriterionEvaluation] = Field(default_factory=dict)
+    evidence_coverage: Optional[float] = Field(None, ge=0, le=100)
+    score_lower_bound: Optional[float] = Field(None, ge=0, le=100)
+    score_upper_bound: Optional[float] = Field(None, ge=0, le=100)
     scorecard_snapshot: Dict[str, Any] = Field(default_factory=dict)
     strengths: List[str] = Field(default_factory=list, max_length=100)
     weaknesses: List[str] = Field(default_factory=list, max_length=100)

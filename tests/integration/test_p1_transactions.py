@@ -482,7 +482,8 @@ async def test_concurrent_claim_has_one_winner():
     assert (await ResumeParseRun.get(run.id)).attempt == 1
 
 
-async def test_screening_lease_fencing_and_atomic_completion():
+@pytest.mark.parametrize("outcome", ["pass", "missing", "conflict", "required_fail", "unknown", "bad_snapshot"])
+async def test_screening_lease_fencing_and_atomic_completion(outcome):
     owner, company, branch, job = await job_data()
     application = await JobApplication(
         company_id=company.id,
@@ -501,11 +502,30 @@ async def test_screening_lease_fencing_and_atomic_completion():
         scorecard_id=ObjectId(),
         ai_model_id=ObjectId(),
         triggered_by=owner.id,
+        config_snapshot={"scorecard": {
+            "pass_threshold": 70,
+            "criteria": [{"code": "python", "name": "Python", "weight": 1, "required": True, "minimum_score": 90 if outcome == "required_fail" else 60}],
+        }},
         idempotency_key="screening-test",
         input_hash="a" * 64,
     ).insert()
     claimed = await ProcessingService.claim_screening(str(run.id), "worker")
-    output = ScreeningOutput(overall_score=80, match_percentage=80)
+    output = ScreeningOutput(criteria_evaluations={"python": {
+        "status": "evaluated", "score": 80, "reason": "Project evidence",
+        "evidence": [{"page": 1, "text": "Python backend project"}],
+    }})
+    if outcome == "missing":
+        output = ScreeningOutput(criteria_evaluations={})
+    elif outcome == "conflict":
+        output = ScreeningOutput(criteria_evaluations={"python": {
+            "status": "conflicting_evidence", "reason": "Conflicting CV dates",
+        }})
+    elif outcome == "unknown":
+        output = ScreeningOutput(criteria_evaluations={"unknown": {
+            "status": "insufficient_evidence", "reason": "Unknown criterion",
+        }})
+    elif outcome == "bad_snapshot":
+        await run.set({"config_snapshot": {}})
     assert not await ProcessingService.complete_screening(
         str(run.id), "worker", output, generation=claimed.attempt + 1
     )
@@ -524,9 +544,30 @@ async def test_screening_lease_fencing_and_atomic_completion():
     assert await ScreeningResult.find_all().count() == 0
     await ProcessingService.recover_expired_leases()
     claimed = await ProcessingService.claim_screening(str(run.id), "worker")
+    if outcome in {"unknown", "bad_snapshot"}:
+        with pytest.raises(CustomError) as exc:
+            await ProcessingService.complete_screening(str(run.id), "worker", output, generation=claimed.attempt)
+        assert exc.value.status_code == 422
+        assert await ScreeningResult.count() == 0
+        assert (await ScreeningRun.get(run.id)).status == "running"
+        assert (await JobApplication.get(application.id)).latest_screening_result_id is None
+        assert await ApplicationStageEvent.count() == 0
+        return
     result = await ProcessingService.complete_screening(
         str(run.id), "worker", output, generation=claimed.attempt
     )
+    persisted = await ScreeningResult.get(result.id)
+    assert persisted.scoring_version == 2
+    assert persisted.match_percentage is None
+    if outcome in {"missing", "conflict"}:
+        assert persisted.overall_score is None
+        assert persisted.criteria_scores["python"] is None
+        assert persisted.decision == "hold"
+        assert persisted.evidence_coverage == 0
+    else:
+        assert persisted.overall_score == 80
+        assert persisted.decision == ("fail" if outcome == "required_fail" else "pass")
+        assert persisted.evidence_coverage == 100
     assert (await ScreeningRun.get(run.id)).result_id == result.id
     assert (
         await JobApplication.get(application.id)

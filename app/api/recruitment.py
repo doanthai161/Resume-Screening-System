@@ -16,6 +16,7 @@ from app.schemas.recruitment import (
     ScorecardCreate,
     ScorecardResponse,
     ScreeningRunResponse,
+    ScreeningResultResponse,
     ScreeningStartRequest,
     StageTransitionRequest,
 )
@@ -29,6 +30,18 @@ from app.services.recruitment_service import (
 from app.services.tenant_access_service import TenantAccessService
 
 router = APIRouter()
+
+
+@router.get("/screenings/{run_id}/result", response_model=ApiResponse[ScreeningResultResponse])
+@limiter.limit(settings.RATE_LIMIT_READ)
+async def get_screening_result(
+    request: Request,
+    run_id: str,
+    company_id: str,
+    current_user: CurrentUser = Depends(require_permission("screening_runs:view")),
+):
+    result = await ScreeningService.get_result(run_id, company_id, current_user)
+    return ApiResponse.ok(ScreeningResultResponse.model_validate(result))
 
 
 def _application_response(item) -> ApplicationResponse:

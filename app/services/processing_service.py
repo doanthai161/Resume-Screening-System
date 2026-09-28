@@ -1,3 +1,4 @@
+from app.core.scoring import calculate_screening
 from app.core.transactions import current_session, transactional
 from datetime import timedelta
 from typing import Optional
@@ -11,7 +12,6 @@ from app.models.application_stage_event import ApplicationStageEvent
 from app.models.job_application import ApplicationStage, JobApplication
 from app.models.resume_file import ResumeFile
 from app.models.screening_result import (
-    ScreeningDecision,
     ScreeningResult,
     ScreeningResultStatus,
 )
@@ -108,14 +108,12 @@ class ProcessingService:
         if existing:
             result = existing
         else:
-            threshold = float(
-                run.config_snapshot.get("scorecard", {}).get("pass_threshold", 70)
-            )
-            decision = (
-                ScreeningDecision.PASS
-                if output.overall_score >= threshold
-                else ScreeningDecision.FAIL
-            )
+            try:
+                assessment = calculate_screening(
+                    run.config_snapshot.get("scorecard", {}), output.criteria_evaluations
+                )
+            except ValueError as exc:
+                raise CustomError(ErrorCodes.VALIDATION, "Invalid scoring output or scorecard snapshot", 422) from exc
             result = ScreeningResult(
                 company_id=run.company_id,
                 application_id=run.application_id,
@@ -124,14 +122,7 @@ class ProcessingService:
                 job_requirement_id=run.job_requirement_id,
                 scorecard_id=run.scorecard_id,
                 ai_model_id=run.ai_model_id,
-                overall_score=output.overall_score,
-                match_percentage=output.match_percentage,
-                decision=decision,
-                skill_score=output.skill_score,
-                experience_score=output.experience_score,
-                education_score=output.education_score,
-                language_score=output.language_score,
-                criteria_scores=output.criteria_scores,
+                **assessment,
                 scorecard_snapshot=run.config_snapshot.get("scorecard", {}),
                 strengths=output.strengths,
                 weaknesses=output.weaknesses,

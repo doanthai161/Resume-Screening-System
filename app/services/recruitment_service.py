@@ -28,6 +28,7 @@ from app.models.job_requirement import JobRequirement, JobStatus
 from app.models.job_scorecard import JobScorecard
 from app.models.resume_file import ResumeFile
 from app.models.screening_run import ScreeningRun
+from app.models.screening_result import ScreeningResult
 from app.models.user import User
 from app.models.user_company import UserCompany
 from app.repositories.recruitment_repository import RecruitmentRepository
@@ -642,6 +643,32 @@ class ScorecardService:
 
 
 class ScreeningService:
+    @staticmethod
+    async def get_result(run_id: str, company_id: str, current_user: CurrentUser) -> ScreeningResult:
+        from app.core.tenant_policy import branch_role
+
+        if not current_user.has_permission("screening_runs:view"):
+            raise CustomError(ErrorCodes.FORBIDDEN, "Screening access denied", 403)
+        if not PydanticObjectId.is_valid(run_id):
+            raise CustomError(ErrorCodes.VALIDATION, "Invalid screening run ID", 422)
+        await TenantAccessService.require_company_access(current_user, company_id)
+        run = await RecruitmentRepository.get_screening_run(run_id, company_id)
+        if not run:
+            raise CustomError(ErrorCodes.NOT_FOUND, "Screening run not found", 404)
+        application = await RecruitmentRepository.get_application(str(run.application_id), company_id)
+        if not application or not await branch_role(
+            current_user.user_id, str(application.company_branch_id)
+        ):
+            raise CustomError(ErrorCodes.FORBIDDEN, "Application branch access denied", 403)
+        result = await ScreeningResult.find_one({
+            "screening_run_id": run.id,
+            "company_id": PydanticObjectId(company_id),
+            "application_id": application.id,
+        })
+        if not result:
+            raise CustomError(ErrorCodes.NOT_FOUND, "Screening result not available", 404)
+        return result
+
     @staticmethod
     @transactional
     async def start(

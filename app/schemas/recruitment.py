@@ -7,6 +7,8 @@ from app.models.application_review import ReviewRecommendation
 from app.models.job_application import ApplicationStage, ApplicationStatus
 from app.models.job_scorecard import ScorecardCriterion
 from app.models.screening_run import ProcessingStatus
+from app.models.screening_result import ScreeningDecision
+from app.schemas.scoring import CriterionEvaluation
 
 
 def _validate_object_id(value: Optional[str]) -> Optional[str]:
@@ -113,6 +115,33 @@ class ScreeningRunResponse(BaseModel):
     queued_at: datetime
     started_at: Optional[datetime] = None
     finished_at: Optional[datetime] = None
+
+
+class ScreeningResultResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: str
+    application_id: Optional[str] = None
+    screening_run_id: Optional[str] = None
+    scoring_version: int
+    overall_score: Optional[float]
+    match_percentage: Optional[float]
+    decision: ScreeningDecision
+    evidence_coverage: Optional[float]
+    score_lower_bound: Optional[float]
+    score_upper_bound: Optional[float]
+    criteria_scores: Dict[str, Optional[float]]
+    criteria_evaluations: Dict[str, CriterionEvaluation]
+    scorecard_snapshot: dict
+    strengths: List[str]
+    weaknesses: List[str]
+    matched_skills: List[str]
+    missing_skills: List[str]
+    evaluated_at: datetime
+
+    @field_validator("id", "application_id", "screening_run_id", mode="before")
+    @classmethod
+    def stringify_ids(cls, value):
+        return str(value) if value is not None else None
 
 
 class ApplicationReviewCreate(BaseModel):
