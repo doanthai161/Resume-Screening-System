@@ -21,6 +21,17 @@ services:
       # Port 27017 is already used by the Windows MongoDB service.
       - "127.0.0.1:27018:27017"
 
+  worker-parse: &worker_dev
+    environment:
+      ENVIRONMENT: development
+      DEBUG: "true"
+      REFRESH_COOKIE_SECURE: "false"
+    volumes:
+      - ./app:/app/app:ro
+
+  worker-screening:
+    <<: *worker_dev
+
   redis:
     ports:
       # Loopback-only exposure for a backend process running on the host.

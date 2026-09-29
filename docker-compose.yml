@@ -6,7 +6,7 @@ services:
       - "8000:8000"
     env_file:
       - .env
-    environment:
+    environment: &backend_environment
       - PROJECT_ROOT_DIR=/app
       - MONGODB_URI=mongodb://${MONGO_APP_USERNAME:?MONGO_APP_USERNAME is required}:${MONGO_APP_PASSWORD:?MONGO_APP_PASSWORD is required}@mongo:27017/${MONGO_APP_DATABASE:-resume_screening_db}?authSource=${MONGO_APP_DATABASE:-resume_screening_db}&replicaSet=rs0
       - MONGODB_DB_NAME=${MONGO_APP_DATABASE:-resume_screening_db}
@@ -24,6 +24,32 @@ services:
     volumes:
       - ./uploads:/app/uploads
       - ./logs:/app/logs
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/ready', timeout=3)"]
+      interval: 15s
+      timeout: 5s
+      start_period: 60s
+      retries: 10
+
+  worker-parse: &worker_common
+    build: .
+    profiles: ["workers"]
+    env_file: [.env]
+    environment: *backend_environment
+    command: ["python", "-m", "app.worker", "--queue", "resume-parse"]
+    init: true
+    stop_grace_period: 150s
+    depends_on:
+      api:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./uploads:/app/uploads:ro
+
+  worker-screening:
+    <<: *worker_common
+    command: ["python", "-m", "app.worker", "--queue", "screening"]
 
   mongo:
     image: mongo:7

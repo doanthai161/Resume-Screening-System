@@ -295,6 +295,96 @@ async def parse_run():
     return resume, run
 
 
+async def test_worker_parse_commit_then_ack_failure_is_safe_on_redelivery(monkeypatch):
+    from types import SimpleNamespace
+    from app.workers.runtime import Worker
+
+    resume, run = await parse_run()
+    adapter = SimpleNamespace(parse=AsyncMock(return_value={"parsed_data": {"skills": ["Python"]}}))
+    worker = Worker("resume-parse", adapter)
+    ack = AsyncMock(side_effect=RuntimeError("Redis unavailable after commit"))
+    monkeypatch.setattr(job_queue, "acknowledge", ack)
+    payload = {"resource_id": str(run.id), "company_id": str(run.company_id)}
+    with pytest.raises(RuntimeError):
+        await worker.handle("1-0", payload)
+    stored = await ResumeParseRun.get(run.id)
+    assert stored.status == "completed" and stored.attempt == 1
+    assert (await ResumeFile.get(resume.id)).parsed_data.skills == ["Python"]
+    ack.side_effect = None
+    await worker.handle("1-0", payload)
+    assert adapter.parse.await_count == 1
+    assert ack.await_count == 2
+    assert (await ResumeParseRun.get(run.id)).attempt == 1
+
+
+async def test_worker_adapter_failure_retries_until_mongo_terminal_state(monkeypatch):
+    from types import SimpleNamespace
+    from app.workers.runtime import Worker
+
+    resume, run = await parse_run()
+    adapter = SimpleNamespace(parse=AsyncMock(side_effect=RuntimeError("sensitive remote error")))
+    worker = Worker("resume-parse", adapter)
+    ack = AsyncMock()
+    monkeypatch.setattr(job_queue, "acknowledge", ack)
+    payload = {"resource_id": str(run.id), "company_id": str(run.company_id)}
+    for attempt in range(run.max_attempts):
+        await worker.handle(f"{attempt + 1}-0", payload)
+        stored = await ResumeParseRun.get(run.id)
+        assert stored.attempt == attempt + 1
+        assert stored.status == ("failed" if attempt + 1 == run.max_attempts else "queued")
+        assert stored.error_message == "Worker processing failed"
+    assert stored.is_terminal
+    assert (await ResumeFile.get(resume.id)).status == "error"
+    await worker.handle("99-0", payload)
+    assert adapter.parse.await_count == run.max_attempts
+    assert ack.await_count == run.max_attempts + 1
+
+
+async def test_worker_wrong_tenant_delivery_cannot_claim_run(monkeypatch):
+    from types import SimpleNamespace
+    from app.workers.runtime import Worker
+
+    _, run = await parse_run()
+    adapter = SimpleNamespace(parse=AsyncMock())
+    worker = Worker("resume-parse", adapter)
+    monkeypatch.setattr(job_queue, "acknowledge", AsyncMock())
+    await worker.handle("1-0", {"resource_id": str(run.id), "company_id": str(ObjectId())})
+    adapter.parse.assert_not_awaited()
+    assert (await ResumeParseRun.get(run.id)).attempt == 0
+
+
+async def test_worker_cancelled_job_is_recovered_with_new_generation(monkeypatch):
+    from types import SimpleNamespace
+    from app.workers.runtime import Worker
+
+    _, run = await parse_run()
+    started = asyncio.Event()
+
+    async def blocked(_):
+        started.set()
+        await asyncio.Event().wait()
+
+    adapter = SimpleNamespace(parse=AsyncMock(side_effect=blocked))
+    worker = Worker("resume-parse", adapter)
+    ack = AsyncMock()
+    monkeypatch.setattr(job_queue, "acknowledge", ack)
+    payload = {"resource_id": str(run.id), "company_id": str(run.company_id)}
+    task = asyncio.create_task(worker.handle("1-0", payload))
+    await asyncio.wait_for(started.wait(), 5)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    ack.assert_not_awaited()
+    await ResumeParseRun.find_one({"_id": run.id}).update({"$set": {"lease_expires_at": now_utc() - timedelta(seconds=1)}})
+    await ProcessingService.recover_expired_leases()
+    adapter.parse.side_effect = None
+    adapter.parse.return_value = {"parsed_data": {"skills": ["SQL"]}}
+    await worker.handle("2-0", payload)
+    stored = await ResumeParseRun.get(run.id)
+    assert stored.status == "completed" and stored.attempt == 2
+    ack.assert_awaited_once()
+
+
 async def job_data():
     owner = await User(
         email="owner@example.com",

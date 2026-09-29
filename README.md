@@ -1,5 +1,7 @@
 # Resume Screening System
 
+Worker MVP đã có runtime trong BE và Compose profile `workers`. Profile này cần adapter parsing/screening thật; hiện chưa tích hợp MinerU/model và không tạo kết quả giả.
+
 Quy tắc làm việc cho AI được lưu tại [AGENTS.md](AGENTS.md). Đây là nguồn hướng dẫn chung của repository.
 
 Backend quản lý quy trình tuyển dụng và sàng lọc hồ sơ, xây dựng bằng FastAPI, MongoDB, Redis và Beanie ODM.

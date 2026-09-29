@@ -75,6 +75,20 @@ async def acknowledge(queue: str, group: str, message_id: str) -> None:
         await redis.xack(cache_key("queue", queue), group, message_id)
 
 
+async def reclaim(queue: str, group: str, consumer: str, cursor: str = "0-0") -> tuple[str, list]:
+    """Recover pending deliveries after a consumer crash; Mongo leases fence work."""
+    redis = get_redis()
+    if not redis:
+        raise RuntimeError("Worker requires Redis")
+    await ensure_consumer_group(queue, group)
+    result = await redis.xautoclaim(
+        cache_key("queue", queue), group, consumer,
+        min_idle_time=settings.QUEUE_REDELIVERY_SECONDS * 1000,
+        start_id=cursor, count=1,
+    )
+    return result[0], result[1]
+
+
 async def publish_committed(queue: str, resource_id: str, company_id: str) -> None:
     from beanie import PydanticObjectId
     from app.models.screening_run import ScreeningRun, ResumeParseRun
