@@ -79,6 +79,12 @@ class Settings(BaseSettings):
     QUEUE_REDELIVERY_SECONDS: int = Field(default=600, ge=60, le=86400)
     MAINTENANCE_INTERVAL_SECONDS: int = Field(default=60, ge=15, le=3600)
     WORKER_ADAPTER_FACTORY: str = Field(default="", max_length=200)
+    MINERU_API_URL: Optional[str] = Field(default=None, description="MinerU 4 V1 service root, before /v1")
+    MINERU_API_KEY: Optional[SecretStr] = None
+    MINERU_PDF_TIER: str = Field(default="basic", pattern="^(flash|basic|standard|advanced)$")
+    MINERU_REQUEST_TIMEOUT_SECONDS: int = Field(default=60, ge=5, le=300)
+    MINERU_POLL_INTERVAL_SECONDS: float = Field(default=3, ge=0.1, le=30)
+    MINERU_MAX_POLLS: int = Field(default=100, ge=1, le=1000)
     WORKER_HEARTBEAT_SECONDS: int = Field(default=30, ge=1, le=60)
     WORKER_JOB_TIMEOUT_SECONDS: int = Field(default=900, ge=1, le=7200)
     WORKER_SHUTDOWN_SECONDS: int = Field(default=20, ge=1, le=120)

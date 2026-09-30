@@ -33,7 +33,7 @@ services:
 
   worker-parse: &worker_common
     build: .
-    profiles: ["workers"]
+    profiles: ["workers", "parse"]
     env_file: [.env]
     environment: *backend_environment
     command: ["python", "-m", "app.worker", "--queue", "resume-parse"]
@@ -49,6 +49,7 @@ services:
 
   worker-screening:
     <<: *worker_common
+    profiles: ["workers"]
     command: ["python", "-m", "app.worker", "--queue", "screening"]
 
   mongo:
