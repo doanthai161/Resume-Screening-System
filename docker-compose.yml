@@ -7,13 +7,13 @@ services:
     env_file:
       - .env
     environment: &backend_environment
-      - PROJECT_ROOT_DIR=/app
-      - MONGODB_URI=mongodb://${MONGO_APP_USERNAME:?MONGO_APP_USERNAME is required}:${MONGO_APP_PASSWORD:?MONGO_APP_PASSWORD is required}@mongo:27017/${MONGO_APP_DATABASE:-resume_screening_db}?authSource=${MONGO_APP_DATABASE:-resume_screening_db}&replicaSet=rs0
-      - MONGODB_DB_NAME=${MONGO_APP_DATABASE:-resume_screening_db}
-      - REDIS_URL=redis://:${REDIS_PASSWORD:?REDIS_PASSWORD is required}@redis:6379/0
-      - ENVIRONMENT=production
-      - DEBUG=false
-      - REFRESH_COOKIE_SECURE=true
+      PROJECT_ROOT_DIR: /app
+      MONGODB_URI: mongodb://${MONGO_APP_USERNAME:?MONGO_APP_USERNAME is required}:${MONGO_APP_PASSWORD:?MONGO_APP_PASSWORD is required}@mongo:27017/${MONGO_APP_DATABASE:-resume_screening_db}?authSource=${MONGO_APP_DATABASE:-resume_screening_db}&replicaSet=rs0
+      MONGODB_DB_NAME: ${MONGO_APP_DATABASE:-resume_screening_db}
+      REDIS_URL: redis://:${REDIS_PASSWORD:?REDIS_PASSWORD is required}@redis:6379/0
+      ENVIRONMENT: production
+      DEBUG: "false"
+      REFRESH_COOKIE_SECURE: "true"
     depends_on:
       mongo:
         condition: service_healthy
@@ -35,9 +35,18 @@ services:
     build: .
     profiles: ["workers", "parse"]
     env_file: [.env]
-    environment: *backend_environment
+    environment:
+      <<: *backend_environment
+      WORKER_ADAPTER_FACTORY: ${PARSE_WORKER_ADAPTER_FACTORY:-app.workers.mineru_adapter:create_adapter}
     command: ["python", "-m", "app.worker", "--queue", "resume-parse"]
     init: true
+    read_only: true
+    tmpfs:
+      - /tmp:size=256m,mode=1777,noexec,nosuid,nodev
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
     stop_grace_period: 150s
     depends_on:
       api:
@@ -51,6 +60,9 @@ services:
     <<: *worker_common
     profiles: ["workers"]
     command: ["python", "-m", "app.worker", "--queue", "screening"]
+    environment:
+      <<: *backend_environment
+      WORKER_ADAPTER_FACTORY: ${SCREENING_WORKER_ADAPTER_FACTORY:-}
 
   mongo:
     image: mongo:7

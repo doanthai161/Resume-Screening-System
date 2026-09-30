@@ -11,16 +11,45 @@ from app.core.config import settings
 from app.models.application_stage_event import ApplicationStageEvent
 from app.models.job_application import ApplicationStage, JobApplication
 from app.models.resume_file import ResumeFile
+from app.models.resume_parse_attempt import ParseAttemptStatus, ResumeParseAttempt
 from app.models.screening_result import (
     ScreeningResult,
     ScreeningResultStatus,
 )
-from app.models.screening_run import ProcessingStatus, ResumeParseRun, ScreeningRun
+from app.models.screening_run import (
+    ProcessingStatus, ResumeParseRun, ScreeningRun,
+    parse_attempt_count_expression, parse_retry_due_filter,
+)
 from app.schemas.worker import ParseOutput, ScreeningOutput
 from app.utils.time import now_utc
 
 
 LEASE_DURATION = timedelta(minutes=5)
+
+
+async def _close_running_parse_attempts(
+    run_id: PydanticObjectId,
+    run_attempt: int,
+    error_code: str,
+    finished_at,
+) -> None:
+    await ResumeParseAttempt.find(
+        {
+            "run_id": run_id,
+            "run_attempt": run_attempt,
+            "status": ParseAttemptStatus.RUNNING.value,
+        },
+        session=current_session(),
+    ).update_many(
+        {
+            "$set": {
+                "status": ParseAttemptStatus.FAILED.value,
+                "error_code": error_code[:100],
+                "finished_at": finished_at,
+            }
+        },
+        session=current_session(),
+    )
 
 
 class ProcessingService:
@@ -226,6 +255,7 @@ class ProcessingService:
         error_message: str,
         *,
         generation: int,
+        retryable: bool = True,
     ) -> bool:
         run = await ScreeningRun.find_one(
             {
@@ -239,7 +269,7 @@ class ProcessingService:
         )
         if not run:
             return False
-        terminal = run.attempt >= run.max_attempts
+        terminal = not retryable or run.attempt >= run.max_attempts
         now = now_utc()
         terminal_update = await ScreeningRun.find_one(
             {
@@ -299,7 +329,8 @@ class ProcessingService:
             {
                 "_id": PydanticObjectId(run_id),
                 "status": ProcessingStatus.QUEUED.value,
-                "$expr": {"$lt": ["$attempt", "$max_attempts"]},
+                "$expr": {"$lt": [parse_attempt_count_expression(), "$max_attempts"]},
+                **parse_retry_due_filter(now),
             },
             session=current_session(),
         ).update(
@@ -397,6 +428,14 @@ class ProcessingService:
                 "$set": {
                     "status": ProcessingStatus.COMPLETED.value,
                     "is_terminal": True,
+                    "parser_version": output.parsed_data.parser_version,
+                    "next_retry_at": None,
+                    "error_code": None,
+                    "error_message": None,
+                    "final_provider": output.provider,
+                    "ocr_used": output.ocr_used,
+                    "quality_score": output.quality_score,
+                    "fallback_reason": output.fallback_reason,
                     "finished_at": now,
                     "lease_expires_at": None,
                     "updated_at": now,
@@ -417,6 +456,8 @@ class ProcessingService:
         error_message: str,
         *,
         generation: int,
+        retryable: bool = True,
+        deferred: bool = False,
     ) -> bool:
         run = await ResumeParseRun.find_one(
             {
@@ -430,8 +471,19 @@ class ProcessingService:
         )
         if not run:
             return False
-        terminal = run.attempt >= run.max_attempts
+        if deferred and (not retryable or error_code != "mineru_circuit_open"):
+            raise ValueError("Only an open circuit can defer a parse attempt")
+        deferred_attempts = run.deferred_attempts + int(deferred)
+        used_attempts = run.attempt - deferred_attempts
+        terminal = not retryable or used_attempts >= run.max_attempts
         now = now_utc()
+        # A closed-circuit provider failure consumes a bounded retry. An open
+        # circuit only waits. Mongo owns this schedule, including across restarts.
+        delay = (
+            settings.MINERU_CIRCUIT_OPEN_SECONDS if deferred
+            else min(300, 5 * (2 ** max(0, min(used_attempts - 1, 6))))
+        )
+        next_retry_at = None if terminal else now + timedelta(seconds=delay)
         terminal_update = await ResumeParseRun.find_one(
             {
                 "_id": run.id,
@@ -450,6 +502,8 @@ class ProcessingService:
                     "is_terminal": terminal,
                     "error_code": error_code[:100],
                     "error_message": error_message[:2000],
+                    "deferred_attempts": deferred_attempts,
+                    "next_retry_at": next_retry_at,
                     "worker_id": None,
                     "lease_expires_at": None,
                     "queue_message_id": None if not terminal else run.queue_message_id,
@@ -462,6 +516,12 @@ class ProcessingService:
         )
         if not terminal_update or terminal_update.modified_count != 1:
             raise CustomError(ErrorCodes.CONFLICT, "Worker lease lost", 409)
+        await _close_running_parse_attempts(
+            run.id,
+            run.attempt,
+            error_code,
+            now,
+        )
         await ResumeFile.find_one(
             {"_id": run.resume_file_id, "company_id": run.company_id},
             session=current_session(),
@@ -477,24 +537,8 @@ class ProcessingService:
             },
             session=current_session(),
         )
-        if not terminal:
-            message_id = await job_queue.enqueue(
-                "resume-parse", str(run.id), str(run.company_id)
-            )
-            if message_id:
-                await ResumeParseRun.find_one(
-                    {"_id": run.id, "status": ProcessingStatus.QUEUED.value},
-                    session=current_session(),
-                ).update(
-                    {
-                        "$set": {
-                            "queue_message_id": str(message_id),
-                            "last_enqueued_at": now,
-                            "updated_at": now,
-                        }
-                    },
-                    session=current_session(),
-                )
+        # Maintenance publishes after next_retry_at; never immediately redeliver
+        # a circuit deferral or a transient provider failure.
         return True
 
     @staticmethod
@@ -507,12 +551,16 @@ class ProcessingService:
             (ScreeningRun, "screening"),
             (ResumeParseRun, "resume-parse"),
         ):
+            attempt_count = (
+                parse_attempt_count_expression() if model is ResumeParseRun else "$attempt"
+            )
+            due_filter = parse_retry_due_filter(now) if model is ResumeParseRun else {}
             stale = (
                 await model.find(
                     {
                         "status": ProcessingStatus.RUNNING.value,
                         "lease_expires_at": {"$lt": now},
-                        "$expr": {"$lt": ["$attempt", "$max_attempts"]},
+                        "$expr": {"$lt": [attempt_count, "$max_attempts"]},
                     },
                     session=current_session(),
                 )
@@ -542,6 +590,13 @@ class ProcessingService:
                 )
                 if update and getattr(update, "modified_count", 0) == 1:
                     recovered += 1
+                    if model is ResumeParseRun:
+                        await _close_running_parse_attempts(
+                            run.id,
+                            run.attempt,
+                            "worker_lease_expired",
+                            now,
+                        )
                     message_id = await job_queue.enqueue(
                         queue_name, str(run.id), str(run.company_id)
                     )
@@ -565,7 +620,7 @@ class ProcessingService:
                     {
                         "status": ProcessingStatus.RUNNING.value,
                         "lease_expires_at": {"$lt": now},
-                        "$expr": {"$gte": ["$attempt", "$max_attempts"]},
+                        "$expr": {"$gte": [attempt_count, "$max_attempts"]},
                     },
                     session=current_session(),
                 )
@@ -598,6 +653,12 @@ class ProcessingService:
                 if update and getattr(update, "modified_count", 0) == 1:
                     recovered += 1
                     if model is ResumeParseRun:
+                        await _close_running_parse_attempts(
+                            run.id,
+                            run.attempt,
+                            "worker_lease_expired",
+                            now,
+                        )
                         await ResumeFile.find_one(
                             {"_id": run.resume_file_id, "company_id": run.company_id},
                             session=current_session(),
@@ -620,7 +681,8 @@ class ProcessingService:
                 await model.find(
                     {
                         "status": ProcessingStatus.QUEUED.value,
-                        "$expr": {"$lt": ["$attempt", "$max_attempts"]},
+                        "$expr": {"$lt": [attempt_count, "$max_attempts"]},
+                        "$and": [due_filter],
                         "$or": [
                             {"last_enqueued_at": None},
                             {

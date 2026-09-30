@@ -26,6 +26,7 @@ from app.models.job_requirement import JobRequirement
 from app.models.job_scorecard import JobScorecard
 from app.models.permission import Permission
 from app.models.resume_file import ResumeFile
+from app.models.resume_parse_attempt import ResumeParseAttempt
 from app.models.screening_result import ScreeningResult
 from app.models.screening_run import ResumeParseRun, ScreeningRun
 from app.models.user import User
@@ -61,13 +62,16 @@ DOCUMENT_MODELS: list[type[Document]] = [
     JobScorecard,
     ScreeningRun,
     ResumeParseRun,
+    ResumeParseAttempt,
     ApplicationReview,
     DatabaseMigration,
 ]
 
 # Internal metadata does not receive API permissions.
 PERMISSION_MODELS: Sequence[type[Document]] = tuple(
-    model for model in DOCUMENT_MODELS if model not in {DatabaseMigration, AuthSession}
+    model
+    for model in DOCUMENT_MODELS
+    if model not in {DatabaseMigration, AuthSession, ResumeParseAttempt}
 )
 
 

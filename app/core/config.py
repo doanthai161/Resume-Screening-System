@@ -82,9 +82,21 @@ class Settings(BaseSettings):
     MINERU_API_URL: Optional[str] = Field(default=None, description="MinerU 4 V1 service root, before /v1")
     MINERU_API_KEY: Optional[SecretStr] = None
     MINERU_PDF_TIER: str = Field(default="basic", pattern="^(flash|basic|standard|advanced)$")
+    MINERU_FALLBACK_TIER: str = Field(
+        default="standard", pattern="^(basic|standard|advanced)$"
+    )
+    MINERU_AUTO_OCR: bool = True
     MINERU_REQUEST_TIMEOUT_SECONDS: int = Field(default=60, ge=5, le=300)
     MINERU_POLL_INTERVAL_SECONDS: float = Field(default=3, ge=0.1, le=30)
     MINERU_MAX_POLLS: int = Field(default=100, ge=1, le=1000)
+    MINERU_CIRCUIT_FAILURE_THRESHOLD: int = Field(default=3, ge=1, le=100)
+    MINERU_CIRCUIT_OPEN_SECONDS: int = Field(default=60, ge=5, le=3600)
+    PARSE_MIN_TEXT_CHARACTERS: int = Field(default=100, ge=1, le=10000)
+    PARSE_MIN_TEXT_CHARACTERS_PER_PAGE: int = Field(default=30, ge=1, le=1000)
+    PARSE_MIN_ALNUM_RATIO: float = Field(default=0.35, ge=0.0, le=1.0)
+    PARSE_MAX_REPLACEMENT_RATIO: float = Field(default=0.01, ge=0.0, le=1.0)
+    PARSE_NATIVE_TEXT_PAGE_RATIO: float = Field(default=0.8, ge=0.0, le=1.0)
+    MAX_RESUME_PAGES: int = Field(default=50, ge=1, le=1000)
     WORKER_HEARTBEAT_SECONDS: int = Field(default=30, ge=1, le=60)
     WORKER_JOB_TIMEOUT_SECONDS: int = Field(default=900, ge=1, le=7200)
     WORKER_SHUTDOWN_SECONDS: int = Field(default=20, ge=1, le=120)
@@ -243,6 +255,9 @@ class Settings(BaseSettings):
             )
         if self.REFRESH_COOKIE_SAMESITE == "none" and not self.REFRESH_COOKIE_SECURE:
             raise ValueError("SameSite=None cookies must also set Secure")
+        tier_rank = {"flash": 0, "basic": 1, "standard": 2, "advanced": 3}
+        if tier_rank[self.MINERU_FALLBACK_TIER] < tier_rank[self.MINERU_PDF_TIER]:
+            raise ValueError("MINERU_FALLBACK_TIER must not be lower than MINERU_PDF_TIER")
         return self
     @field_validator("CORS_ORIGINS", "CORS_ALLOW_METHODS", "CORS_ALLOW_HEADERS", "CORS_EXPOSE_HEADERS", mode="before")
     @classmethod

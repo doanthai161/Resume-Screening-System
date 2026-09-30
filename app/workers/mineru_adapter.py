@@ -5,49 +5,39 @@ separate step: no personal details or assessment are inferred here.
 """
 
 import asyncio
-import hashlib
 import json
-from pathlib import Path
 from urllib.parse import quote
 
 import httpx
 
 from app.core.config import settings
-from app.models.resume_file import ParsedResumeData, ResumeFile
+from app.models.resume_file import ParsedResumeData
 from app.models.screening_run import ResumeParseRun
 from app.schemas.worker import ParseOutput
+from app.workers.document import (
+    SUPPORTED_MIME_TYPES,
+    DocumentAnalysis,
+    ResumeDocument,
+    analyze_document,
+    load_resume_document,
+)
+from app.workers.errors import (
+    PermanentParseError,
+    ProviderResponseError,
+    TransientParseError,
+)
+from app.workers.quality import evaluate_text_quality
 
 _MAX_MARKDOWN_BYTES = 1_000_000
 _MAX_JSON_BYTES = 1_000_000
-_MIME = {
-    ".pdf": "application/pdf",
-    ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-}
-
-
 def _required_string(data: dict, name: str) -> str:
     value = data.get(name)
     if not isinstance(value, str) or not value:
-        raise ValueError(f"MinerU response missing {name}")
+        raise ProviderResponseError(
+            "MinerU returned an incomplete response",
+            code="mineru_invalid_response",
+        )
     return value
-
-
-def _read_local_resume(resume: ResumeFile) -> bytes:
-    if resume.storage_provider != "local":
-        raise ValueError("MinerU adapter supports local resume storage only")
-    root = settings.resume_upload_path.resolve()
-    path = Path(resume.file_path).resolve(strict=True)
-    if not path.is_relative_to(root) or path.suffix.lower() not in _MIME:
-        raise ValueError("Resume path is outside the upload directory or has unsupported format")
-    if resume.mime_type != _MIME[path.suffix.lower()]:
-        raise ValueError("Resume MIME type does not match the file extension")
-    if not 0 < resume.file_size <= settings.MAX_RESUME_SIZE:
-        raise ValueError("Resume size is invalid")
-    with path.open("rb") as handle:
-        content = handle.read(settings.MAX_RESUME_SIZE + 1)
-    if len(content) != resume.file_size or hashlib.sha256(content).hexdigest() != resume.checksum:
-        raise ValueError("Resume content does not match stored metadata")
-    return content
 
 
 class MinerUAdapter:
@@ -67,109 +57,248 @@ class MinerUAdapter:
         # flow only. A service response cannot redirect CV bytes to another host.
         target = httpx.URL(self.base_url).join(url)
         if (target.scheme, target.host, target.port) != self.origin or target.userinfo:
-            raise ValueError("MinerU upload URL must be same-origin")
+            raise PermanentParseError(
+                "MinerU upload URL must be same-origin",
+                code="mineru_unsafe_upload_url",
+            )
         return str(target)
 
-    async def _json(self, method: str, url: str, **kwargs) -> dict:
-        async with self.client.stream(method, url, **kwargs) as response:
-            response.raise_for_status()
-            body = bytearray()
-            async for chunk in response.aiter_bytes():
-                body.extend(chunk)
-                if len(body) > _MAX_JSON_BYTES:
-                    raise ValueError("MinerU JSON response is too large")
-        data = json.loads(body)
+    @staticmethod
+    def _raise_http_error(exc: httpx.HTTPStatusError, *, known_resource: bool = False) -> None:
+        status_code = exc.response.status_code
+        if status_code == 404 and known_resource:
+            # Resource IDs are process-local in MinerU. Let the durable worker
+            # retry the full upload/job cycle, bounded by the run retry budget.
+            raise TransientParseError(
+                "MinerU lost a previously created resource",
+                code="mineru_resource_lost",
+            ) from exc
+        if status_code in {408, 425, 429} or status_code >= 500:
+            raise TransientParseError(
+                "MinerU is temporarily unavailable",
+                code=f"mineru_http_{status_code}",
+            ) from exc
+        raise PermanentParseError(
+            "MinerU rejected the parse request",
+            code=f"mineru_http_{status_code}",
+        ) from exc
+
+    async def _json(self, method: str, url: str, *, known_resource: bool = False, **kwargs) -> dict:
+        try:
+            async with self.client.stream(method, url, **kwargs) as response:
+                response.raise_for_status()
+                body = bytearray()
+                async for chunk in response.aiter_bytes():
+                    body.extend(chunk)
+                    if len(body) > _MAX_JSON_BYTES:
+                        raise ProviderResponseError(
+                            "MinerU JSON response is too large",
+                            code="mineru_response_too_large",
+                        )
+        except httpx.HTTPStatusError as exc:
+            self._raise_http_error(exc, known_resource=known_resource)
+        except (httpx.TimeoutException, httpx.NetworkError) as exc:
+            raise TransientParseError(
+                "MinerU request failed",
+                code="mineru_connection_failed",
+            ) from exc
+        try:
+            data = json.loads(body)
+        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise ProviderResponseError(
+                "MinerU returned invalid JSON",
+                code="mineru_invalid_json",
+            ) from exc
         if not isinstance(data, dict):
-            raise ValueError("MinerU returned invalid JSON")
+            raise ProviderResponseError(
+                "MinerU returned invalid JSON",
+                code="mineru_invalid_json",
+            )
         return data
 
-    async def _markdown(self, file_id: str) -> str:
-        async with self.client.stream("GET", self._url(f"files/{quote(file_id, safe='')}/content")) as response:
+    async def _put(self, url: str, content: bytes, headers: dict[str, str]) -> None:
+        try:
+            response = await self.client.put(url, content=content, headers=headers)
             response.raise_for_status()
-            data = bytearray()
-            async for chunk in response.aiter_bytes():
-                data.extend(chunk)
-                if len(data) > _MAX_MARKDOWN_BYTES:
-                    raise ValueError("MinerU Markdown exceeds resume text limit")
-        text = data.decode("utf-8", errors="strict").strip()
+        except httpx.HTTPStatusError as exc:
+            self._raise_http_error(exc, known_resource=True)
+        except (httpx.TimeoutException, httpx.NetworkError) as exc:
+            raise TransientParseError(
+                "MinerU upload failed",
+                code="mineru_upload_failed",
+            ) from exc
+
+    async def _markdown(self, file_id: str) -> str:
+        try:
+            async with self.client.stream(
+                "GET", self._url(f"files/{quote(file_id, safe='')}/content")
+            ) as response:
+                response.raise_for_status()
+                data = bytearray()
+                async for chunk in response.aiter_bytes():
+                    data.extend(chunk)
+                    if len(data) > _MAX_MARKDOWN_BYTES:
+                        raise ProviderResponseError(
+                            "MinerU Markdown exceeds the resume text limit",
+                            code="mineru_markdown_too_large",
+                        )
+        except httpx.HTTPStatusError as exc:
+            self._raise_http_error(exc, known_resource=True)
+        except (httpx.TimeoutException, httpx.NetworkError) as exc:
+            raise TransientParseError(
+                "MinerU result download failed",
+                code="mineru_download_failed",
+            ) from exc
+        try:
+            text = data.decode("utf-8", errors="strict").strip()
+        except UnicodeDecodeError as exc:
+            raise ProviderResponseError(
+                "MinerU Markdown is not valid UTF-8",
+                code="mineru_invalid_markdown",
+            ) from exc
         if not text:
-            raise ValueError("MinerU returned empty Markdown")
+            raise ProviderResponseError(
+                "MinerU returned empty Markdown",
+                code="mineru_empty_markdown",
+            )
         return text
 
-    async def parse(self, run: ResumeParseRun) -> ParseOutput:
-        resume = await ResumeFile.find_one({
-            "_id": run.resume_file_id, "company_id": run.company_id, "is_deleted": False,
-        })
-        if resume is None:
-            raise ValueError("Resume is missing or does not belong to this company")
-        content = await asyncio.to_thread(_read_local_resume, resume)
-        extension = Path(resume.file_path).suffix.lower()
-        filename = Path(resume.file_path).name
+    async def parse_document(
+        self,
+        document: ResumeDocument,
+        analysis: DocumentAnalysis,
+        *,
+        tier: str,
+        ocr_mode: str | None,
+        fallback_reason: str | None = None,
+    ) -> ParseOutput:
+        content = document.content
+        extension = document.extension
         upload = await self._json("POST", self._url("uploads"), json={
-            "filename": filename,
+            "filename": document.filename,
             "bytes": len(content),
-            "mime_type": _MIME[extension],
+            "mime_type": SUPPORTED_MIME_TYPES[extension],
             "purpose": "parse",
-            "sha256sum": resume.checksum,
+            "sha256sum": document.resume.checksum,
         })
         status = _required_string(upload, "status")
         upload_id = _required_string(upload, "id")
         if status == "pending":
             upload_url = self._upload_url(_required_string(upload, "upload_url"))
             if upload.get("upload_method", "PUT") != "PUT":
-                raise ValueError("Unsupported MinerU upload method")
+                raise ProviderResponseError(
+                    "MinerU returned an unsupported upload method",
+                    code="mineru_invalid_upload_method",
+                )
             headers = upload.get("upload_headers") or {}
             if not isinstance(headers, dict) or any(
                 not isinstance(k, str) or not isinstance(v, str)
                 or k.lower() in {"authorization", "host", "cookie"}
                 or "\r" in k + v or "\n" in k + v for k, v in headers.items()
             ):
-                raise ValueError("Invalid MinerU upload headers")
-            response = await self.client.put(upload_url, content=content, headers=headers)
-            response.raise_for_status()
-            upload = await self._json("POST", self._url(f"uploads/{quote(upload_id, safe='')}/complete"))
+                raise ProviderResponseError(
+                    "MinerU returned invalid upload headers",
+                    code="mineru_invalid_upload_headers",
+                )
+            await self._put(upload_url, content, headers)
+            upload = await self._json(
+                "POST", self._url(f"uploads/{quote(upload_id, safe='')}/complete"),
+                known_resource=True,
+            )
             if upload.get("status") != "completed":
-                raise ValueError("MinerU upload did not complete")
+                raise ProviderResponseError(
+                    "MinerU upload did not complete",
+                    code="mineru_upload_incomplete",
+                )
         elif status != "completed":
-            raise ValueError("Unsupported MinerU upload status")
+            raise ProviderResponseError(
+                "MinerU returned an unsupported upload status",
+                code="mineru_invalid_upload_status",
+            )
         file_data = upload.get("file")
         if not isinstance(file_data, dict):
-            raise ValueError("MinerU upload has no file")
+            raise ProviderResponseError(
+                "MinerU upload has no file",
+                code="mineru_file_missing",
+            )
         file_id = _required_string(file_data, "id")
-        tier = settings.MINERU_PDF_TIER if extension == ".pdf" else "flash"
-        job = await self._json("POST", self._url("parse/jobs"), json={
+        request_data = {
             "files": [{"source": {"type": "file_id", "file_id": file_id}}],
             "tier": tier,
             "output_formats": ["markdown"],
-        })
+        }
+        if extension == ".pdf" and ocr_mode:
+            request_data["ocr_mode"] = ocr_mode
+        job = await self._json("POST", self._url("parse/jobs"), json=request_data)
         job_id = _required_string(job, "job_id")
-        for _ in range(settings.MINERU_MAX_POLLS + 1):
+        polls = 0
+        while True:
             job_status = _required_string(job, "status")
             if job_status == "completed":
                 break
             if job_status not in {"queued", "running"}:
-                raise ValueError("MinerU parse job did not complete")
+                raise PermanentParseError(
+                    "MinerU rejected the document",
+                    code="mineru_job_failed",
+                )
+            if polls >= settings.MINERU_MAX_POLLS:
+                raise TransientParseError(
+                    "MinerU polling budget was exhausted",
+                    code="mineru_poll_timeout",
+                )
             await asyncio.sleep(settings.MINERU_POLL_INTERVAL_SECONDS)
-            job = await self._json("GET", self._url(f"parse/jobs/{quote(job_id, safe='')}"))
-        else:
-            raise TimeoutError("MinerU polling budget exhausted")
+            job = await self._json(
+                "GET", self._url(f"parse/jobs/{quote(job_id, safe='')}"),
+                known_resource=True,
+            )
+            polls += 1
         files = job.get("files")
         if not isinstance(files, list) or len(files) != 1 or files[0].get("status") != "completed":
-            raise ValueError("MinerU parse result is incomplete")
+            raise ProviderResponseError(
+                "MinerU parse result is incomplete",
+                code="mineru_result_incomplete",
+            )
         outputs = files[0].get("output_files")
         markdown = outputs.get("markdown") if isinstance(outputs, dict) else None
         if not isinstance(markdown, dict):
-            raise ValueError("MinerU Markdown artifact is missing")
+            raise ProviderResponseError(
+                "MinerU Markdown artifact is missing",
+                code="mineru_artifact_missing",
+            )
         text = await self._markdown(_required_string(markdown, "file_id"))
-        return ParseOutput(parsed_data=ParsedResumeData(
-            raw_text=text, parser_version=f"mineru-v1-{tier}",
-        ))
+        quality = evaluate_text_quality(text, analysis.page_count)
+        mode_name = ocr_mode or "native"
+        return ParseOutput(
+            parsed_data=ParsedResumeData(
+                raw_text=text,
+                parser_version=f"mineru-v1-{tier}-{mode_name}",
+                confidence_score=quality.score,
+            ),
+            provider="mineru",
+            ocr_used=ocr_mode == "ocr",
+            quality_score=quality.score,
+            fallback_reason=fallback_reason,
+        )
+
+    async def parse(self, run: ResumeParseRun) -> ParseOutput:
+        document = await load_resume_document(run)
+        analysis = await analyze_document(document)
+        tier = settings.MINERU_PDF_TIER if document.extension == ".pdf" else "flash"
+        ocr_mode = None
+        if document.extension == ".pdf":
+            ocr_mode = "ocr" if settings.MINERU_AUTO_OCR and analysis.requires_ocr else "txt"
+        return await self.parse_document(
+            document,
+            analysis,
+            tier=tier,
+            ocr_mode=ocr_mode,
+        )
 
     async def aclose(self) -> None:
         await self.client.aclose()
 
 
-def create_adapter() -> MinerUAdapter:
+def create_mineru_adapter() -> MinerUAdapter:
     if not settings.MINERU_API_URL:
         raise ValueError("MINERU_API_URL is required for the MinerU parse adapter")
     base_url = settings.MINERU_API_URL.rstrip("/")
@@ -184,3 +313,10 @@ def create_adapter() -> MinerUAdapter:
         follow_redirects=False,
     )
     return MinerUAdapter(client, base_url)
+
+
+def create_adapter():
+    """Create the resilient parse pipeline used by the resume-parse worker."""
+    from app.workers.parse_pipeline import ParsePipelineAdapter
+
+    return ParsePipelineAdapter(create_mineru_adapter())

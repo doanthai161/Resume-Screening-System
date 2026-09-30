@@ -9,6 +9,7 @@ from app.core import job_queue
 from app.core.config import settings
 from app.workers.adapters import load_adapter
 from app.workers.runtime import Worker, GROUP
+from app.workers.errors import CircuitOpenError, PermanentParseError, TransientParseError
 
 pytestmark = pytest.mark.asyncio
 
@@ -73,6 +74,46 @@ async def test_adapter_failure_uses_sanitized_failure_and_ack(runtime, monkeypat
     worker.complete.assert_not_awaited()
     assert worker.fail.await_args.args[2:] == (code, "Worker processing failed")
     assert worker.fail.await_args.kwargs == {"generation": 2}
+    ack.assert_awaited_once()
+
+
+@pytest.mark.parametrize(
+    "error,retryable",
+    [
+        (TransientParseError(code="mineru_http_503"), True),
+        (PermanentParseError(code="encrypted_pdf"), False),
+    ],
+)
+async def test_typed_parse_failure_controls_retry(runtime, error, retryable):
+    run, adapter, ack = runtime
+    adapter.parse.side_effect = error
+    worker = setup_worker("resume-parse", run, adapter)
+
+    await worker.handle("1-0", fields(run))
+
+    assert worker.fail.await_args.args[2] == error.code
+    assert worker.fail.await_args.args[3] == "Worker processing failed"
+    assert worker.fail.await_args.kwargs == {
+        "generation": run.attempt,
+        "retryable": retryable,
+    }
+    ack.assert_awaited_once()
+
+
+async def test_open_circuit_defers_before_acknowledging_delivery(runtime):
+    run, adapter, ack = runtime
+    adapter.parse.side_effect = CircuitOpenError()
+    worker = setup_worker("resume-parse", run, adapter)
+
+    async def deferred(*args, **kwargs):
+        ack.assert_not_awaited()
+        assert args[2] == "mineru_circuit_open"
+        assert kwargs == {"generation": run.attempt, "retryable": True, "deferred": True}
+        return True
+
+    worker.fail.side_effect = deferred
+    await worker.handle("1-0", fields(run))
+    worker.complete.assert_not_awaited()
     ack.assert_awaited_once()
 
 

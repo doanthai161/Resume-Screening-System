@@ -45,5 +45,13 @@ class ParseRunResponse(BaseModel):
     status: ProcessingStatus
     attempt: int
     max_attempts: int
+    deferred_attempts: int = 0
+    next_retry_at: Optional[datetime] = None
     parser_version: str
     queued_at: datetime
+    final_provider: Optional[str] = None
+    ocr_used: bool = False
+    quality_score: Optional[float] = None
+    fallback_reason: Optional[str] = None
+    error_code: Optional[str] = None
+    error_message: Optional[str] = None

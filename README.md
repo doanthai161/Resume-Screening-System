@@ -1,6 +1,6 @@
 # Resume Screening System
 
-Worker parse đã có adapter HTTP cho MinerU 4 V1, bật riêng bằng Compose profile `parse`; cần triển khai MinerU ngoài stack và cấu hình URL. Worker screening và bước trích xuất CV có cấu trúc vẫn chưa có adapter AI. Xem [hướng dẫn MinerU](docs/MINERU_ADAPTER.md).
+Worker parse có pipeline MinerU 4 V1 với tự nhận biết PDF scan, OCR/tier fallback, quality gate, native PDF/DOCX fallback và circuit breaker Redis. Bật riêng bằng Compose profile `parse`; MinerU vẫn được triển khai ngoài stack. Worker screening và bước trích xuất CV có cấu trúc chưa có adapter AI. Xem [hướng dẫn MinerU](docs/MINERU_ADAPTER.md).
 
 Quy tắc làm việc cho AI được lưu tại [AGENTS.md](AGENTS.md). Đây là nguồn hướng dẫn chung của repository.
 
@@ -56,7 +56,7 @@ Backend hiện chỉ cung cấp:
 - Collection `ai_models` để lưu metadata, provider, version và config của model.
 - `ai_model_id` và model snapshot trong screening run/result.
 - Vòng đời job `queued -> running -> completed/failed`.
-- Redis Stream cho parse/screening queue; parse worker có adapter MinerU tùy chọn.
+- Redis Stream cho parse/screening queue; parse worker có MinerU OCR pipeline và lưu lịch sử từng provider attempt.
 - Worker schemas và các thao tác claim, renew lease, complete, fail, retry.
 - Biến cấu hình tùy chọn cho OpenAI, Azure OpenAI, Gemini và Hugging Face.
 

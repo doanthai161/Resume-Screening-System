@@ -1,4 +1,5 @@
 import hashlib
+import json
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -9,6 +10,7 @@ from bson import ObjectId
 from app.core.config import settings
 from app.models.resume_file import ResumeFile
 from app.workers.mineru_adapter import MinerUAdapter
+from app.workers.errors import PermanentParseError, TransientParseError
 
 
 @pytest.fixture
@@ -46,7 +48,9 @@ async def test_mineru_full_cycle_with_scanned_pdf_tier(resume, monkeypatch):
         if path == "/v1/uploads/u1/complete":
             return httpx.Response(200, json={"status": "completed", "file": {"id": "f1"}})
         if path == "/v1/parse/jobs" and request.method == "POST":
-            assert b'"tier":"basic"' in request.content
+            payload = json.loads(request.content)
+            assert payload["tier"] == "basic"
+            assert payload["ocr_mode"] == "ocr"
             return httpx.Response(200, json={"job_id": "j1", "status": "completed", "files": [{"status": "completed", "output_files": {"markdown": {"file_id": "md1"}}}]})
         if path == "/v1/files/md1/content":
             return httpx.Response(200, content="Nguyễn Văn A\nPython".encode())
@@ -56,7 +60,7 @@ async def test_mineru_full_cycle_with_scanned_pdf_tier(resume, monkeypatch):
         output = await MinerUAdapter(client, "http://mineru:8000").parse(run)
     assert output.parsed_data.raw_text == "Nguyễn Văn A\nPython"
     assert output.parsed_data.skills == []
-    assert output.parsed_data.parser_version == "mineru-v1-basic"
+    assert output.parsed_data.parser_version == "mineru-v1-basic-ocr"
     assert len(requests) == 5
     ResumeFile.find_one.assert_awaited_once_with({"_id": run.resume_file_id, "company_id": run.company_id, "is_deleted": False})
 
@@ -126,3 +130,65 @@ async def test_mineru_deduplicated_upload_and_poll(resume, monkeypatch):
         result = await MinerUAdapter(client, "http://mineru:8000").parse(run)
     assert result.parsed_data.raw_text == "CV"
     assert polls == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("lost_stage", ["upload_bytes", "complete", "poll", "download"])
+async def test_restart_losing_resource_allows_fresh_upload_cycle(resume, monkeypatch, lost_stage):
+    record, run, _ = resume
+    monkeypatch.setattr(ResumeFile, "find_one", AsyncMock(return_value=record))
+    monkeypatch.setattr(settings, "MINERU_POLL_INTERVAL_SECONDS", 0.001)
+    uploads = 0
+
+    def respond(request):
+        nonlocal uploads
+        path = request.url.path
+        if path == "/v1/uploads":
+            uploads += 1
+            return httpx.Response(200, json={
+                "id": f"u{uploads}", "status": "pending",
+                "upload_url": f"/v1/uploads/u{uploads}/content",
+            })
+        stages = {
+            f"/v1/uploads/u{uploads}/content": "upload_bytes",
+            f"/v1/uploads/u{uploads}/complete": "complete",
+            f"/v1/parse/jobs/j{uploads}": "poll",
+            f"/v1/files/m{uploads}/content": "download",
+        }
+        stage = stages.get(path)
+        if uploads == 1 and stage == lost_stage:
+            return httpx.Response(404, json={"detail": "resource not found"})
+        if stage == "upload_bytes":
+            return httpx.Response(200)
+        if stage == "complete":
+            return httpx.Response(200, json={"status": "completed", "file": {"id": f"f{uploads}"}})
+        if path == "/v1/parse/jobs":
+            return httpx.Response(200, json={"job_id": f"j{uploads}", "status": "queued"})
+        if stage == "poll":
+            return httpx.Response(200, json={"status": "completed", "files": [{
+                "status": "completed", "output_files": {"markdown": {"file_id": f"m{uploads}"}},
+            }]})
+        if stage == "download":
+            return httpx.Response(200, text="Python backend engineer " * 30)
+        raise AssertionError(path)
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as client:
+        adapter = MinerUAdapter(client, "http://mineru:8000")
+        with pytest.raises(TransientParseError) as caught:
+            await adapter.parse(run)
+        assert caught.value.code == "mineru_resource_lost"
+        result = await adapter.parse(run)
+    assert uploads == 2
+    assert result.parsed_data.raw_text.startswith("Python backend engineer")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("endpoint", ["uploads", "parse/jobs"])
+async def test_unknown_create_endpoint_is_not_treated_as_lost_resource(endpoint):
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(lambda _: httpx.Response(404))
+    ) as client:
+        adapter = MinerUAdapter(client, "http://mineru:8000")
+        with pytest.raises(PermanentParseError) as caught:
+            await adapter._json("POST", adapter._url(endpoint), json={})
+    assert caught.value.retryable is False

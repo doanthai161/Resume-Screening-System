@@ -67,6 +67,35 @@ def _validate_docx_archive(path: Path) -> bool:
 
 class ResumeService:
     @staticmethod
+    async def get_parse_run(
+        resume_id: str,
+        run_id: str,
+        current_user: CurrentUser,
+    ) -> ResumeParseRun:
+        if not ObjectId.is_valid(resume_id) or not ObjectId.is_valid(run_id):
+            raise CustomError(
+                ErrorCodes.VALIDATION,
+                "Invalid resume or parse run ID",
+                status.HTTP_422_UNPROCESSABLE_ENTITY,
+            )
+        run = await ResumeParseRun.find_one(
+            {
+                "_id": PydanticObjectId(run_id),
+                "resume_file_id": PydanticObjectId(resume_id),
+            }
+        )
+        if not run:
+            raise CustomError(
+                ErrorCodes.NOT_FOUND,
+                "Resume parse run not found",
+                status.HTTP_404_NOT_FOUND,
+            )
+        await TenantAccessService.require_company_access(
+            current_user, str(run.company_id)
+        )
+        return run
+
+    @staticmethod
     async def upload(
         company_id: str,
         candidate_id: str,

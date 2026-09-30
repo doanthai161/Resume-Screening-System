@@ -13,6 +13,7 @@ from app.models.screening_run import ResumeParseRun, ScreeningRun
 from app.schemas.worker import ParseOutput, ScreeningOutput
 from app.services.processing_service import ProcessingService
 from app.workers.adapters import WorkerAdapter
+from app.workers.errors import CircuitOpenError, ParseAdapterError
 
 logger = logging.getLogger(__name__)
 GROUP = "processing-v1"
@@ -92,10 +93,23 @@ class Worker:
             logger.warning("Worker lease lost; discarding output")
             return
         except Exception as exc:
-            code = "worker_timeout" if isinstance(exc, TimeoutError) else (
-                "worker_invalid_output" if isinstance(exc, ValidationError) else "worker_adapter_error"
-            )
-            if await self.fail(run_id, self.worker_id, code, "Worker processing failed", generation=run.attempt):
+            fail_options = {"generation": run.attempt}
+            if isinstance(exc, ParseAdapterError):
+                code = exc.code
+                fail_options["retryable"] = exc.retryable
+                if self.queue == "resume-parse" and isinstance(exc, CircuitOpenError):
+                    fail_options["deferred"] = True
+            else:
+                code = "worker_timeout" if isinstance(exc, TimeoutError) else (
+                    "worker_invalid_output" if isinstance(exc, ValidationError) else "worker_adapter_error"
+                )
+            if await self.fail(
+                run_id,
+                self.worker_id,
+                code,
+                "Worker processing failed",
+                **fail_options,
+            ):
                 await job_queue.acknowledge(self.queue, GROUP, message_id)
             return
         try:

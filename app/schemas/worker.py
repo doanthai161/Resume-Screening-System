@@ -32,3 +32,7 @@ class ScreeningOutput(BaseModel):
 
 class ParseOutput(BaseModel):
     parsed_data: ParsedResumeData
+    provider: str = Field("unknown", min_length=1, max_length=50)
+    ocr_used: bool = False
+    quality_score: float = Field(0.0, ge=0.0, le=1.0)
+    fallback_reason: Optional[str] = Field(None, max_length=100)

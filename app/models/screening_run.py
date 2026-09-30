@@ -74,6 +74,15 @@ class ScreeningRun(Document):
         arbitrary_types_allowed = True
 
 
+def parse_attempt_count_expression() -> dict:
+    """Effective attempts, compatible with documents predating circuit deferrals."""
+    return {"$subtract": ["$attempt", {"$ifNull": ["$deferred_attempts", 0]}]}
+
+
+def parse_retry_due_filter(now: datetime) -> dict:
+    return {"$or": [{"next_retry_at": None}, {"next_retry_at": {"$lte": now}}]}
+
+
 class ResumeParseRun(Document):
     company_id: PydanticObjectId
     resume_file_id: PydanticObjectId
@@ -82,6 +91,14 @@ class ResumeParseRun(Document):
     idempotency_key: str = Field(..., min_length=8, max_length=128)
     input_hash: str = Field(..., min_length=32, max_length=128)
     parser_version: str = Field(..., min_length=1, max_length=50)
+    final_provider: Optional[str] = Field(None, max_length=50)
+    ocr_used: bool = False
+    quality_score: Optional[float] = Field(None, ge=0.0, le=1.0)
+    fallback_reason: Optional[str] = Field(None, max_length=100)
+    # attempt remains a strictly increasing lease generation. Never decrement it
+    # when deferring: stale workers and parse-attempt audit records depend on it.
+    deferred_attempts: int = Field(0, ge=0)
+    next_retry_at: Optional[datetime] = None
     status: ProcessingStatus = ProcessingStatus.QUEUED
     is_terminal: bool = False
     attempt: int = Field(0, ge=0)
