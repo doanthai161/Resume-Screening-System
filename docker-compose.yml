@@ -82,7 +82,9 @@ services:
       - mongo_key:/etc/mongo-key:ro
       - ./mongo-init.js:/docker-entrypoint-initdb.d/10-app-user.js:ro
     healthcheck:
-      test: ["CMD-SHELL", "mongosh --quiet --username $$MONGO_INITDB_ROOT_USERNAME --password $$MONGO_INITDB_ROOT_PASSWORD --authenticationDatabase admin --eval 'db.adminCommand({ ping: 1 })' || exit 1"]
+      # The image first starts a temporary standalone mongod to create users.
+      # Wait for the final replica-set process before running mongo-init-replica.
+      test: ["CMD-SHELL", "mongosh --quiet --username $$MONGO_INITDB_ROOT_USERNAME --password $$MONGO_INITDB_ROOT_PASSWORD --authenticationDatabase admin --eval 'const r = db.adminCommand({ getCmdLineOpts: 1 }); const opts = r.parsed.replication; quit(r.ok && (opts?.replSetName ?? opts?.replSet) === \"rs0\" ? 0 : 1)' || exit 1"]
       interval: 10s
       timeout: 5s
       retries: 10

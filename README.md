@@ -191,6 +191,16 @@ docker compose down -v
 
 ## Chạy local để phát triển
 
+Để chạy API/worker trên Windows với Mongo/Redis Docker mới, tách biệt dữ liệu cũ,
+xem [môi trường local riêng](docs/LOCAL_DEVELOPMENT.md):
+
+```powershell
+docker compose -f docker-compose.local.yml up -d
+```
+
+Môi trường này dùng Mongo `127.0.0.1:27019` và Redis `127.0.0.1:6381`.
+Cấu hình bên dưới dành cho cách chạy local truyền thống hoặc Compose dev cũ.
+
 ### Yêu cầu
 
 - Python 3.12 được khuyến nghị.

@@ -10,6 +10,7 @@ from app.workers.document import (
     ResumeDocument,
     analyze_document,
     load_resume_document,
+    pdf_ocr_mode,
 )
 from app.workers.errors import (
     CircuitOpenError,
@@ -158,6 +159,7 @@ class ParsePipelineAdapter:
         self.sequence = 0
         document = await load_resume_document(run)
         analysis = await analyze_document(document)
+        mode = pdf_ocr_mode(analysis) if document.extension == ".pdf" else None
 
         if await self.circuit.is_open():
             try:
@@ -170,9 +172,6 @@ class ParsePipelineAdapter:
                 ) from exc
 
         tier = settings.MINERU_PDF_TIER if document.extension == ".pdf" else "flash"
-        mode = None
-        if document.extension == ".pdf":
-            mode = "ocr" if settings.MINERU_AUTO_OCR and analysis.requires_ocr else "txt"
 
         primary_error: ParseAdapterError | None = None
         try:

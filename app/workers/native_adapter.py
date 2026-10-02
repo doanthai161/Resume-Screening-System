@@ -28,6 +28,11 @@ class NativeTextAdapter:
                 "Native extraction does not cover every PDF page",
                 code="native_pdf_incomplete_coverage",
             )
+        if not analysis.native_complete:
+            raise LowQualityParseError(
+                "Native extraction cannot cover embedded document content",
+                code="native_docx_incomplete_coverage",
+            )
         quality = evaluate_text_quality(analysis.native_text, analysis.page_count)
         if not quality.accepted:
             raise LowQualityParseError(

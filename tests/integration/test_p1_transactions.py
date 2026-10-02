@@ -295,6 +295,72 @@ async def parse_run():
     return resume, run
 
 
+async def test_uploaded_pdf_pipeline_persists_once_with_concurrent_deliveries(monkeypatch, tmp_path):
+    import httpx
+    from io import BytesIO
+    from fastapi import UploadFile
+    from starlette.datastructures import Headers
+    from app.core.config import settings
+    from app.models.candidate import Candidate
+    from app.models.resume_parse_attempt import ResumeParseAttempt
+    from app.schemas.resume import ParseResumeRequest
+    from app.services.resume_service import ResumeService
+    from app.workers.mineru_adapter import MinerUAdapter
+    from app.workers.parse_pipeline import ParsePipelineAdapter
+    from app.workers.runtime import Worker
+    from scripts.generate_parse_samples import digital_pdf, TEXT
+
+    monkeypatch.setattr(settings, "UPLOAD_BASE_DIR", tmp_path)
+    monkeypatch.setattr("app.workers.circuit_breaker.get_redis", lambda: None)
+    owner, company, _, _ = await job_data()
+    candidate = await Candidate(company_id=company.id, full_name="Synthetic Candidate", created_by=owner.id).insert()
+    current = CurrentUser(user=owner)
+    resume = await ResumeService.upload(str(company.id), str(candidate.id), None,
+        UploadFile(file=BytesIO(digital_pdf()), filename="synthetic.pdf", headers=Headers({"content-type": "application/pdf"})), current)
+    run = await ResumeService.start_parse(str(resume.id), ParseResumeRequest(company_id=str(company.id)), uuid4().hex, current)
+    requests = []
+    def remote(request):
+        requests.append(request.url.path)
+        if request.url.path == "/v1/uploads":
+            return httpx.Response(200, json={"id": "u", "status": "completed", "file": {"id": "f"}})
+        if request.url.path == "/v1/parse/jobs":
+            return httpx.Response(200, json={"job_id": "j", "status": "completed", "files": [{"status": "completed", "output_files": {"markdown": {"file_id": "m"}}}]})
+        if request.url.path == "/v1/files/m/content":
+            return httpx.Response(200, text="\n".join(TEXT))
+        raise AssertionError("Unexpected provider endpoint")
+    monkeypatch.setattr(job_queue, "acknowledge", AsyncMock())
+    async with httpx.AsyncClient(transport=httpx.MockTransport(remote)) as client:
+        pipeline = ParsePipelineAdapter(MinerUAdapter(client, "http://mineru:8000"))
+        first, duplicate = Worker("resume-parse", pipeline), Worker("resume-parse", pipeline)
+        fields = {"company_id": str(company.id), "resource_id": str(run.id)}
+        results = await asyncio.gather(first.handle("1-0", fields), duplicate.handle("2-0", fields), return_exceptions=True)
+        assert all(r is None or isinstance(r, CustomError) and r.status_code == 409 for r in results)
+        await duplicate.handle("2-0", fields)
+    stored = await ResumeFile.get(resume.id)
+    assert stored.status == "parsed" and "Python" in stored.parsed_data.raw_text
+    stored_run = await ResumeParseRun.get(run.id)
+    assert stored_run.status == "completed" and stored_run.attempt == 1
+    assert stored_run.final_provider == "mineru" and not stored_run.ocr_used
+    assert len(requests) == 3
+    assert await ResumeParseAttempt.find({"run_id": run.id, "status": "completed"}).count() == 1
+
+
+@pytest.mark.parametrize("remove", [False, True])
+async def test_parse_completion_cannot_resurrect_deleted_or_missing_resume(remove):
+    resume, run = await parse_run()
+    claimed = await ProcessingService.claim_parse(str(run.id), "worker")
+    if remove:
+        await resume.delete()
+    else:
+        await ResumeFile.find_one({"_id": resume.id}).update({"$set": {"is_deleted": True}})
+    with pytest.raises(CustomError) as caught:
+        await ProcessingService.complete_parse(str(run.id), "worker", ParseOutput(parsed_data=ParsedResumeData(raw_text="Must not save")), generation=claimed.attempt)
+    assert caught.value.status_code == 422
+    assert (await ResumeParseRun.get(run.id)).status == "running"
+    stored = await ResumeFile.get(resume.id)
+    assert stored is None if remove else stored.is_deleted and stored.parsed_data is None
+
+
 async def test_worker_parse_commit_then_ack_failure_is_safe_on_redelivery(monkeypatch):
     from types import SimpleNamespace
     from app.workers.runtime import Worker
@@ -328,6 +394,11 @@ async def test_worker_adapter_failure_retries_until_mongo_terminal_state(monkeyp
     monkeypatch.setattr(job_queue, "acknowledge", ack)
     payload = {"resource_id": str(run.id), "company_id": str(run.company_id)}
     for attempt in range(run.max_attempts):
+        if attempt:
+            # Backoff is durable; make the test run due without sleeping.
+            await ResumeParseRun.find_one({"_id": run.id}).update(
+                {"$set": {"next_retry_at": now_utc() - timedelta(seconds=1)}}
+            )
         await worker.handle(f"{attempt + 1}-0", payload)
         stored = await ResumeParseRun.get(run.id)
         assert stored.attempt == attempt + 1

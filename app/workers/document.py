@@ -1,8 +1,11 @@
 import asyncio
 import hashlib
+import json
+import sys
 from dataclasses import dataclass
 from io import BytesIO
 from pathlib import Path
+from docx.oxml.ns import qn
 
 from docx import Document as DocxDocument
 from pypdf import PdfReader
@@ -34,6 +37,16 @@ class DocumentAnalysis:
     native_text: str
     text_page_ratio: float
     requires_ocr: bool
+    native_complete: bool = True
+    header_text: str = ""
+    footer_text: str = ""
+
+
+def pdf_ocr_mode(analysis: DocumentAnalysis) -> str:
+    needs_ocr = analysis.requires_ocr or analysis.text_page_ratio < 1.0
+    if needs_ocr and not settings.MINERU_AUTO_OCR:
+        raise PermanentParseError("This PDF requires OCR", code="pdf_ocr_required")
+    return "ocr" if needs_ocr else "txt"
 
 
 def _read_local_resume(resume: ResumeFile) -> ResumeDocument:
@@ -48,7 +61,7 @@ def _read_local_resume(resume: ResumeFile) -> ResumeDocument:
     except (OSError, RuntimeError) as exc:
         raise UnsafeDocumentError("Resume file cannot be resolved") from exc
     extension = path.suffix.lower()
-    if not path.is_relative_to(root) or extension not in SUPPORTED_MIME_TYPES:
+    if not path.is_relative_to(root) or not path.is_file() or extension not in SUPPORTED_MIME_TYPES:
         raise UnsafeDocumentError("Resume path or format is invalid")
     if resume.mime_type != SUPPORTED_MIME_TYPES[extension]:
         raise UnsafeDocumentError("Resume MIME type does not match its extension")
@@ -87,10 +100,13 @@ async def load_resume_document(run: ResumeParseRun) -> ResumeDocument:
     return await asyncio.to_thread(_read_local_resume, resume)
 
 
-def _truncate(parts: list[str]) -> str:
-    return "\n\n".join(part.strip() for part in parts if part.strip())[
-        :MAX_EXTRACTED_CHARACTERS
-    ]
+def _join_text(parts: list[str]) -> str:
+    text = "\n\n".join(part.strip() for part in parts if part.strip())
+    # Never mark a truncated CV complete: downstream extraction cannot detect
+    # that the end of the applicant's experience was silently removed.
+    if len(text) > MAX_EXTRACTED_CHARACTERS or len(json.dumps(text).encode("utf-8")) > 1_900_000:
+        raise PermanentParseError("Resume text exceeds the limit", code="document_text_too_large")
+    return text
 
 
 def _analyze_pdf(document: ResumeDocument) -> DocumentAnalysis:
@@ -107,18 +123,23 @@ def _analyze_pdf(document: ResumeDocument) -> DocumentAnalysis:
                 "PDF page count is outside the allowed range",
                 code="invalid_page_count",
             )
-        page_texts = [(page.extract_text() or "").strip() for page in reader.pages]
     except PermanentParseError:
         raise
-    except Exception:
-        # Some valid PDFs cannot be decoded by pypdf but can still be parsed by
-        # MinerU. Treat preflight as unknown and select OCR-capable parsing.
-        return DocumentAnalysis(
-            page_count=1,
-            native_text="",
-            text_page_ratio=0.0,
-            requires_ocr=True,
-        )
+    except Exception as exc:
+        # Unknown page count cannot safely bypass MAX_RESUME_PAGES.
+        raise PermanentParseError("PDF structure cannot be inspected", code="invalid_pdf") from exc
+
+    page_texts = []
+    total = 0
+    for page in reader.pages:
+        try:
+            text = (page.extract_text() or "").strip()
+        except Exception:
+            text = ""  # Known page count, but this page requires OCR.
+        total += len(text) + 2
+        if total > MAX_EXTRACTED_CHARACTERS:
+            raise PermanentParseError("Resume text exceeds the limit", code="document_text_too_large")
+        page_texts.append(text)
 
     useful_pages = sum(
         len(text) >= settings.PARSE_MIN_TEXT_CHARACTERS_PER_PAGE
@@ -127,30 +148,94 @@ def _analyze_pdf(document: ResumeDocument) -> DocumentAnalysis:
     ratio = useful_pages / page_count
     return DocumentAnalysis(
         page_count=page_count,
-        native_text=_truncate(page_texts),
+        native_text=_join_text(page_texts),
         text_page_ratio=round(ratio, 4),
-        requires_ocr=ratio < settings.PARSE_NATIVE_TEXT_PAGE_RATIO,
+        requires_ocr=useful_pages < page_count,
     )
 
 
 def _analyze_docx(document: ResumeDocument) -> DocumentAnalysis:
     try:
+        # Recheck archive limits for old/imported records, before XML expansion.
+        from app.services.resume_service import _validate_docx_archive
+        if not _validate_docx_archive(BytesIO(document.content)):
+            raise UnsafeDocumentError("DOCX archive is invalid or exceeds limits")
         source = DocxDocument(BytesIO(document.content))
-        parts = [paragraph.text for paragraph in source.paragraphs]
-        for table in source.tables:
-            for row in table.rows:
-                parts.append("\t".join(cell.text for cell in row.cells))
-        text = _truncate(parts)
-    except Exception:
-        text = ""
+        roots = [("body", source.element.body)]
+        for part in source.part.related_parts.values():
+            if part.content_type.endswith("wordprocessingml.header+xml"):
+                roots.append(("header", part.element))
+            elif part.content_type.endswith("wordprocessingml.footer+xml"):
+                roots.append(("footer", part.element))
+        parts = []
+        margins = {"header": [], "footer": []}
+        native_complete = True
+        for kind, root in roots:
+            # XML traversal preserves paragraph/table/textbox order, including
+            # nested tables. It also reads headers/footers omitted by .paragraphs.
+            root_parts = []
+            for element in root.iter():
+                if element.tag == qn("w:t"):
+                    root_parts.append(element.text or "")
+                elif element.tag in {qn("w:p"), qn("w:br"), qn("w:tab")}:
+                    root_parts.append("\n")
+                elif element.tag in {qn("w:drawing"), qn("w:pict"), qn("w:altChunk"), qn("w:object")}:
+                    native_complete = False
+            parts.extend(root_parts)
+            if kind in margins:
+                margins[kind].append("".join(root_parts))
+        text = _join_text(["".join(parts)])
+        header_text = _join_text(margins["header"])
+        footer_text = _join_text(margins["footer"])
+    except PermanentParseError:
+        raise
+    except Exception as exc:
+        raise PermanentParseError("DOCX structure cannot be inspected", code="invalid_docx") from exc
     return DocumentAnalysis(
         page_count=1,
         native_text=text,
         text_page_ratio=1.0 if text else 0.0,
         requires_ocr=False,
+        native_complete=native_complete,
+        header_text=header_text,
+        footer_text=footer_text,
     )
 
 
 async def analyze_document(document: ResumeDocument) -> DocumentAnalysis:
-    analyzer = _analyze_pdf if document.extension == ".pdf" else _analyze_docx
-    return await asyncio.to_thread(analyzer, document)
+    # Native libraries can keep running after to_thread is cancelled. A child
+    # process gives worker timeout/lease loss a real stop boundary.
+    limits = {
+        "MAX_RESUME_SIZE": settings.MAX_RESUME_SIZE,
+        "MAX_RESUME_PAGES": settings.MAX_RESUME_PAGES,
+        "PARSE_MIN_TEXT_CHARACTERS_PER_PAGE": settings.PARSE_MIN_TEXT_CHARACTERS_PER_PAGE,
+        "MAX_DOCX_ENTRIES": settings.MAX_DOCX_ENTRIES,
+        "MAX_DOCX_UNCOMPRESSED_SIZE": settings.MAX_DOCX_UNCOMPRESSED_SIZE,
+    }
+    process = await asyncio.create_subprocess_exec(
+        sys.executable, "-m", "app.workers.document_probe", document.extension,
+        json.dumps(limits), stdin=asyncio.subprocess.PIPE,
+        stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL,
+        cwd=str(Path(__file__).resolve().parents[2]),
+    )
+    try:
+        try:
+            data, _ = await asyncio.wait_for(
+                process.communicate(document.content), settings.PARSE_PREFLIGHT_TIMEOUT_SECONDS,
+            )
+        except TimeoutError:
+            raise PermanentParseError("Document inspection timed out", code="document_inspection_timeout") from None
+        if process.returncode != 0:
+            raise PermanentParseError("Document inspection failed", code="document_inspection_failed")
+        result = json.loads(data)
+        if "error_code" in result:
+            raise PermanentParseError("Document inspection rejected the file", code=result["error_code"])
+        return DocumentAnalysis(**result)
+    finally:
+        if process.returncode is None:
+            try:
+                process.kill()
+            except ProcessLookupError:
+                pass
+        # Drain pipes as well as reaping: wait() alone can hang on a full pipe.
+        await process.communicate()

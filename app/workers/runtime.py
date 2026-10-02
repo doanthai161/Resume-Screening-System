@@ -103,6 +103,10 @@ class Worker:
                 code = "worker_timeout" if isinstance(exc, TimeoutError) else (
                     "worker_invalid_output" if isinstance(exc, ValidationError) else "worker_adapter_error"
                 )
+            logger.warning(
+                "Worker processing failed queue=%s error_code=%s exception_type=%s",
+                self.queue, code, type(exc).__name__,
+            )
             if await self.fail(
                 run_id,
                 self.worker_id,
@@ -119,7 +123,7 @@ class Worker:
                 raise
             completed = await self.fail(
                 run_id, self.worker_id, "worker_invalid_output", "Worker output does not match run configuration",
-                generation=run.attempt,
+                generation=run.attempt, **({"retryable": False} if self.queue == "resume-parse" else {}),
             )
         # Unknown commit outcomes/DB failures deliberately leave delivery pending.
         if completed:

@@ -1,6 +1,37 @@
 from dataclasses import dataclass
+from html.parser import HTMLParser
+
+from markdown_it import MarkdownIt
 
 from app.core.config import settings
+
+
+class _HTMLText(HTMLParser):
+    def __init__(self):
+        super().__init__()
+        self.parts = []
+
+    def handle_data(self, data):
+        self.parts.append(data)
+
+
+def _visible_text(markdown: str) -> str:
+    """Score visible content, not image paths, URLs or Markdown punctuation."""
+    parts = []
+    def visit(tokens):
+        for token in tokens:
+            if token.type == "image":
+                continue
+            if token.type in {"text", "code_inline", "code_block", "fence"}:
+                parts.append(token.content)
+            elif token.type in {"html_inline", "html_block"}:
+                parser = _HTMLText()
+                parser.feed(token.content)
+                parts.extend(parser.parts)
+            elif token.children:
+                visit(token.children)
+    visit(MarkdownIt().parse(markdown))
+    return " ".join(parts).strip()
 
 
 @dataclass(frozen=True)
@@ -14,7 +45,7 @@ class ParseQuality:
 
 
 def evaluate_text_quality(text: str | None, page_count: int = 1) -> ParseQuality:
-    value = (text or "").strip()
+    value = _visible_text(text or "")
     count = len(value)
     denominator = max(count, 1)
     alnum_ratio = sum(character.isalnum() for character in value) / denominator

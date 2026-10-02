@@ -57,6 +57,9 @@ def output(text, *, mode="txt"):
 
 @pytest.fixture
 def parse_context(monkeypatch):
+    # Unit scenarios use explicit tiers, independent of the developer's .env.
+    monkeypatch.setattr(settings, "MINERU_PDF_TIER", "basic")
+    monkeypatch.setattr(settings, "MINERU_FALLBACK_TIER", "standard")
     run = SimpleNamespace(id=ObjectId(), company_id=ObjectId(), attempt=1)
     document = ResumeDocument(
         resume=SimpleNamespace(checksum="a" * 64),

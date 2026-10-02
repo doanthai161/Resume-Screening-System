@@ -1,0 +1,35 @@
+# Infrastructure for an API/worker running on the host. Separate project,
+# container names and volumes preserve the legacy development database.
+name: resume-screening-local
+
+services:
+  mongo-key:
+    extends:
+      file: docker-compose.yml
+      service: mongo-key
+
+  mongo:
+    extends:
+      file: docker-compose.yml
+      service: mongo
+    container_name: resume_mongo_local
+    ports:
+      - "127.0.0.1:27019:27017"
+
+  mongo-init-replica:
+    extends:
+      file: docker-compose.yml
+      service: mongo-init-replica
+
+  redis:
+    extends:
+      file: docker-compose.yml
+      service: redis
+    container_name: resume_redis_local
+    ports:
+      - "127.0.0.1:6381:6379"
+
+volumes:
+  mongo_data:
+  mongo_key:
+  redis_data:

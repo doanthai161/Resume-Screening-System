@@ -56,7 +56,7 @@ async def test_worker_completes_before_ack_with_generation(runtime, queue):
 
 
 @pytest.mark.parametrize("problem,code", [("exception", "worker_adapter_error"), ("schema", "worker_invalid_output"), ("timeout", "worker_timeout")])
-async def test_adapter_failure_uses_sanitized_failure_and_ack(runtime, monkeypatch, problem, code):
+async def test_adapter_failure_uses_sanitized_failure_and_ack(runtime, monkeypatch, caplog, problem, code):
     run, adapter, ack = runtime
     if problem == "exception":
         adapter.parse.side_effect = RuntimeError("secret token in exception")
@@ -75,6 +75,10 @@ async def test_adapter_failure_uses_sanitized_failure_and_ack(runtime, monkeypat
     assert worker.fail.await_args.args[2:] == (code, "Worker processing failed")
     assert worker.fail.await_args.kwargs == {"generation": 2}
     ack.assert_awaited_once()
+    assert "secret token in exception" not in caplog.text
+    assert code in caplog.text
+    if problem == "exception":
+        assert "exception_type=RuntimeError" in caplog.text
 
 
 @pytest.mark.parametrize(

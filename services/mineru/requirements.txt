@@ -1,0 +1,2 @@
+# MinerU runs in its own environment; do not install these into the BE venv.
+mineru==4.0.10

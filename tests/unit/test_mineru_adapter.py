@@ -1,11 +1,13 @@
 import hashlib
 import json
+from io import BytesIO
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import httpx
 import pytest
 from bson import ObjectId
+from pypdf import PdfWriter
 
 from app.core.config import settings
 from app.models.resume_file import ResumeFile
@@ -18,7 +20,11 @@ def resume(tmp_path, monkeypatch):
     monkeypatch.setattr(settings, "UPLOAD_BASE_DIR", tmp_path)
     folder = tmp_path / "resumes"
     folder.mkdir()
-    content = b"%PDF-1.7\nexample"
+    writer = PdfWriter()
+    writer.add_blank_page(width=612, height=792)
+    stream = BytesIO()
+    writer.write(stream)
+    content = stream.getvalue()
     path = folder / "cv.pdf"
     path.write_bytes(content)
     record = SimpleNamespace(

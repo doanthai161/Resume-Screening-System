@@ -6,6 +6,7 @@ separate step: no personal details or assessment are inferred here.
 
 import asyncio
 import json
+import unicodedata
 from urllib.parse import quote
 
 import httpx
@@ -16,23 +17,54 @@ from app.models.screening_run import ResumeParseRun
 from app.schemas.worker import ParseOutput
 from app.workers.document import (
     SUPPORTED_MIME_TYPES,
+    MAX_EXTRACTED_CHARACTERS,
     DocumentAnalysis,
     ResumeDocument,
     analyze_document,
     load_resume_document,
+    pdf_ocr_mode,
 )
 from app.workers.errors import (
     PermanentParseError,
     ProviderResponseError,
     TransientParseError,
 )
-from app.workers.quality import evaluate_text_quality
+from app.workers.quality import _visible_text, evaluate_text_quality
 
 _MAX_MARKDOWN_BYTES = 1_000_000
 _MAX_JSON_BYTES = 1_000_000
+
+
+def _restore_docx_margins(text: str, analysis: DocumentAnalysis) -> tuple[str, bool]:
+    """Keep actual DOCX header/footer text that the provider omitted."""
+    def normalized(value: str) -> str:
+        return " ".join(unicodedata.normalize("NFKC", value).casefold().split())
+
+    present = normalized(_visible_text(text))
+    restored = []
+    for margin in (analysis.header_text, analysis.footer_text):
+        missing = []
+        for line in margin.splitlines():
+            line = line.strip()
+            key = normalized(line)
+            if key and key not in present:
+                missing.append(line)
+                present += " " + key
+        restored.append("\n".join(missing))
+    if not any(restored):
+        return text, False
+    combined = "\n\n".join(part for part in (restored[0], text, restored[1]) if part)
+    if len(combined) > MAX_EXTRACTED_CHARACTERS:
+        raise ProviderResponseError(
+            "DOCX text including margins exceeds the resume text limit",
+            code="mineru_markdown_too_large",
+        )
+    return combined, True
+
+
 def _required_string(data: dict, name: str) -> str:
     value = data.get(name)
-    if not isinstance(value, str) or not value:
+    if not isinstance(value, str) or not value or len(value) > 256 or value in {".", ".."}:
         raise ProviderResponseError(
             "MinerU returned an incomplete response",
             code="mineru_invalid_response",
@@ -45,7 +77,8 @@ class MinerUAdapter:
         self.client = client
         self.base_url = base_url.rstrip("/")
         base = httpx.URL(self.base_url)
-        if base.scheme not in {"http", "https"} or not base.host or base.path != "/" or base.userinfo:
+        if (base.scheme not in {"http", "https"} or not base.host or base.path != "/"
+                or base.userinfo or base.query or base.fragment):
             raise ValueError("MINERU_API_URL must be an http(s) service root without path or credentials")
         self.origin = (base.scheme, base.host, base.port)
 
@@ -97,7 +130,7 @@ class MinerUAdapter:
                         )
         except httpx.HTTPStatusError as exc:
             self._raise_http_error(exc, known_resource=known_resource)
-        except (httpx.TimeoutException, httpx.NetworkError) as exc:
+        except httpx.TransportError as exc:
             raise TransientParseError(
                 "MinerU request failed",
                 code="mineru_connection_failed",
@@ -118,11 +151,13 @@ class MinerUAdapter:
 
     async def _put(self, url: str, content: bytes, headers: dict[str, str]) -> None:
         try:
-            response = await self.client.put(url, content=content, headers=headers)
-            response.raise_for_status()
+            # No output body is needed for PUT. Do not buffer a potentially
+            # unbounded server body just to confirm the status code.
+            async with self.client.stream("PUT", url, content=content, headers=headers) as response:
+                response.raise_for_status()
         except httpx.HTTPStatusError as exc:
             self._raise_http_error(exc, known_resource=True)
-        except (httpx.TimeoutException, httpx.NetworkError) as exc:
+        except httpx.TransportError as exc:
             raise TransientParseError(
                 "MinerU upload failed",
                 code="mineru_upload_failed",
@@ -144,7 +179,7 @@ class MinerUAdapter:
                         )
         except httpx.HTTPStatusError as exc:
             self._raise_http_error(exc, known_resource=True)
-        except (httpx.TimeoutException, httpx.NetworkError) as exc:
+        except httpx.TransportError as exc:
             raise TransientParseError(
                 "MinerU result download failed",
                 code="mineru_download_failed",
@@ -193,7 +228,7 @@ class MinerUAdapter:
             headers = upload.get("upload_headers") or {}
             if not isinstance(headers, dict) or any(
                 not isinstance(k, str) or not isinstance(v, str)
-                or k.lower() in {"authorization", "host", "cookie"}
+                or k.lower() in {"authorization", "host", "cookie", "content-length", "transfer-encoding", "connection", "proxy-authorization"}
                 or "\r" in k + v or "\n" in k + v for k, v in headers.items()
             ):
                 raise ProviderResponseError(
@@ -236,11 +271,13 @@ class MinerUAdapter:
             job_status = _required_string(job, "status")
             if job_status == "completed":
                 break
-            if job_status not in {"queued", "running"}:
+            if job_status in {"failed", "partial", "canceled"}:
                 raise PermanentParseError(
                     "MinerU rejected the document",
                     code="mineru_job_failed",
                 )
+            if job_status not in {"queued", "running"}:
+                raise ProviderResponseError("MinerU returned an unknown job status", code="mineru_invalid_status")
             if polls >= settings.MINERU_MAX_POLLS:
                 raise TransientParseError(
                     "MinerU polling budget was exhausted",
@@ -253,7 +290,8 @@ class MinerUAdapter:
             )
             polls += 1
         files = job.get("files")
-        if not isinstance(files, list) or len(files) != 1 or files[0].get("status") != "completed":
+        if (not isinstance(files, list) or len(files) != 1
+                or not isinstance(files[0], dict) or files[0].get("status") != "completed"):
             raise ProviderResponseError(
                 "MinerU parse result is incomplete",
                 code="mineru_result_incomplete",
@@ -266,12 +304,18 @@ class MinerUAdapter:
                 code="mineru_artifact_missing",
             )
         text = await self._markdown(_required_string(markdown, "file_id"))
+        margins_restored = False
+        if extension == ".docx":
+            text, margins_restored = _restore_docx_margins(text, analysis)
         quality = evaluate_text_quality(text, analysis.page_count)
         mode_name = ocr_mode or "native"
+        parser_version = f"mineru-v1-{tier}-{mode_name}"
+        if margins_restored:
+            parser_version += "+docx-margins"
         return ParseOutput(
             parsed_data=ParsedResumeData(
                 raw_text=text,
-                parser_version=f"mineru-v1-{tier}-{mode_name}",
+                parser_version=parser_version,
                 confidence_score=quality.score,
             ),
             provider="mineru",
@@ -286,7 +330,7 @@ class MinerUAdapter:
         tier = settings.MINERU_PDF_TIER if document.extension == ".pdf" else "flash"
         ocr_mode = None
         if document.extension == ".pdf":
-            ocr_mode = "ocr" if settings.MINERU_AUTO_OCR and analysis.requires_ocr else "txt"
+            ocr_mode = pdf_ocr_mode(analysis)
         return await self.parse_document(
             document,
             analysis,

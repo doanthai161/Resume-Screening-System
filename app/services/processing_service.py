@@ -400,8 +400,8 @@ class ProcessingService:
         if not run:
             return False
         now = now_utc()
-        await ResumeFile.find_one(
-            {"_id": run.resume_file_id, "company_id": run.company_id},
+        resume_update = await ResumeFile.find_one(
+            {"_id": run.resume_file_id, "company_id": run.company_id, "is_deleted": False},
             session=current_session(),
         ).update(
             {
@@ -414,6 +414,8 @@ class ProcessingService:
             },
             session=current_session(),
         )
+        if not resume_update or resume_update.modified_count != 1:
+            raise CustomError(ErrorCodes.VALIDATION, "Resume is no longer available for parsing", 422)
         terminal_update = await ResumeParseRun.find_one(
             {
                 "_id": run.id,
