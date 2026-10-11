@@ -11,11 +11,90 @@ môi trường này. Không dùng lại volume của Mongo standalone cũ.
 | Redis 7 | `resume_redis_local` | `127.0.0.1:6381` |
 | FastAPI | Chạy bằng Python local | `127.0.0.1:8000` |
 
-## Cấu hình
+## Một lệnh chuẩn bị Mongo/Redis trên Windows
+
+Yêu cầu: đã cài Docker Desktop với Linux containers/Compose v2; `.env` có
+`MONGO_USERNAME`, `MONGO_PASSWORD`, `MONGO_APP_USERNAME`, `MONGO_APP_PASSWORD`,
+`MONGO_APP_DATABASE`, `REDIS_PASSWORD`. Backend đã có venv và dependency.
+
+Chạy tại root repository, **trong cùng terminal PowerShell**:
+
+```powershell
+.\start-local.ps1
+.\.venv\Scripts\python.exe -m uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload
+```
+
+Nếu đã activate venv, lệnh thứ hai có thể viết ngắn:
+
+```powershell
+uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload
+```
+
+Script mở Docker Desktop nếu chưa chạy, đợi Linux Engine, tải image còn thiếu
+(`mongo:7`, `redis:7-alpine`), chạy hạ tầng và đợi Mongo/Redis healthy cùng
+initializer replica set hoàn tất. Không cần build image Backend trong chế độ
+này. Script còn kiểm tra tài khoản ứng dụng Mongo trước khi báo `READY`.
+
+Không sửa `.env`, không sửa/xóa Brevo hoặc credentials, không xóa volume và
+không chạy API, MinerU hay worker. Database lấy từ `MONGO_APP_DATABASE` của
+cấu hình Compose thực tế, không tự đổi tên database hay di chuyển dữ liệu cũ.
+Healthcheck local đọc credentials qua biến môi trường, tránh lỗi shell khi
+mật khẩu chứa khoảng trắng hoặc dấu nháy.
+
+Script chỉ đặt `MONGODB_URI`, `MONGODB_DB_NAME`, `REDIS_URL`, `ENVIRONMENT`,
+`DEBUG`, `REFRESH_COOKIE_SECURE` trong **phiên PowerShell hiện tại**. URI tự
+URL-encode credentials và dùng các cổng host của Compose; không in mật khẩu.
+Các giá trị này ưu tiên hơn `.env`, nên URI cũ trong `.env` không ảnh hưởng
+Uvicorn được chạy tiếp trong cùng terminal. Terminal mới cần chạy lại script.
+
+Nếu execution policy chặn script, cho phép trong phiên hiện tại rồi chạy lại:
+
+```powershell
+Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
+.\start-local.ps1
+```
+
+Không chạy launcher qua `powershell -File ...` hoặc double-click nếu muốn
+Uvicorn tiếp theo kế thừa cấu hình: đó là process khác, không truyền được biến
+môi trường về terminal cha. Gọi `.\start-local.ps1` trực tiếp như ví dụ trên,
+không dot-source (`. .\start-local.ps1`).
+
+Các tùy chọn:
+
+```powershell
+.\start-local.ps1 -Check                 # Chỉ kiểm tra cấu hình, không chạy Docker Desktop/container
+.\start-local.ps1 -Pull                  # Chủ động cập nhật image trước khi chạy
+.\start-local.ps1 -TimeoutSeconds 300    # Tăng thời gian chờ Engine/readiness
+.\start-local.ps1 -Stop                  # Dừng hạ tầng, giữ nguyên volume
+```
+
+`-Stop` không đọc `.env` hay cần parse Compose, nên vẫn dùng được khi file bị
+thiếu hoặc credentials vừa sửa chưa hợp lệ. Script chỉ dừng container có đúng
+project label `resume-screening-local` và service `mongo`, `redis`, `mongo-key`,
+`mongo-init-replica`; bỏ qua container one-off, API/worker và các project khác.
+Nếu không có container tương ứng, lệnh kết thúc mà không thay đổi gì.
+
+Output Docker được đọc bằng UTF-8, không phụ thuộc code page của terminal
+Windows. Timeout áp dụng cả việc chờ process lẫn stdout/stderr; khi hết thời
+gian, launcher không báo thành công và không chờ vô hạn một pipe còn mở.
+Timeout không tự rollback/xóa container hoặc volume đã được Docker tạo.
+
+Nếu Docker Engine trả HTTP 500 hoặc không khởi động, script báo lỗi và không
+báo READY. Mở/restart Docker Desktop rồi thử lại; không reset dữ liệu hay dùng
+`down -v`. Đổi credentials trong `.env` không tự đổi tài khoản Mongo đã tồn tại.
+
+Test launcher độc lập, không cần Docker hay Pester:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File tests/local/test_start_local.ps1
+```
+
+## Cấu hình thủ công (không dùng launcher)
 
 Giữ trong `.env` các biến `MONGO_USERNAME`, `MONGO_PASSWORD`,
 `MONGO_APP_USERNAME`, `MONGO_APP_PASSWORD`, `MONGO_APP_DATABASE`, `REDIS_PASSWORD`.
-Với môi trường mới đã tạo, tên database là `resume_screening_local`.
+Ví dụ dưới đây dùng database mới `resume_screening_local`; nếu đã có dữ liệu,
+giữ đúng tên database/tài khoản đã khởi tạo.
 App local dùng URI sau, thay placeholder bằng credentials tương ứng (URL-encode
 username/password có ký tự đặc biệt):
 
@@ -29,7 +108,7 @@ MONGODB_URI="mongodb://<MONGO_APP_USERNAME>:<MONGO_APP_PASSWORD>@127.0.0.1:27019
 REDIS_URL="redis://:<REDIS_PASSWORD>@127.0.0.1:6381/0"
 ```
 
-`.env` trên máy hiện tại đã được cập nhật URI thực, không cần sao chép placeholder.
+`.env` không được đồng bộ khi pull code; hãy thay placeholder bằng giá trị thực.
 Credentials chỉ dùng để khởi tạo lần đầu; sửa `.env` không đổi password trong
 Mongo đã có dữ liệu. `directConnection=true` tránh client trên host tìm đến
 hostname `mongo:27017` chỉ có trong mạng Docker.
@@ -49,7 +128,7 @@ Mongo/Redis phải healthy. Khi hạ tầng sẵn sàng, chạy app bằng venv 
 
 ```powershell
 $env:DEBUG='true'
-.\venv\Scripts\python.exe -m uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload
+.\.venv\Scripts\python.exe -m uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload
 ```
 
 Biến môi trường của terminal được ưu tiên hơn `.env`. Lệnh đặt `DEBUG` ở trên
@@ -91,7 +170,7 @@ Khởi động MinerU trước, sau đó mở terminal tại root và chạy:
 
 ```powershell
 $env:WORKER_ADAPTER_FACTORY='app.workers.mineru_adapter:create_adapter'
-.\venv\Scripts\python.exe -m app.worker --queue resume-parse
+.\.venv\Scripts\python.exe -m app.worker --queue resume-parse
 ```
 
 Xem [hướng dẫn MinerU và nghiệm thu](MINERU_ADAPTER.md). Với script E2E chạy trên

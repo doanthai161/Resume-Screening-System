@@ -6,6 +6,13 @@ Quy tắc làm việc cho AI được lưu tại [AGENTS.md](AGENTS.md). Đây l
 
 Backend quản lý quy trình tuyển dụng và sàng lọc hồ sơ, xây dựng bằng FastAPI, MongoDB, Redis và Beanie ODM.
 
+Chạy local trên Windows với API ngoài Docker (sau khi có `.env`, Docker Desktop
+và dependency BE): trong **cùng terminal PowerShell** tại root, chạy
+`.\start-local.ps1`, rồi
+`.\.venv\Scripts\python.exe -m uvicorn app.main:app --port 8000 --reload`.
+Launcher chỉ chuẩn bị Mongo/Redis, giữ nguyên `.env` và Brevo; MinerU/worker chạy
+sau. Xem [hướng dẫn local](docs/LOCAL_DEVELOPMENT.md).
+
 Phiên bản hiện tại tập trung vào khung backend: quản lý tenant, ứng viên, hồ sơ, đơn ứng tuyển, scorecard, vòng đời screening, phân quyền, audit log và hàng đợi xử lý. AI inference được thiết kế để tách thành service/worker riêng và chưa nằm trong Docker stack này.
 
 ## Trạng thái hệ thống
