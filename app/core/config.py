@@ -79,6 +79,45 @@ class Settings(BaseSettings):
     QUEUE_REDELIVERY_SECONDS: int = Field(default=600, ge=60, le=86400)
     MAINTENANCE_INTERVAL_SECONDS: int = Field(default=60, ge=15, le=3600)
     WORKER_ADAPTER_FACTORY: str = Field(default="", max_length=200)
+    EXTRACTION_API_URL: Optional[str] = None
+    EXTRACTION_SERVICE_TOKEN: Optional[SecretStr] = Field(default=None, min_length=32)
+    EXTRACTION_MODEL_NAME: str = Field(default="", max_length=150)
+    EXTRACTION_LLM_CHAT_URL: Optional[str] = None
+    EXTRACTION_LLM_API_KEY: Optional[SecretStr] = None
+    EXTRACTION_LLM_TIMEOUT_SECONDS: int = Field(default=90, ge=5, le=300)
+    EXTRACTION_REQUEST_TIMEOUT_SECONDS: int = Field(default=240, ge=10, le=600)
+    EXTRACTION_MAX_SOURCE_CHARACTERS: int = Field(default=100_000, ge=100, le=1_000_000)
+    EXTRACTION_LLM_MAX_TOKENS: int = Field(default=8192, ge=256, le=32768)
+    EXTRACTION_LLM_TOKEN_PARAMETER: str = Field(default="max_completion_tokens", pattern="^(max_completion_tokens|max_tokens)$")
+    EXTRACTION_SERVICE_CONCURRENCY: int = Field(default=2, ge=1, le=16)
+
+    @field_validator("EXTRACTION_SERVICE_TOKEN", "EXTRACTION_LLM_API_KEY", "EXTRACTION_API_URL", "EXTRACTION_LLM_CHAT_URL", mode="before")
+    @classmethod
+    def empty_extraction_setting(cls, value):
+        return None if isinstance(value, str) and not value.strip() else value
+
+    @field_validator("EXTRACTION_API_URL", "EXTRACTION_LLM_CHAT_URL")
+    @classmethod
+    def validate_extraction_url(cls, value):
+        from urllib.parse import urlsplit
+        if value is not None:
+            parsed = urlsplit(value)
+            if parsed.scheme not in {"http", "https"} or not parsed.hostname or parsed.username or parsed.password or parsed.query or parsed.fragment:
+                raise ValueError("Extraction endpoints require plain HTTP(S) URLs without credentials")
+        return value
+
+    @model_validator(mode="after")
+    def validate_extraction_timeout_budget(self) -> "Settings":
+        if self.EXTRACTION_LLM_CHAT_URL:
+            # One initial model call and one repair, plus body/response overhead.
+            minimum_request_timeout = 2 * self.EXTRACTION_LLM_TIMEOUT_SECONDS + 30
+            if self.EXTRACTION_REQUEST_TIMEOUT_SECONDS < minimum_request_timeout:
+                raise ValueError(
+                    "EXTRACTION_REQUEST_TIMEOUT_SECONDS must be at least "
+                    "2 * EXTRACTION_LLM_TIMEOUT_SECONDS + 30 when the model gateway is configured"
+                )
+        return self
+
     MINERU_API_URL: Optional[str] = Field(default=None, description="MinerU 4 V1 service root, before /v1")
     MINERU_API_KEY: Optional[SecretStr] = None
     MINERU_PDF_TIER: str = Field(default="basic", pattern="^(flash|basic|standard|advanced)$")
@@ -506,6 +545,7 @@ class Settings(BaseSettings):
         env_file_encoding="utf-8",
         case_sensitive=False,
         extra="allow",
+        hide_input_in_errors=True,
         validate_default=False, 
     )
     # class Config:

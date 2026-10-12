@@ -38,6 +38,9 @@ def resume(tmp_path, monkeypatch):
 @pytest.mark.asyncio
 async def test_mineru_full_cycle_with_scanned_pdf_tier(resume, monkeypatch):
     record, run, content = resume
+    # This case exercises basic/OCR, independently of the developer's .env tier.
+    monkeypatch.setattr(settings, "MINERU_PDF_TIER", "basic")
+    monkeypatch.setattr(settings, "MINERU_AUTO_OCR", True)
     monkeypatch.setattr(ResumeFile, "find_one", AsyncMock(return_value=record))
     requests = []
 

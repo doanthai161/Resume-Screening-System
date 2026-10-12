@@ -10,9 +10,12 @@ from app.core import job_queue
 from app.core.config import settings
 from app.core.errors import CustomError
 from app.models.screening_run import ResumeParseRun, ScreeningRun
+from app.models.resume_extraction import ResumeExtractionRun
+from app.schemas.extraction import ExtractionServiceOutput
+from app.services.extraction_service import ExtractionService
 from app.schemas.worker import ParseOutput, ScreeningOutput
 from app.services.processing_service import ProcessingService
-from app.workers.adapters import WorkerAdapter
+from app.workers.adapters import WorkerAdapter, ExtractionWorkerAdapter
 from app.workers.errors import CircuitOpenError, ParseAdapterError
 
 logger = logging.getLogger(__name__)
@@ -24,17 +27,25 @@ class LeaseLost(Exception):
 
 
 class Worker:
-    def __init__(self, queue: str, adapter: WorkerAdapter):
-        if queue not in {"resume-parse", "screening"}:
+    def __init__(self, queue: str, adapter: WorkerAdapter | ExtractionWorkerAdapter):
+        if queue not in {"resume-parse", "screening", "resume-extract"}:
             raise ValueError("Unsupported worker queue")
         self.queue = queue
         self.adapter = adapter
         self.worker_id = f"worker-{uuid4().hex}"
         self.cursor = "0-0"
+        if queue == "resume-extract":
+            self.model = ResumeExtractionRun
+            self.output_model = ExtractionServiceOutput
+            self.claim, self.renew = ExtractionService.claim, ExtractionService.renew
+            self.complete, self.fail = ExtractionService.complete, ExtractionService.fail
+            self.execute = adapter.extract
+            return
         parse = queue == "resume-parse"
         self.model = ResumeParseRun if parse else ScreeningRun
         self.output_model = ParseOutput if parse else ScreeningOutput
         self.claim = ProcessingService.claim_parse if parse else ProcessingService.claim_screening
+        self.preflight = None if parse else ProcessingService.prepare_screening
         self.renew = ProcessingService.renew_parse_lease if parse else ProcessingService.renew_screening_lease
         self.complete = ProcessingService.complete_parse if parse else ProcessingService.complete_screening
         self.fail = ProcessingService.fail_parse if parse else ProcessingService.fail_screening
@@ -51,6 +62,17 @@ class Worker:
                 raise LeaseLost()
 
     async def _execute_with_lease(self, run):
+        if self.queue == "screening" and not await self.preflight(str(run.id), self.worker_id, generation=run.attempt):
+            raise LeaseLost()
+        if self.queue == "resume-extract":
+            # A claim response can arrive after its lease has expired or another
+            # worker has taken over. Fence before dispatching paid inference.
+            try:
+                renewed = await self.renew(str(run.id), self.worker_id, generation=run.attempt)
+            except Exception:
+                raise LeaseLost() from None
+            if not renewed:
+                raise LeaseLost()
         work = asyncio.create_task(self.execute(run))
         heartbeat = asyncio.create_task(self._heartbeat(run))
         try:
@@ -94,11 +116,15 @@ class Worker:
             return
         except Exception as exc:
             fail_options = {"generation": run.attempt}
-            if isinstance(exc, ParseAdapterError):
+            from app.workers.extraction_adapter import ExtractionAdapterError
+            if isinstance(exc, (ParseAdapterError, ExtractionAdapterError)):
                 code = exc.code
                 fail_options["retryable"] = exc.retryable
                 if self.queue == "resume-parse" and isinstance(exc, CircuitOpenError):
                     fail_options["deferred"] = True
+            elif isinstance(exc, CustomError) and exc.status_code == 422:
+                code = "worker_invalid_input"
+                fail_options["retryable"] = False
             else:
                 code = "worker_timeout" if isinstance(exc, TimeoutError) else (
                     "worker_invalid_output" if isinstance(exc, ValidationError) else "worker_adapter_error"
@@ -123,7 +149,7 @@ class Worker:
                 raise
             completed = await self.fail(
                 run_id, self.worker_id, "worker_invalid_output", "Worker output does not match run configuration",
-                generation=run.attempt, **({"retryable": False} if self.queue == "resume-parse" else {}),
+                generation=run.attempt, retryable=False,
             )
         # Unknown commit outcomes/DB failures deliberately leave delivery pending.
         if completed:

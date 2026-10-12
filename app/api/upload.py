@@ -8,8 +8,71 @@ from app.core.security import CurrentUser, require_permission
 from app.schemas.response import ApiResponse
 from app.schemas.resume import ParseResumeRequest, ParseRunResponse, ResumeResponse
 from app.services.resume_service import ResumeService
+from app.services.extraction_service import ExtractionService
+from app.schemas.extraction import StartExtractionRequest, ExtractionRunResponse, ProfileResponse
 
 router = APIRouter()
+
+
+def _extraction_run_response(item) -> ExtractionRunResponse:
+    return ExtractionRunResponse(
+        id=str(item.id), resume_file_id=str(item.resume_file_id), status=item.status,
+        attempt=item.attempt, max_attempts=item.max_attempts,
+        source_parse_revision=item.source_parse_revision, model_name=item.model_name,
+        prompt_version=item.prompt_version, queued_at=item.queued_at, next_retry_at=item.next_retry_at,
+        result_id=str(item.result_id) if item.result_id else None,
+        error_code=item.error_code, error_message=item.error_message,
+    )
+
+
+def _profile_response(item, is_current: bool) -> ProfileResponse:
+    return ProfileResponse(
+        id=str(item.id), extraction_run_id=str(item.extraction_run_id), resume_file_id=str(item.resume_file_id),
+        version=item.version, source_parse_revision=item.source_parse_revision, model_name=item.model_name,
+        prompt_version=item.prompt_version, extractor_version=item.extractor_version,
+        review_required=item.review_required, is_current=is_current, created_at=item.created_at, profile=item.profile,
+    )
+
+
+@router.post("/{resume_id}/extraction-runs", response_model=ApiResponse[ExtractionRunResponse], status_code=202)
+@limiter.limit(settings.RATE_LIMIT_SCREENING)
+async def start_extraction_run(
+    request: Request, resume_id: str, data: StartExtractionRequest,
+    idempotency_key: str = Header(..., alias="Idempotency-Key", min_length=8, max_length=128),
+    current_user: CurrentUser = Depends(require_permission("resume_files:extract")),
+):
+    run = await ExtractionService.start(resume_id, data.company_id, idempotency_key, current_user)
+    return ApiResponse(success=True, data=_extraction_run_response(run), message="Resume extraction queued")
+
+
+@router.get("/{resume_id}/extraction-runs/{run_id}", response_model=ApiResponse[ExtractionRunResponse])
+@limiter.limit(settings.RATE_LIMIT_READ)
+async def get_extraction_run(
+    request: Request, resume_id: str, run_id: str,
+    current_user: CurrentUser = Depends(require_permission("resume_files:view")),
+):
+    run = await ExtractionService.get_run(resume_id, run_id, current_user)
+    return ApiResponse(success=True, data=_extraction_run_response(run), message="Extraction run retrieved")
+
+
+@router.get("/{resume_id}/profiles/latest", response_model=ApiResponse[ProfileResponse])
+@limiter.limit(settings.RATE_LIMIT_READ)
+async def get_latest_profile(
+    request: Request, resume_id: str,
+    current_user: CurrentUser = Depends(require_permission("resume_profiles:view")),
+):
+    item, current = await ExtractionService.get_profile(resume_id, current_user)
+    return ApiResponse(success=True, data=_profile_response(item, current), message="Resume profile retrieved")
+
+
+@router.get("/{resume_id}/profiles/{profile_id}", response_model=ApiResponse[ProfileResponse])
+@limiter.limit(settings.RATE_LIMIT_READ)
+async def get_profile_version(
+    request: Request, resume_id: str, profile_id: str,
+    current_user: CurrentUser = Depends(require_permission("resume_profiles:view")),
+):
+    item, current = await ExtractionService.get_profile(resume_id, current_user, profile_id)
+    return ApiResponse(success=True, data=_profile_response(item, current), message="Resume profile version retrieved")
 
 
 def _resume_response(item) -> ResumeResponse:

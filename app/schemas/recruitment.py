@@ -115,6 +115,11 @@ class ScreeningRunResponse(BaseModel):
     queued_at: datetime
     started_at: Optional[datetime] = None
     finished_at: Optional[datetime] = None
+    resume_profile_id: Optional[str] = None
+    profile_version: Optional[int] = None
+    source_parse_revision: Optional[int] = None
+    source_text_sha256: Optional[str] = None
+    source_is_current: Optional[bool] = None
 
 
 class ScreeningResultResponse(BaseModel):
@@ -137,6 +142,11 @@ class ScreeningResultResponse(BaseModel):
     matched_skills: List[str]
     missing_skills: List[str]
     evaluated_at: datetime
+    resume_profile_id: Optional[str] = None
+    profile_version: Optional[int] = None
+    source_parse_revision: Optional[int] = None
+    source_text_sha256: Optional[str] = None
+    source_is_current: Optional[bool] = None
 
     @field_validator("id", "application_id", "screening_run_id", mode="before")
     @classmethod

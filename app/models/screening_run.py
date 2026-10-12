@@ -6,6 +6,7 @@ from beanie import Document, PydanticObjectId
 from pydantic import Field
 from pymongo import ASCENDING, DESCENDING, IndexModel
 
+from app.schemas.screening_source import ScreeningSourceSnapshot
 from app.utils.time import now_utc
 
 
@@ -28,6 +29,8 @@ class ScreeningRun(Document):
     idempotency_key: str = Field(..., min_length=8, max_length=128)
     input_hash: str = Field(..., min_length=32, max_length=128)
     config_snapshot: Dict[str, Any] = Field(default_factory=dict)
+    # None is readable for historical documents, but cannot be processed anew.
+    source_snapshot: Optional[ScreeningSourceSnapshot] = None
     status: ProcessingStatus = ProcessingStatus.QUEUED
     is_terminal: bool = False
     attempt: int = Field(0, ge=0)

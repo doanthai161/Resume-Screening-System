@@ -48,6 +48,12 @@ class ResumeFile(Document):
     object_key: Optional[str] = Field(None, max_length=1000)
     version: int = Field(1, ge=1)
     parsed_data: Optional[ParsedResumeData] = None
+    parse_revision: int = Field(0, ge=0)
+    latest_parse_run_id: Optional[PydanticObjectId] = None
+    extraction_revision: int = Field(0, ge=0)
+    latest_extraction_profile_id: Optional[PydanticObjectId] = None
+    # Internal transaction fence; independent of parse/profile/file versions.
+    screening_fence_version: int = Field(0, ge=0)
     status: str = Field("pending", pattern=r"^(pending|processing|parsed|error)$")
     processing_errors: List[str] = Field(default_factory=list, max_length=50)
     metadata: Dict[str, Any] = Field(default_factory=dict)

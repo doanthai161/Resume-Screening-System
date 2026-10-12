@@ -1,8 +1,10 @@
 """Run against an isolated real replica set: TEST_MONGODB_URI must be explicit."""
 
 import asyncio
+import json
 import os
 from datetime import timedelta
+from pathlib import Path
 from uuid import uuid4
 from unittest.mock import AsyncMock
 
@@ -24,15 +26,19 @@ from app.models.job_scorecard import JobScorecard
 from app.models.job_application import JobApplication, ApplicationStage
 from app.models.application_stage_event import ApplicationStageEvent
 from app.models.resume_file import ResumeFile, ParsedResumeData
+from app.models.resume_extraction import ResumeProfile, PROMPT_VERSION, EXTRACTOR_VERSION
 from app.models.screening_run import ResumeParseRun, ScreeningRun
 from app.models.screening_result import ScreeningResult
 from app.schemas.worker import ParseOutput, ScreeningOutput
+from app.schemas.screening_source import ScreeningSourceSnapshot
 from app.schemas.recruitment import ScorecardCreate, StageTransitionRequest
 from app.services.processing_service import ProcessingService
 from app.services.recruitment_service import ScorecardService, ApplicationService
 from app.utils.time import now_utc
 
 pytestmark = pytest.mark.asyncio
+EXTRACTION_CONTRACTS = Path(__file__).resolve().parents[2] / "docs/contracts"
+SCREENING_SOURCE = (EXTRACTION_CONTRACTS / "resume-extraction-v1.source.txt").read_bytes().decode("utf-8")
 
 
 @pytest.mark.parametrize("operation", ["soft", "hard", "update"])
@@ -646,11 +652,32 @@ async def test_concurrent_claim_has_one_winner():
 @pytest.mark.parametrize("outcome", ["pass", "missing", "conflict", "required_fail", "unknown", "bad_snapshot"])
 async def test_screening_lease_fencing_and_atomic_completion(outcome):
     owner, company, branch, job = await job_data()
+    resume = await ResumeFile(
+        company_id=company.id, company_branch_id=branch.id,
+        filename="screening.pdf", original_filename="screening.pdf", file_path="unused",
+        file_size=100, mime_type="application/pdf", uploader_id=owner.id, checksum="a" * 64,
+        status="parsed", parse_revision=1, parsed_data=ParsedResumeData(raw_text=SCREENING_SOURCE),
+    ).insert()
+    profile = await ResumeProfile(
+        company_id=company.id, resume_file_id=resume.id, extraction_run_id=ObjectId(), version=1,
+        source_parse_revision=1, model_name="test-model", prompt_version=PROMPT_VERSION,
+        extractor_version=EXTRACTOR_VERSION, review_required=True,
+        profile=json.loads((EXTRACTION_CONTRACTS / "resume-extraction-v1.example.json").read_text(encoding="utf-8")),
+    ).insert()
+    await resume.set({"latest_extraction_profile_id": profile.id, "extraction_revision": 1})
+    snapshot = ScreeningSourceSnapshot(
+        resume_profile_id=str(profile.id), profile_version=profile.version,
+        extraction_run_id=str(profile.extraction_run_id), source_parse_revision=1,
+        resume_checksum=resume.checksum, source_text=SCREENING_SOURCE,
+        source_text_sha256=profile.profile.source_text_sha256, profile=profile.profile,
+        extraction_model_name=profile.model_name, extraction_prompt_version=profile.prompt_version,
+        extractor_version=profile.extractor_version,
+    )
     application = await JobApplication(
         company_id=company.id,
         company_branch_id=branch.id,
         candidate_id=ObjectId(),
-        resume_file_id=ObjectId(),
+        resume_file_id=resume.id,
         job_requirement_id=job.id,
         applied_by=owner.id,
         idempotency_key="application-screen",
@@ -663,6 +690,7 @@ async def test_screening_lease_fencing_and_atomic_completion(outcome):
         scorecard_id=ObjectId(),
         ai_model_id=ObjectId(),
         triggered_by=owner.id,
+        source_snapshot=snapshot,
         config_snapshot={"scorecard": {
             "pass_threshold": 70,
             "criteria": [{"code": "python", "name": "Python", "weight": 1, "required": True, "minimum_score": 90 if outcome == "required_fail" else 60}],
@@ -673,7 +701,7 @@ async def test_screening_lease_fencing_and_atomic_completion(outcome):
     claimed = await ProcessingService.claim_screening(str(run.id), "worker")
     output = ScreeningOutput(criteria_evaluations={"python": {
         "status": "evaluated", "score": 80, "reason": "Project evidence",
-        "evidence": [{"page": 1, "text": "Python backend project"}],
+        "evidence": [{"text": "Python", "start": SCREENING_SOURCE.index("Python"), "end": SCREENING_SOURCE.index("Python") + 6}],
     }})
     if outcome == "missing":
         output = ScreeningOutput(criteria_evaluations={})

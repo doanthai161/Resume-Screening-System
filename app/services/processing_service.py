@@ -1,4 +1,5 @@
 from app.core.scoring import calculate_screening
+from app.core.screening_evidence import bind_screening_output, validate_screening_source
 from app.core.transactions import current_session, transactional
 from datetime import timedelta
 from typing import Optional
@@ -11,6 +12,7 @@ from app.core.config import settings
 from app.models.application_stage_event import ApplicationStageEvent
 from app.models.job_application import ApplicationStage, JobApplication
 from app.models.resume_file import ResumeFile
+from app.models.resume_extraction import ResumeExtractionRun
 from app.models.resume_parse_attempt import ParseAttemptStatus, ResumeParseAttempt
 from app.models.screening_result import (
     ScreeningResult,
@@ -22,6 +24,7 @@ from app.models.screening_run import (
 )
 from app.schemas.worker import ParseOutput, ScreeningOutput
 from app.utils.time import now_utc
+from app.services.screening_source_service import fence_screening_source
 
 
 LEASE_DURATION = timedelta(minutes=5)
@@ -111,6 +114,31 @@ class ProcessingService:
 
     @staticmethod
     @transactional
+    async def prepare_screening(run_id: str, worker_id: str, *, generation: int) -> bool:
+        predicate = {"_id": PydanticObjectId(run_id), "status": "running", "worker_id": worker_id,
+                     "attempt": generation, "lease_expires_at": {"$gt": now_utc()}}
+        run = await ScreeningRun.find_one(predicate, session=current_session())
+        if not run:
+            return False
+        try:
+            snapshot = validate_screening_source(run.source_snapshot)
+        except ValueError:
+            raise CustomError(ErrorCodes.VALIDATION, "Screening requires a valid source snapshot", 422) from None
+        if not await JobApplication.find_one({
+            "_id": run.application_id, "company_id": run.company_id,
+            "resume_file_id": run.resume_file_id, "job_requirement_id": run.job_requirement_id,
+        }, session=current_session()):
+            raise CustomError(ErrorCodes.VALIDATION, "Screening application no longer matches its input", 422)
+        await fence_screening_source(run.resume_file_id, run.company_id, snapshot)
+        predicate["lease_expires_at"] = {"$gt": now_utc()}
+        renewed = await ScreeningRun.find_one(predicate, session=current_session()).update(
+            {"$set": {"lease_expires_at": now_utc() + LEASE_DURATION, "updated_at": now_utc()}},
+            session=current_session(),
+        )
+        return bool(renewed and renewed.matched_count == 1)
+
+    @staticmethod
+    @transactional
     async def complete_screening(
         run_id: str,
         worker_id: str,
@@ -131,18 +159,32 @@ class ProcessingService:
         if not run:
             return None
 
+        try:
+            output = bind_screening_output(output, run.source_snapshot)
+        except ValueError:
+            raise CustomError(ErrorCodes.VALIDATION, "Invalid screening source or evidence", 422) from None
+        await fence_screening_source(run.resume_file_id, run.company_id, run.source_snapshot)
+        application = await JobApplication.find_one({
+            "_id": run.application_id, "company_id": run.company_id,
+            "resume_file_id": run.resume_file_id, "job_requirement_id": run.job_requirement_id,
+        }, session=current_session())
+        if not application:
+            raise CustomError(ErrorCodes.VALIDATION, "Screening application no longer matches its input", 422)
+
         existing = await ScreeningResult.find_one(
             ScreeningResult.screening_run_id == run.id, session=current_session()
         )
         if existing:
+            if existing.source_snapshot != run.source_snapshot:
+                raise CustomError(ErrorCodes.VALIDATION, "Screening result source does not match run", 422)
             result = existing
         else:
             try:
                 assessment = calculate_screening(
                     run.config_snapshot.get("scorecard", {}), output.criteria_evaluations
                 )
-            except ValueError as exc:
-                raise CustomError(ErrorCodes.VALIDATION, "Invalid scoring output or scorecard snapshot", 422) from exc
+            except ValueError:
+                raise CustomError(ErrorCodes.VALIDATION, "Invalid scoring output or scorecard snapshot", 422) from None
             result = ScreeningResult(
                 company_id=run.company_id,
                 application_id=run.application_id,
@@ -153,6 +195,7 @@ class ProcessingService:
                 ai_model_id=run.ai_model_id,
                 **assessment,
                 scorecard_snapshot=run.config_snapshot.get("scorecard", {}),
+                source_snapshot=run.source_snapshot.model_copy(deep=True),
                 strengths=output.strengths,
                 weaknesses=output.weaknesses,
                 missing_skills=output.missing_skills,
@@ -162,18 +205,17 @@ class ProcessingService:
             )
             await result.insert(session=current_session())
 
-        application = await JobApplication.get(
-            run.application_id, session=current_session()
-        )
         if application:
             old_stage = application.current_stage
             transitioned = False
-            update_filter = {"_id": application.id, "revision": application.revision}
+            update_filter = {"_id": application.id, "revision": application.revision,
+                             "company_id": run.company_id, "resume_file_id": run.resume_file_id,
+                             "job_requirement_id": run.job_requirement_id}
             update_fields = {
                 "latest_screening_result_id": result.id,
                 "updated_at": now_utc(),
             }
-            update_command: dict = {"$set": update_fields}
+            update_command: dict = {"$set": update_fields, "$inc": {"revision": 1}}
             if old_stage in {ApplicationStage.APPLIED, ApplicationStage.SCREENING}:
                 update_filter["current_stage"] = old_stage.value
                 update_fields["current_stage"] = ApplicationStage.SCREENED.value
@@ -187,19 +229,7 @@ class ProcessingService:
                 and getattr(update_result, "modified_count", 0) == 1
             )
             if not update_result or getattr(update_result, "modified_count", 0) != 1:
-                # A recruiter changed the application concurrently. Preserve that
-                # stage and attach only the immutable screening result.
-                await JobApplication.find_one(
-                    {"_id": application.id}, session=current_session()
-                ).update(
-                    {
-                        "$set": {
-                            "latest_screening_result_id": result.id,
-                            "updated_at": now_utc(),
-                        }
-                    },
-                    session=current_session(),
-                )
+                raise CustomError(ErrorCodes.CONFLICT, "Screening application changed concurrently", 409)
             await cache.delete_pattern(
                 cache.cache_key("application-list", str(run.company_id), "*")
             )
@@ -410,7 +440,10 @@ class ProcessingService:
                     "status": "parsed",
                     "processed_at": now,
                     "processing_errors": [],
-                }
+                    "latest_parse_run_id": run.id,
+                    "latest_extraction_profile_id": None,
+                },
+                "$inc": {"parse_revision": 1},
             },
             session=current_session(),
         )
@@ -552,11 +585,12 @@ class ProcessingService:
         for model, queue_name in (
             (ScreeningRun, "screening"),
             (ResumeParseRun, "resume-parse"),
+            (ResumeExtractionRun, "resume-extract"),
         ):
             attempt_count = (
                 parse_attempt_count_expression() if model is ResumeParseRun else "$attempt"
             )
-            due_filter = parse_retry_due_filter(now) if model is ResumeParseRun else {}
+            due_filter = parse_retry_due_filter(now) if model in {ResumeParseRun, ResumeExtractionRun} else {}
             stale = (
                 await model.find(
                     {

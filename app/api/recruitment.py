@@ -41,7 +41,8 @@ async def get_screening_result(
     current_user: CurrentUser = Depends(require_permission("screening_runs:view")),
 ):
     result = await ScreeningService.get_result(run_id, company_id, current_user)
-    return ApiResponse.ok(ScreeningResultResponse.model_validate(result))
+    response = ScreeningResultResponse.model_validate(result).model_copy(update=await _source_metadata(result))
+    return ApiResponse.ok(response)
 
 
 def _application_response(item) -> ApplicationResponse:
@@ -81,7 +82,16 @@ def _scorecard_response(item) -> ScorecardResponse:
     )
 
 
-def _run_response(item) -> ScreeningRunResponse:
+async def _source_metadata(item) -> dict:
+    source = item.source_snapshot
+    if source is None:
+        return {}
+    return {"resume_profile_id": str(source.resume_profile_id), "profile_version": source.profile_version,
+            "source_parse_revision": source.source_parse_revision, "source_text_sha256": source.source_text_sha256,
+            "source_is_current": await ScreeningService.source_is_current(item)}
+
+
+async def _run_response(item) -> ScreeningRunResponse:
     return ScreeningRunResponse(
         id=str(item.id),
         company_id=str(item.company_id),
@@ -96,6 +106,7 @@ def _run_response(item) -> ScreeningRunResponse:
         queued_at=item.queued_at,
         started_at=item.started_at,
         finished_at=item.finished_at,
+        **await _source_metadata(item),
     )
 
 
@@ -213,7 +224,7 @@ async def start_screening(
     current_user: CurrentUser = Depends(require_permission("screening_runs:create")),
 ):
     item = await ScreeningService.start(data, idempotency_key, current_user)
-    return ApiResponse(success=True, data=_run_response(item), message="Screening queued")
+    return ApiResponse(success=True, data=await _run_response(item), message="Screening queued")
 
 
 @router.get("/screenings/{run_id}", response_model=ApiResponse[ScreeningRunResponse])
@@ -224,13 +235,8 @@ async def get_screening_run(
     company_id: str,
     current_user: CurrentUser = Depends(require_permission("screening_runs:view")),
 ):
-    await TenantAccessService.require_company_access(current_user, company_id)
-    item = await RecruitmentRepository.get_screening_run(run_id, company_id)
-    if not item:
-        from fastapi import HTTPException
-
-        raise HTTPException(status_code=404, detail="Screening run not found")
-    return ApiResponse(success=True, data=_run_response(item))
+    item = await ScreeningService.get_run(run_id, company_id, current_user)
+    return ApiResponse(success=True, data=await _run_response(item))
 
 
 @router.post("/reviews", response_model=ApiResponse[ApplicationReviewResponse], status_code=status.HTTP_201_CREATED)

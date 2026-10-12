@@ -32,6 +32,19 @@ services:
   worker-screening:
     <<: *worker_dev
 
+  worker-extraction:
+    <<: *worker_dev
+
+  extractor:
+    environment:
+      ENVIRONMENT: development
+      DEBUG: "false"
+      REFRESH_COOKIE_SECURE: "false"
+    volumes:
+      - ./app:/app/app:ro
+    ports:
+      - "127.0.0.1:8002:8002"
+
   redis:
     ports:
       # Loopback-only exposure for a backend process running on the host.

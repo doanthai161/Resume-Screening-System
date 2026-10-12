@@ -1,6 +1,6 @@
 # Resume Screening System
 
-Worker parse có pipeline MinerU 4 V1 với tự nhận biết PDF scan, OCR/tier fallback, quality gate, native PDF/DOCX fallback và circuit breaker Redis. Bật riêng bằng Compose profile `parse`; MinerU vẫn được triển khai ngoài stack. Worker screening và bước trích xuất CV có cấu trúc chưa có adapter AI. Xem [hướng dẫn MinerU](docs/MINERU_ADAPTER.md).
+Worker parse có pipeline MinerU 4 V1 với tự nhận biết PDF scan, OCR/tier fallback, quality gate, native PDF/DOCX fallback và circuit breaker Redis. Bật riêng bằng Compose profile `parse`; MinerU vẫn được triển khai ngoài stack. Bước trích xuất hồ sơ có HTTP service, worker và profile có phiên bản, bật bằng profile `extraction`; model cloud cần cấu hình riêng. Worker screening chưa có adapter AI. Xem [hướng dẫn MinerU](docs/MINERU_ADAPTER.md) và [trích xuất hồ sơ/cloud](docs/EXTRACTION_PHASE3.md).
 
 Quy tắc làm việc cho AI được lưu tại [AGENTS.md](AGENTS.md). Đây là nguồn hướng dẫn chung của repository.
 
@@ -365,6 +365,18 @@ mongo-init.js
 Xem [P1 remediation](docs/reviews/P1_REMEDIATION.md) cho thay đổi quyền, session, worker và hướng triển khai. MongoDB phải là replica set/sharded cluster; standalone không hỗ trợ các transaction mới. Compose tự tạo replica set `rs0` bằng `mongo-key` và `mongo-init-replica`. Người dùng cần đăng nhập lại sau cập nhật vì token cũ không có registry session sẽ bị từ chối.
 
 Worker phải giữ `generation=claimed_run.attempt` khi renew/complete/fail. `/live` kiểm tra process; `/ready` kiểm tra dependency, trả 503 khi production không có Redis hoặc Mongo không sẵn sàng cho transaction.
+
+## Contract trích xuất hồ sơ
+
+Contract đầu ra cho bước trích xuất hồ sơ (phần 3):
+[Resume extraction v1](docs/RESUME_EXTRACTION_CONTRACT.md), gồm JSON Schema,
+ví dụ và kiểm tra dẫn chứng với văn bản nguồn. Workflow extraction đã có run,
+worker, HTTP service và profile có phiên bản. Xem
+[hướng dẫn phần 3 và cấu hình cloud](docs/EXTRACTION_PHASE3.md).
+
+Screening dùng profile hiện tại, giữ snapshot theo run/result và xác minh dẫn
+chứng theo văn bản nguồn. Xem [contract nối profile với screening](docs/SCREENING_PROFILE_BINDING.md).
+Adapter AI screening vẫn cần triển khai để chạy đánh giá bằng model thật.
 
 ## Test
 

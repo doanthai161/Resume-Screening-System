@@ -70,7 +70,7 @@ async def serve(queue: str) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Resume processing worker (requires an inference adapter)")
-    parser.add_argument("--queue", choices=["resume-parse", "screening"], required=True)
+    parser.add_argument("--queue", choices=["resume-parse", "screening", "resume-extract"], required=True)
     args = parser.parse_args()
     logging.basicConfig(level=logging.INFO)
     try:

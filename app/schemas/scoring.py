@@ -4,6 +4,8 @@ from typing import Optional
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from app.schemas.resume_extraction import MAX_SOURCE_CHARACTERS
+
 
 class CriterionStatus(str, Enum):
     EVALUATED = "evaluated"
@@ -12,13 +14,27 @@ class CriterionStatus(str, Enum):
 
 
 class CriterionEvidence(BaseModel):
-    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+    model_config = ConfigDict(extra="forbid", revalidate_instances="always", hide_input_in_errors=True)
     page: Optional[int] = Field(None, ge=1)
-    text: str = Field(..., min_length=1, max_length=2000)
+    # Quotes preserve whitespace and offsets count Unicode characters, not bytes.
+    text: str = Field(..., strict=True, min_length=1, max_length=2000)
+    start: Optional[int] = Field(None, strict=True, ge=0, lt=MAX_SOURCE_CHARACTERS)
+    end: Optional[int] = Field(None, strict=True, gt=0, le=MAX_SOURCE_CHARACTERS)
+
+    @model_validator(mode="after")
+    def validate_span(self):
+        if not self.text.strip():
+            raise ValueError("Screening evidence requires a nonblank quote")
+        if (self.start is None) != (self.end is None):
+            raise ValueError("Screening evidence requires both span offsets or neither")
+        if self.start is not None and self.end - self.start != len(self.text):
+            raise ValueError("Screening evidence span length must match its quote")
+        return self
 
 
 class CriterionEvaluation(BaseModel):
-    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True,
+                             revalidate_instances="always", hide_input_in_errors=True)
     status: CriterionStatus
     score: Optional[float] = Field(None, ge=0, le=100, allow_inf_nan=False)
     reason: str = Field(..., min_length=1, max_length=2000)

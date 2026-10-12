@@ -1,0 +1,2 @@
+# Evidence offsets and source hashes depend on the exact example bytes.
+docs/contracts/resume-extraction-v1.source.txt text eol=lf

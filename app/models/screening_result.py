@@ -8,6 +8,7 @@ from pymongo import ASCENDING, DESCENDING, IndexModel
 
 from app.utils.time import now_utc
 from app.schemas.scoring import CriterionEvaluation
+from app.schemas.screening_source import ScreeningSourceSnapshot
 
 
 class ScreeningResultStatus(str, Enum):
@@ -47,6 +48,7 @@ class ScreeningResult(Document):
     score_lower_bound: Optional[float] = Field(None, ge=0, le=100)
     score_upper_bound: Optional[float] = Field(None, ge=0, le=100)
     scorecard_snapshot: Dict[str, Any] = Field(default_factory=dict)
+    source_snapshot: Optional[ScreeningSourceSnapshot] = None
     strengths: List[str] = Field(default_factory=list, max_length=100)
     weaknesses: List[str] = Field(default_factory=list, max_length=100)
     missing_skills: List[str] = Field(default_factory=list, max_length=200)

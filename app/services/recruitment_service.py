@@ -13,6 +13,8 @@ from app.core import job_queue
 from app.core.config import settings
 from app.core.errors import CustomError, ErrorCodes
 from app.core.security import CurrentUser
+from app.core.screening_evidence import validate_screening_source
+from app.core.tenant_policy import branch_role
 from app.models.ai_model import AIModel
 from app.models.application_review import ApplicationReview
 from app.models.application_stage_event import ApplicationStageEvent
@@ -27,6 +29,7 @@ from app.models.job_application import (
 from app.models.job_requirement import JobRequirement, JobStatus
 from app.models.job_scorecard import JobScorecard
 from app.models.resume_file import ResumeFile
+from app.models.resume_extraction import ResumeProfile
 from app.models.screening_run import ScreeningRun
 from app.models.screening_result import ScreeningResult
 from app.models.user import User
@@ -40,6 +43,9 @@ from app.schemas.recruitment import (
     StageTransitionRequest,
 )
 from app.services.tenant_access_service import TenantAccessService
+from app.services.extraction_service import ExtractionService
+from app.services.screening_source_service import fence_screening_source, screening_source_predicate
+from app.schemas.screening_source import ScreeningSourceSnapshot
 from app.utils.time import ensure_utc, now_utc
 
 logger = logging.getLogger(__name__)
@@ -644,9 +650,21 @@ class ScorecardService:
 
 class ScreeningService:
     @staticmethod
-    async def get_result(run_id: str, company_id: str, current_user: CurrentUser) -> ScreeningResult:
-        from app.core.tenant_policy import branch_role
+    async def source_is_current(item) -> bool | None:
+        if item.source_snapshot is None:
+            return None
+        resume = await ResumeFile.get_motor_collection().find_one(
+            screening_source_predicate(item.resume_file_id, item.company_id, item.source_snapshot),
+            projection={"_id": 1}, session=current_session(),
+        )
+        application = await JobApplication.get_motor_collection().find_one({
+            "_id": item.application_id, "company_id": item.company_id,
+            "resume_file_id": item.resume_file_id, "job_requirement_id": item.job_requirement_id,
+        }, projection={"_id": 1}, session=current_session())
+        return resume is not None and application is not None
 
+    @staticmethod
+    async def get_run(run_id: str, company_id: str, current_user: CurrentUser) -> ScreeningRun:
         if not current_user.has_permission("screening_runs:view"):
             raise CustomError(ErrorCodes.FORBIDDEN, "Screening access denied", 403)
         if not PydanticObjectId.is_valid(run_id):
@@ -660,10 +678,22 @@ class ScreeningService:
             current_user.user_id, str(application.company_branch_id)
         ):
             raise CustomError(ErrorCodes.FORBIDDEN, "Application branch access denied", 403)
+        resume = await ResumeFile.get_motor_collection().find_one(
+            {"_id": run.resume_file_id}, projection={"company_id": 1, "company_branch_id": 1}, session=current_session()
+        )
+        if resume and (resume.get("company_id") != run.company_id or (
+            resume.get("company_branch_id") and not await branch_role(current_user.user_id, str(resume["company_branch_id"]))
+        )):
+            raise CustomError(ErrorCodes.FORBIDDEN, "Resume branch access denied", 403)
+        return run
+
+    @staticmethod
+    async def get_result(run_id: str, company_id: str, current_user: CurrentUser) -> ScreeningResult:
+        run = await ScreeningService.get_run(run_id, company_id, current_user)
         result = await ScreeningResult.find_one({
             "screening_run_id": run.id,
             "company_id": PydanticObjectId(company_id),
-            "application_id": application.id,
+            "application_id": run.application_id,
         })
         if not result:
             raise CustomError(ErrorCodes.NOT_FOUND, "Screening result not available", 404)
@@ -676,6 +706,10 @@ class ScreeningService:
         idempotency_key: str,
         current_user: CurrentUser,
     ) -> ScreeningRun:
+        if not current_user.has_permission("screening_runs:create"):
+            raise CustomError(ErrorCodes.FORBIDDEN, "Screening creation denied", 403)
+        if not current_user.has_permission("resume_profiles:view"):
+            raise CustomError(ErrorCodes.FORBIDDEN, "Resume profile access denied", 403)
         await TenantAccessService.require_company_access(current_user, data.company_id)
         application = await RecruitmentRepository.get_application(
             data.application_id, data.company_id
@@ -684,6 +718,30 @@ class ScreeningService:
             raise CustomError(
                 ErrorCodes.NOT_FOUND, "Application not found", status.HTTP_404_NOT_FOUND
             )
+        if not await branch_role(current_user.user_id, str(application.company_branch_id)):
+            raise CustomError(ErrorCodes.FORBIDDEN, "Application branch access denied", 403)
+        resume = await ExtractionService.authorized_resume(
+            str(application.resume_file_id), current_user, permission="resume_profiles:view"
+        )
+        if resume.company_id != application.company_id:
+            raise CustomError(ErrorCodes.FORBIDDEN, "Resume does not belong to this company", 403)
+        existing = await ScreeningRun.find_one(
+            {"company_id": application.company_id, "idempotency_key": idempotency_key},
+            session=current_session(),
+        )
+        if existing:
+            if existing.application_id != application.id or str(existing.ai_model_id) != data.ai_model_id:
+                _raise_idempotency_mismatch()
+            if existing.resume_file_id != resume.id:
+                await ExtractionService.authorized_resume(
+                    str(existing.resume_file_id), current_user, permission="resume_profiles:view"
+                )
+            # The immutable run is authoritative even after profile/config changes.
+            return existing
+        if await ScreeningRun.find_one(
+            {"application_id": application.id, "is_terminal": False}, session=current_session()
+        ):
+            raise CustomError(ErrorCodes.CONFLICT, "Another screening is active; retry with its original idempotency key", 409)
         scorecard = await RecruitmentRepository.get_active_scorecard(
             str(application.job_requirement_id), data.company_id
         )
@@ -705,23 +763,36 @@ class ScreeningService:
             raise CustomError(
                 ErrorCodes.NOT_FOUND, "AI model not found", status.HTTP_404_NOT_FOUND
             )
-        resume = await ResumeFile.find_one(
-            {
-                "_id": application.resume_file_id,
-                "company_id": PydanticObjectId(data.company_id),
-                "is_deleted": False,
-            },
-            session=current_session(),
-        )
-        if not resume:
-            raise CustomError(
-                ErrorCodes.NOT_FOUND, "Resume not found", status.HTTP_404_NOT_FOUND
-            )
+        if resume.status != "parsed" or not resume.parsed_data or not resume.latest_extraction_profile_id:
+            raise CustomError(ErrorCodes.CONFLICT, "Resume requires a current extracted profile", 409)
+        profile = await ResumeProfile.find_one({
+            "_id": resume.latest_extraction_profile_id, "company_id": resume.company_id,
+            "resume_file_id": resume.id, "source_parse_revision": resume.parse_revision,
+            "source_parse_run_id": resume.latest_parse_run_id,
+        }, session=current_session())
+        if not profile:
+            raise CustomError(ErrorCodes.CONFLICT, "Resume extracted profile is no longer current", 409)
+        try:
+            source_snapshot = validate_screening_source(ScreeningSourceSnapshot(
+                resume_profile_id=profile.id, profile_version=profile.version,
+                extraction_run_id=profile.extraction_run_id,
+                source_parse_revision=profile.source_parse_revision,
+                source_parse_run_id=profile.source_parse_run_id, resume_checksum=resume.checksum,
+                source_text=resume.parsed_data.raw_text, source_text_sha256=profile.profile.source_text_sha256,
+                profile=profile.profile, extraction_model_name=profile.model_name,
+                extraction_prompt_version=profile.prompt_version, extractor_version=profile.extractor_version,
+            ))
+        except ValueError:
+            raise CustomError(ErrorCodes.CONFLICT, "Invalid extracted profile source", 409) from None
+        await fence_screening_source(resume.id, resume.company_id, source_snapshot)
 
         input_payload = {
             "application_id": str(application.id),
-            "application_revision": application.revision,
+            "application_revision": application.revision + int(application.current_stage == ApplicationStage.APPLIED),
             "resume_checksum": resume.checksum,
+            "resume_profile_id": str(profile.id), "profile_version": profile.version,
+            "source_parse_revision": source_snapshot.source_parse_revision,
+            "source_text_sha256": source_snapshot.source_text_sha256,
             "scorecard_id": str(scorecard.id),
             "scorecard_version": scorecard.version,
             "ai_model_id": str(ai_model.id),
@@ -730,36 +801,6 @@ class ScreeningService:
         input_hash = hashlib.sha256(
             json.dumps(input_payload, sort_keys=True).encode("utf-8")
         ).hexdigest()
-
-        existing_id = await cache.get_idempotency_result(
-            "screening", data.company_id, idempotency_key
-        )
-        if existing_id:
-            existing = await RecruitmentRepository.get_screening_run(
-                existing_id, data.company_id
-            )
-            if existing:
-                if existing.input_hash != input_hash:
-                    _raise_idempotency_mismatch()
-                return existing
-        existing = await ScreeningRun.find_one(
-            {
-                "company_id": PydanticObjectId(data.company_id),
-                "$or": [
-                    {"idempotency_key": idempotency_key},
-                    {"input_hash": input_hash, "is_terminal": False},
-                    {"application_id": application.id, "is_terminal": False},
-                ],
-            },
-            session=current_session(),
-        )
-        if existing:
-            if (
-                existing.idempotency_key == idempotency_key
-                and existing.input_hash != input_hash
-            ):
-                _raise_idempotency_mismatch()
-            return existing
 
         owner_token = uuid.uuid4().hex
         if not await cache.reserve_idempotency(
@@ -780,6 +821,7 @@ class ScreeningService:
             triggered_by=PydanticObjectId(current_user.user_id),
             idempotency_key=idempotency_key,
             input_hash=input_hash,
+            source_snapshot=source_snapshot,
             config_snapshot={
                 "input": input_payload,
                 "scorecard": scorecard.model_dump(mode="json"),

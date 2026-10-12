@@ -31,11 +31,32 @@ def setup_worker(queue, run, adapter):
     worker.renew = AsyncMock(return_value=True)
     worker.complete = AsyncMock(return_value=object())
     worker.fail = AsyncMock(return_value=True)
+    worker.preflight = AsyncMock(return_value=True)
     return worker
 
 
 def fields(run):
     return {"resource_id": str(run.id), "company_id": str(run.company_id)}
+
+
+@pytest.mark.parametrize("failure", ["lost", "database_unavailable"])
+async def test_extraction_checks_lease_before_dispatching_inference(runtime, failure, caplog):
+    run, adapter, ack = runtime
+    adapter.extract = AsyncMock()
+    worker = setup_worker("resume-extract", run, adapter)
+    if failure == "lost":
+        worker.renew.return_value = False
+    else:
+        worker.renew.side_effect = RuntimeError("private database error")
+
+    await worker.handle("1-0", fields(run))
+
+    worker.renew.assert_awaited_once_with(str(run.id), worker.worker_id, generation=run.attempt)
+    adapter.extract.assert_not_awaited()
+    worker.complete.assert_not_awaited()
+    worker.fail.assert_not_awaited()
+    ack.assert_not_awaited()
+    assert "private database error" not in caplog.text
 
 
 @pytest.mark.parametrize("queue", ["resume-parse", "screening"])
@@ -53,6 +74,30 @@ async def test_worker_completes_before_ack_with_generation(runtime, queue):
     worker.complete.assert_awaited_once()
     worker.fail.assert_not_awaited()
     ack.assert_awaited_once_with(queue, GROUP, "1-0")
+
+
+@pytest.mark.parametrize("failure", ["invalid_source", "lost_lease"])
+async def test_screening_preflight_rejects_input_before_inference(runtime, failure):
+    from app.core.errors import CustomError, ErrorCodes
+
+    run, adapter, ack = runtime
+    worker = setup_worker("screening", run, adapter)
+    if failure == "invalid_source":
+        worker.preflight.side_effect = CustomError(ErrorCodes.VALIDATION, "Invalid screening source", 422)
+    else:
+        worker.preflight.return_value = False
+    await worker.handle("1-0", fields(run))
+    adapter.screen.assert_not_awaited()
+    worker.complete.assert_not_awaited()
+    if failure == "invalid_source":
+        worker.fail.assert_awaited_once_with(
+            str(run.id), worker.worker_id, "worker_invalid_input", "Worker processing failed",
+            generation=run.attempt, retryable=False,
+        )
+        ack.assert_awaited_once()
+    else:
+        worker.fail.assert_not_awaited()
+        ack.assert_not_awaited()
 
 
 @pytest.mark.parametrize("problem,code", [("exception", "worker_adapter_error"), ("schema", "worker_invalid_output"), ("timeout", "worker_timeout")])

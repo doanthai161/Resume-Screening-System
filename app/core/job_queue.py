@@ -92,10 +92,11 @@ async def reclaim(queue: str, group: str, consumer: str, cursor: str = "0-0") ->
 async def publish_committed(queue: str, resource_id: str, company_id: str) -> None:
     from beanie import PydanticObjectId
     from app.models.screening_run import ScreeningRun, ResumeParseRun, parse_retry_due_filter
+    from app.models.resume_extraction import ResumeExtractionRun
     from app.utils.time import now_utc
 
-    model = ScreeningRun if queue == "screening" else ResumeParseRun
-    due_filter = parse_retry_due_filter(now_utc()) if model is ResumeParseRun else {}
+    model = {"screening": ScreeningRun, "resume-parse": ResumeParseRun, "resume-extract": ResumeExtractionRun}[queue]
+    due_filter = parse_retry_due_filter(now_utc()) if model in {ResumeParseRun, ResumeExtractionRun} else {}
     run = await model.find_one(
         {"_id": PydanticObjectId(resource_id), "status": "queued", **due_filter}
     )

@@ -11,6 +11,7 @@ services:
       MONGODB_URI: mongodb://${MONGO_APP_USERNAME:?MONGO_APP_USERNAME is required}:${MONGO_APP_PASSWORD:?MONGO_APP_PASSWORD is required}@mongo:27017/${MONGO_APP_DATABASE:-resume_screening_db}?authSource=${MONGO_APP_DATABASE:-resume_screening_db}&replicaSet=rs0
       MONGODB_DB_NAME: ${MONGO_APP_DATABASE:-resume_screening_db}
       REDIS_URL: redis://:${REDIS_PASSWORD:?REDIS_PASSWORD is required}@redis:6379/0
+      EXTRACTION_API_URL: ${EXTRACTION_API_URL:-http://extractor:8002}
       ENVIRONMENT: production
       DEBUG: "false"
       REFRESH_COOKIE_SECURE: "true"
@@ -63,6 +64,41 @@ services:
     environment:
       <<: *backend_environment
       WORKER_ADAPTER_FACTORY: ${SCREENING_WORKER_ADAPTER_FACTORY:-}
+
+  worker-extraction:
+    <<: *worker_common
+    profiles: ["extraction"]
+    command: ["python", "-m", "app.worker", "--queue", "resume-extract"]
+    environment:
+      <<: *backend_environment
+      WORKER_ADAPTER_FACTORY: app.workers.extraction_adapter:create_adapter
+    depends_on:
+      api:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      extractor:
+        condition: service_healthy
+
+  extractor:
+    build: .
+    profiles: ["extraction"]
+    env_file: [.env]
+    environment:
+      ENVIRONMENT: production
+      DEBUG: "false"
+      REFRESH_COOKIE_SECURE: "true"
+    command: ["uvicorn", "app.extraction_service:app", "--host", "0.0.0.0", "--port", "8002", "--no-access-log"]
+    init: true
+    read_only: true
+    tmpfs: ["/tmp:size=64m,mode=1777,noexec,nosuid,nodev"]
+    cap_drop: ["ALL"]
+    security_opt: ["no-new-privileges:true"]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8002/ready', timeout=8)"]
+      interval: 20s
+      timeout: 10s
+      retries: 3
 
   mongo:
     image: mongo:7

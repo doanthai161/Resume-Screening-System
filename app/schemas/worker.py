@@ -7,7 +7,7 @@ from app.schemas.scoring import CriterionEvaluation
 
 
 class ScreeningOutput(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", revalidate_instances="always", hide_input_in_errors=True)
     criteria_evaluations: Dict[str, CriterionEvaluation] = Field(..., max_length=50)
     strengths: List[str] = Field(default_factory=list, max_length=100)
     weaknesses: List[str] = Field(default_factory=list, max_length=100)

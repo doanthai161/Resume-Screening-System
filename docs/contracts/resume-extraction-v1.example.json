@@ -1,0 +1,197 @@
+{
+  "schema_version": "1.0",
+  "source_text_sha256": "7d9ba4707f5df02d92d33bd6ea5588b86bffe1ee424615378e45b545acdb9827",
+  "personal_info": {
+    "full_name": {
+      "status": "extracted",
+      "value": "Nguyễn An",
+      "evidence": [
+        {
+          "quote": "Nguyễn An",
+          "start": 0,
+          "end": 9
+        }
+      ]
+    },
+    "email": {
+      "status": "extracted",
+      "value": "an@example.com",
+      "evidence": [
+        {
+          "quote": "an@example.com",
+          "start": 10,
+          "end": 24
+        }
+      ]
+    },
+    "phone": {
+      "status": "insufficient_evidence",
+      "value": null,
+      "reason": "Not stated in the CV"
+    },
+    "location": {
+      "status": "insufficient_evidence",
+      "value": null,
+      "reason": "Not stated in the CV"
+    },
+    "links": {
+      "status": "insufficient_evidence",
+      "items": [],
+      "reason": "Not stated in the CV"
+    }
+  },
+  "summary": {
+    "status": "insufficient_evidence",
+    "value": null,
+    "reason": "Not stated in the CV"
+  },
+  "skills": {
+    "status": "extracted",
+    "items": [
+      {
+        "name": {
+          "status": "extracted",
+          "value": "Python",
+          "evidence": [
+            {
+              "quote": "Python",
+              "start": 25,
+              "end": 31
+            }
+          ]
+        },
+        "level": {
+          "status": "insufficient_evidence",
+          "value": null,
+          "reason": "Not stated in the CV"
+        }
+      },
+      {
+        "name": {
+          "status": "extracted",
+          "value": "SQL",
+          "evidence": [
+            {
+              "quote": "SQL",
+              "start": 33,
+              "end": 36
+            }
+          ]
+        },
+        "level": {
+          "status": "insufficient_evidence",
+          "value": null,
+          "reason": "Not stated in the CV"
+        }
+      }
+    ]
+  },
+  "experiences": {
+    "status": "extracted",
+    "items": [
+      {
+        "organization": {
+          "status": "extracted",
+          "value": "Example Co",
+          "evidence": [
+            {
+              "quote": "Example Co",
+              "start": 37,
+              "end": 47
+            }
+          ]
+        },
+        "role": {
+          "status": "extracted",
+          "value": "Backend Developer",
+          "evidence": [
+            {
+              "quote": "Backend Developer",
+              "start": 50,
+              "end": 67
+            }
+          ]
+        },
+        "location": {
+          "status": "insufficient_evidence",
+          "value": null,
+          "reason": "Not stated in the CV"
+        },
+        "start_date": {
+          "status": "extracted",
+          "value": {
+            "year": 2022,
+            "month": 3
+          },
+          "evidence": [
+            {
+              "quote": "2022-03",
+              "start": 70,
+              "end": 77
+            }
+          ]
+        },
+        "end_date": {
+          "status": "insufficient_evidence",
+          "value": null,
+          "reason": "Present; no end date stated"
+        },
+        "is_current": {
+          "status": "extracted",
+          "value": true,
+          "evidence": [
+            {
+              "quote": "Present",
+              "start": 80,
+              "end": 87
+            }
+          ]
+        },
+        "description": {
+          "status": "insufficient_evidence",
+          "value": null,
+          "reason": "Not stated in the CV"
+        }
+      }
+    ]
+  },
+  "education": {
+    "status": "insufficient_evidence",
+    "items": [],
+    "reason": "Not stated in the CV"
+  },
+  "certifications": {
+    "status": "insufficient_evidence",
+    "items": [],
+    "reason": "Not stated in the CV"
+  },
+  "languages": {
+    "status": "extracted",
+    "items": [
+      {
+        "name": {
+          "status": "extracted",
+          "value": "English",
+          "evidence": [
+            {
+              "quote": "English",
+              "start": 88,
+              "end": 95
+            }
+          ]
+        },
+        "proficiency": {
+          "status": "extracted",
+          "value": "B2",
+          "evidence": [
+            {
+              "quote": "B2",
+              "start": 97,
+              "end": 99
+            }
+          ]
+        }
+      }
+    ]
+  }
+}
