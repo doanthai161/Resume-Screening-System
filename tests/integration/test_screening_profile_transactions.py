@@ -1,6 +1,7 @@
 """Screening source snapshots and races on an explicitly configured test replica set."""
 import json
 import os
+from datetime import timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
@@ -10,6 +11,7 @@ from beanie import init_beanie
 from bson import ObjectId
 import httpx
 from motor.motor_asyncio import AsyncIOMotorClient
+from pydantic import SecretStr
 import pytest
 
 from app.core.config import settings
@@ -37,10 +39,13 @@ from app.models.user import User
 from app.models.user_actor import UserActor
 from app.models.user_company import UserCompany
 from app.schemas.recruitment import ScreeningStartRequest
+from app.schemas.screening_http import ScreeningServiceRequest, ScreeningServiceResponse
 from app.schemas.worker import ScreeningOutput
 from app.services.processing_service import ProcessingService
 from app.services.recruitment_service import ScreeningService
 from app.workers.runtime import Worker, GROUP
+from app.workers.screening_adapter import HTTPScreeningAdapter
+from app.utils.time import now_utc, ensure_utc
 
 pytestmark = pytest.mark.asyncio
 CONTRACTS = Path(__file__).resolve().parents[2] / "docs/contracts"
@@ -57,6 +62,8 @@ async def mock_db(monkeypatch):
     await require_transaction_topology(client)
     await init_beanie(database=client[name], document_models=DOCUMENT_MODELS)
     monkeypatch.setattr(settings, "ENVIRONMENT", "development")
+    monkeypatch.setattr(settings, "SCREENING_API_URL", "http://screening-service:8003")
+    monkeypatch.setattr(settings, "SCREENING_SERVICE_TOKEN", SecretStr("synthetic-screening-token-" + "x" * 32))
     monkeypatch.setattr(limiter, "enabled", False)
     monkeypatch.setattr("app.core.cache.get_redis", lambda: None)
     monkeypatch.setattr("app.core.job_queue.get_redis", lambda: None)
@@ -137,6 +144,339 @@ async def start_and_claim():
     run = await ScreeningService.start(item.request, uuid4().hex, item.current)
     claimed = await ProcessingService.claim_screening(str(run.id), "worker")
     return item, run, claimed
+
+
+def screening_http_response(payload):
+    request = ScreeningServiceRequest.model_validate(payload)
+    return ScreeningServiceResponse(
+        contract_version="1.0", run_id=request.run_id, input_hash=request.input_hash,
+        source_text_sha256=request.source.source_text_sha256,
+        resume_profile_id=request.source.resume_profile_id, profile_version=request.source.profile_version,
+        scorecard_id=request.scorecard.scorecard_id, scorecard_version=request.scorecard.version,
+        model=request.model, prompt_version=request.prompt_version, output=output(),
+    ).model_dump(mode="json")
+
+
+async def test_http_screening_worker_uses_frozen_model_scorecard_and_verified_profile(monkeypatch):
+    from app.core import job_queue
+
+    item = await data()
+    config_secret = "must-not-send-arbitrary-model-config-secret"
+    await item.model.set({"config": {"model_name": "ignored-config-name", "api_key": config_secret}})
+    run = await ScreeningService.start(item.request, uuid4().hex, item.current)
+    frozen_model = {"ai_model_id": str(item.model.id), "provider": item.model.provider,
+                    "model_id": item.model.model_id, "version": item.model.version}
+    await item.model.set({"provider": "changed-provider", "model_id": "changed-live-model", "version": "2.0",
+                          "config": {"api_key": "must-not-send-new-live-secret"}})
+    await item.scorecard.set({"version": 2, "criteria": [{"code": "new_live_criterion", "name": "Changed", "weight": 1}]})
+    calls = []
+
+    def model(request):
+        payload = json.loads(request.content)
+        calls.append(payload)
+        assert request.url.path == "/v1/screen"
+        assert request.headers["Idempotency-Key"] == str(run.id)
+        assert request.headers["Authorization"] == "Bearer " + settings.SCREENING_SERVICE_TOKEN.get_secret_value()
+        assert payload["model"] == frozen_model
+        assert payload["prompt_version"] == "screening-v1"
+        assert payload["source"]["source_text"] == SOURCE
+        assert payload["source"]["resume_profile_id"] == str(item.profile.id)
+        assert payload["scorecard"]["version"] == 1
+        assert payload["scorecard"]["criteria"][0]["code"] == "python"
+        assert "model_config" not in payload and config_secret not in request.content.decode()
+        assert "must-not-send-new-live-secret" not in request.content.decode()
+        return httpx.Response(200, json=screening_http_response(payload))
+
+    acknowledge = AsyncMock()
+    monkeypatch.setattr(job_queue, "acknowledge", acknowledge)
+    async with httpx.AsyncClient(transport=httpx.MockTransport(model)) as client:
+        worker = Worker("screening", HTTPScreeningAdapter(client, settings.SCREENING_API_URL,
+                                                          settings.SCREENING_SERVICE_TOKEN.get_secret_value()))
+        await worker.handle("http-screen", {"resource_id": str(run.id), "company_id": str(run.company_id)})
+
+    stored = await ScreeningRun.get(run.id)
+    assert len(calls) == 1 and stored.status == "completed"
+    result = await ScreeningResult.get(stored.result_id)
+    assert result.overall_score == 80 and result.evidence_coverage == 100 and result.decision == "pass"
+    assert result.source_snapshot == run.source_snapshot
+    assert result.scorecard_snapshot["version"] == 1
+    evidence = result.criteria_evaluations["python"].evidence[0]
+    assert SOURCE[evidence.start:evidence.end] == evidence.text == "Python"
+    acknowledge.assert_awaited_once_with("screening", GROUP, "http-screen")
+
+
+@pytest.mark.parametrize("field", ["run_id", "input_hash"])
+async def test_http_response_from_another_run_is_terminal_without_writing_a_result(monkeypatch, field):
+    from app.core import job_queue
+
+    item = await data()
+    run = await ScreeningService.start(item.request, uuid4().hex, item.current)
+    calls = []
+
+    def model(request):
+        calls.append(request)
+        response = screening_http_response(json.loads(request.content))
+        response[field] = str(ObjectId()) if field == "run_id" else "0" * 64
+        return httpx.Response(200, json=response)
+
+    acknowledge = AsyncMock()
+    monkeypatch.setattr(job_queue, "acknowledge", acknowledge)
+    async with httpx.AsyncClient(transport=httpx.MockTransport(model)) as client:
+        worker = Worker("screening", HTTPScreeningAdapter(client, settings.SCREENING_API_URL,
+                                                          settings.SCREENING_SERVICE_TOKEN.get_secret_value()))
+        await worker.handle("wrong-binding", {"resource_id": str(run.id), "company_id": str(run.company_id)})
+
+    stored = await ScreeningRun.get(run.id)
+    assert len(calls) == 1 and stored.status == "failed" and stored.is_terminal and stored.attempt == 1
+    assert await ScreeningResult.find_all().count() == 0
+    assert (await JobApplication.get(item.application.id)).latest_screening_result_id is None
+    acknowledge.assert_awaited_once_with("screening", GROUP, "wrong-binding")
+
+
+async def test_http_adapter_rejects_fabricated_quote_before_completion(monkeypatch):
+    from app.core import job_queue
+
+    item = await data()
+    run = await ScreeningService.start(item.request, uuid4().hex, item.current)
+
+    def model(request):
+        response = screening_http_response(json.loads(request.content))
+        response["output"]["criteria_evaluations"]["python"]["evidence"] = [
+            {"text": "Invented technology", "start": 0, "end": 19}
+        ]
+        return httpx.Response(200, json=response)
+
+    monkeypatch.setattr(job_queue, "acknowledge", AsyncMock())
+    async with httpx.AsyncClient(transport=httpx.MockTransport(model)) as client:
+        worker = Worker("screening", HTTPScreeningAdapter(client, settings.SCREENING_API_URL,
+                                                          settings.SCREENING_SERVICE_TOKEN.get_secret_value()))
+        await worker.handle("fabricated-evidence", {"resource_id": str(run.id), "company_id": str(run.company_id)})
+
+    stored = await ScreeningRun.get(run.id)
+    assert stored.status == "failed" and stored.is_terminal
+    assert await ScreeningResult.find_all().count() == 0
+    assert (await JobApplication.get(item.application.id)).latest_screening_result_id is None
+
+
+async def test_http_transient_failure_retries_same_run_with_same_frozen_payload(monkeypatch):
+    from app.core import job_queue
+
+    item = await data()
+    run = await ScreeningService.start(item.request, uuid4().hex, item.current)
+    calls = []
+
+    def model(request):
+        calls.append((request.headers["Idempotency-Key"], json.loads(request.content)))
+        if len(calls) == 1:
+            return httpx.Response(503, text="private upstream failure")
+        return httpx.Response(200, json=screening_http_response(calls[-1][1]))
+
+    acknowledge = AsyncMock()
+    monkeypatch.setattr(job_queue, "acknowledge", acknowledge)
+    async with httpx.AsyncClient(transport=httpx.MockTransport(model)) as client:
+        worker = Worker("screening", HTTPScreeningAdapter(client, settings.SCREENING_API_URL,
+                                                          settings.SCREENING_SERVICE_TOKEN.get_secret_value()))
+        fields = {"resource_id": str(run.id), "company_id": str(run.company_id)}
+        await worker.handle("transient-first", fields)
+        failed_attempt = await ScreeningRun.get(run.id)
+        assert failed_attempt.status == "queued" and not failed_attempt.is_terminal and failed_attempt.attempt == 1
+        assert failed_attempt.next_retry_at is not None and ensure_utc(failed_attempt.next_retry_at) > now_utc()
+        assert await ScreeningResult.find_all().count() == 0
+        assert await ProcessingService.claim_screening(str(run.id), "too-early") is None
+        await ScreeningRun.get_motor_collection().update_one(
+            {"_id": run.id}, {"$set": {"next_retry_at": now_utc() - timedelta(seconds=1)}}
+        )
+        await worker.handle("transient-retry", fields)
+
+    completed = await ScreeningRun.get(run.id)
+    assert completed.status == "completed" and completed.attempt == 2
+    assert completed.next_retry_at is None
+    assert len(calls) == 2 and calls[0] == calls[1]
+    assert calls[0][0] == str(run.id)
+    assert await ScreeningResult.find_all().count() == 1
+    assert acknowledge.await_count == 2
+
+
+@pytest.mark.parametrize("status", [401, 422])
+async def test_http_permanent_rejection_is_not_retried_or_stored_as_result(monkeypatch, caplog, status):
+    from app.core import job_queue
+
+    item = await data()
+    run = await ScreeningService.start(item.request, uuid4().hex, item.current)
+    calls = []
+
+    def model(request):
+        calls.append(request)
+        return httpx.Response(status, text="private upstream CV or credential")
+
+    monkeypatch.setattr(job_queue, "acknowledge", AsyncMock())
+    async with httpx.AsyncClient(transport=httpx.MockTransport(model)) as client:
+        worker = Worker("screening", HTTPScreeningAdapter(client, settings.SCREENING_API_URL,
+                                                          settings.SCREENING_SERVICE_TOKEN.get_secret_value()))
+        await worker.handle("permanent-rejection", {"resource_id": str(run.id), "company_id": str(run.company_id)})
+
+    stored = await ScreeningRun.get(run.id)
+    assert len(calls) == 1 and stored.status == "failed" and stored.is_terminal and stored.attempt == 1
+    assert await ScreeningResult.find_all().count() == 0
+    assert "private upstream" not in stored.error_message and "private upstream" not in caplog.text
+
+
+async def test_http_commit_then_ack_failure_does_not_repeat_inference_on_redelivery(monkeypatch):
+    from app.core import job_queue
+
+    item = await data()
+    run = await ScreeningService.start(item.request, uuid4().hex, item.current)
+    calls = []
+
+    def model(request):
+        calls.append(request)
+        return httpx.Response(200, json=screening_http_response(json.loads(request.content)))
+
+    acknowledge = AsyncMock(side_effect=RuntimeError("Redis ACK unavailable after commit"))
+    monkeypatch.setattr(job_queue, "acknowledge", acknowledge)
+    async with httpx.AsyncClient(transport=httpx.MockTransport(model)) as client:
+        worker = Worker("screening", HTTPScreeningAdapter(client, settings.SCREENING_API_URL,
+                                                          settings.SCREENING_SERVICE_TOKEN.get_secret_value()))
+        fields = {"resource_id": str(run.id), "company_id": str(run.company_id)}
+        with pytest.raises(RuntimeError, match="ACK unavailable"):
+            await worker.handle("ack-redelivery", fields)
+        assert (await ScreeningRun.get(run.id)).status == "completed"
+        assert await ScreeningResult.find_all().count() == 1
+        acknowledge.side_effect = None
+        await worker.handle("ack-redelivery", fields)
+
+    assert len(calls) == 1 and await ScreeningResult.find_all().count() == 1
+    assert (await ScreeningRun.get(run.id)).attempt == 1
+    assert acknowledge.await_count == 2
+
+
+async def test_http_timeout_is_retryable_and_never_persists_sensitive_error(monkeypatch, caplog):
+    from app.core import job_queue
+
+    item = await data()
+    run = await ScreeningService.start(item.request, uuid4().hex, item.current)
+
+    def model(request):
+        raise httpx.ReadTimeout("private CV and secret token in network error", request=request)
+
+    monkeypatch.setattr(job_queue, "acknowledge", AsyncMock())
+    async with httpx.AsyncClient(transport=httpx.MockTransport(model)) as client:
+        worker = Worker("screening", HTTPScreeningAdapter(client, settings.SCREENING_API_URL,
+                                                          settings.SCREENING_SERVICE_TOKEN.get_secret_value()))
+        await worker.handle("http-timeout", {"resource_id": str(run.id), "company_id": str(run.company_id)})
+
+    stored = await ScreeningRun.get(run.id)
+    assert stored.status == "queued" and not stored.is_terminal and stored.attempt == 1
+    assert await ScreeningResult.find_all().count() == 0
+    assert "private CV" not in caplog.text and "private CV" not in stored.error_message
+
+
+async def test_retry_waits_until_deadline_and_maintenance_publishes_durable_run_after_redis_recovers(monkeypatch):
+    from app.core import job_queue
+
+    item, run, claimed = await start_and_claim()
+    now = now_utc()
+    clock = [now.replace(microsecond=(now.microsecond // 1000) * 1000)]
+    monkeypatch.setattr("app.services.processing_service.now_utc", lambda: clock[0])
+    monkeypatch.setattr("app.utils.time.now_utc", lambda: clock[0])
+    redis = SimpleNamespace(xadd=AsyncMock(return_value="123-0"))
+    monkeypatch.setattr(job_queue, "get_redis", lambda: redis)
+
+    assert await ProcessingService.fail_screening(
+        str(run.id), "worker", "screening_service_unavailable", "Worker processing failed", generation=claimed.attempt
+    )
+    queued = await ScreeningRun.get(run.id)
+    assert queued.status == "queued" and ensure_utc(queued.next_retry_at) == clock[0] + timedelta(seconds=5)
+    from app.api.recruitment import _run_response
+    response = await _run_response(queued)
+    assert response.next_retry_at == ensure_utc(queued.next_retry_at)
+    assert response.next_retry_at.tzinfo is timezone.utc
+    assert response.model_dump(mode="json")["next_retry_at"].endswith("Z")
+    assert queued.queue_message_id is None and queued.last_enqueued_at is None
+    redis.xadd.assert_not_awaited()
+    assert await ProcessingService.claim_screening(str(run.id), "too-early") is None
+    await job_queue.publish_committed("screening", str(run.id), str(run.company_id))
+    await ProcessingService.recover_expired_leases()
+    redis.xadd.assert_not_awaited()
+
+    clock[0] = ensure_utc(queued.next_retry_at)
+    redis.xadd.side_effect = RuntimeError("test Redis temporarily unavailable")
+    await ProcessingService.recover_expired_leases()
+    after_outage = await ScreeningRun.get(run.id)
+    assert after_outage.status == "queued" and after_outage.last_enqueued_at is None
+    assert after_outage.idempotency_key == run.idempotency_key and after_outage.attempt == 1
+    redis.xadd.side_effect = None
+    await ProcessingService.recover_expired_leases()
+    published = await ScreeningRun.get(run.id)
+    assert published.queue_message_id == "123-0" and ensure_utc(published.last_enqueued_at) == clock[0]
+    assert redis.xadd.await_count == 2
+    assert redis.xadd.await_args.args[1] == {"resource_id": str(run.id), "company_id": str(run.company_id)}
+    await ProcessingService.recover_expired_leases()
+    assert redis.xadd.await_count == 2
+
+    fresh = await ProcessingService.claim_screening(str(run.id), "fresh")
+    assert fresh is not None and fresh.attempt == 2 and fresh.next_retry_at is None
+    result = await ProcessingService.complete_screening(str(run.id), "fresh", output(), generation=fresh.attempt)
+    completed = await ScreeningRun.get(run.id)
+    assert completed.status == "completed" and completed.next_retry_at is None
+    assert completed.idempotency_key == run.idempotency_key and completed.result_id == result.id
+    assert await ScreeningRun.find_all().count() == 1 and await ScreeningResult.find_all().count() == 1
+
+
+@pytest.mark.parametrize("max_attempts,delays", [(3, [5, 10]), (6, [5, 10, 20, 40, 60])])
+async def test_retry_backoff_preserves_bounded_attempt_budget_and_original_key(monkeypatch, max_attempts, delays):
+    item = await data()
+    run = await ScreeningService.start(item.request, uuid4().hex, item.current)
+    await run.set({"max_attempts": max_attempts})
+    now = now_utc()
+    clock = [now.replace(microsecond=(now.microsecond // 1000) * 1000)]
+    monkeypatch.setattr("app.services.processing_service.now_utc", lambda: clock[0])
+
+    for attempt in range(1, max_attempts + 1):
+        claimed = await ProcessingService.claim_screening(str(run.id), "worker")
+        assert claimed is not None and claimed.attempt == attempt and claimed.next_retry_at is None
+        assert await ProcessingService.fail_screening(
+            str(run.id), "worker", "screening_service_unavailable", "Worker processing failed", generation=attempt
+        )
+        stored = await ScreeningRun.get(run.id)
+        assert stored.idempotency_key == run.idempotency_key and stored.attempt == attempt
+        if attempt == max_attempts:
+            assert stored.status == "failed" and stored.is_terminal and stored.next_retry_at is None
+        else:
+            assert stored.status == "queued" and not stored.is_terminal
+            assert ensure_utc(stored.next_retry_at) == clock[0] + timedelta(seconds=delays[attempt - 1])
+            assert await ProcessingService.claim_screening(str(run.id), "too-early") is None
+            clock[0] = ensure_utc(stored.next_retry_at)
+    assert await ProcessingService.claim_screening(str(run.id), "extra-attempt") is None
+    assert await ScreeningRun.find_all().count() == 1 and await ScreeningResult.find_all().count() == 0
+
+
+async def test_stale_lease_cannot_schedule_or_replace_a_successor_retry():
+    item, run, old = await start_and_claim()
+    collection = ScreeningRun.get_motor_collection()
+    await collection.update_one({"_id": run.id}, {"$set": {"lease_expires_at": now_utc() - timedelta(seconds=1)}})
+    before = await collection.find_one({"_id": run.id})
+    assert not await ProcessingService.fail_screening(str(run.id), "worker", "timeout", "stale", generation=old.attempt)
+    assert await collection.find_one({"_id": run.id}) == before
+    await ProcessingService.recover_expired_leases()
+    fresh = await ProcessingService.claim_screening(str(run.id), "fresh")
+    assert fresh is not None and fresh.attempt == old.attempt + 1
+    assert await ProcessingService.fail_screening(str(run.id), "fresh", "timeout", "safe", generation=fresh.attempt)
+    scheduled = await collection.find_one({"_id": run.id})
+    assert ensure_utc(scheduled["next_retry_at"]) > now_utc()
+    assert not await ProcessingService.fail_screening(str(run.id), "worker", "stale", "stale", generation=old.attempt)
+    assert await collection.find_one({"_id": run.id}) == scheduled
+    assert await ProcessingService.claim_screening(str(run.id), "too-early") is None
+    assert await ScreeningResult.find_all().count() == 0
+
+
+async def test_legacy_queued_run_without_retry_deadline_remains_claimable():
+    item = await data()
+    run = await ScreeningService.start(item.request, uuid4().hex, item.current)
+    await ScreeningRun.get_motor_collection().update_one({"_id": run.id}, {"$unset": {"next_retry_at": ""}})
+    assert (await ScreeningRun.get(run.id)).next_retry_at is None
+    claimed = await ProcessingService.claim_screening(str(run.id), "worker")
+    assert claimed is not None and claimed.attempt == 1 and claimed.next_retry_at is None
 
 
 @pytest.mark.parametrize("access", ["allowed", "no_screening_permission", "no_profile_permission", "other_company", "other_application_branch", "other_resume_branch", "expired_membership"])

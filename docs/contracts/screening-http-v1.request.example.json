@@ -1,0 +1,285 @@
+{
+  "contract_version": "1.0",
+  "run_id": "111111111111111111111111",
+  "company_id": "222222222222222222222222",
+  "application_id": "333333333333333333333333",
+  "resume_file_id": "444444444444444444444444",
+  "input_hash": "776c23105f8c73abf86df3682a9fdcd98a17f53cc4a9c5367fd09dc0bae39ff5",
+  "source": {
+    "snapshot_version": "1.0",
+    "resume_profile_id": "555555555555555555555555",
+    "profile_version": 1,
+    "extraction_run_id": "666666666666666666666666",
+    "source_parse_revision": 1,
+    "source_parse_run_id": "999999999999999999999999",
+    "resume_checksum": "33e43f3cd0499ecbaafed87e6bb6b1dd8d87af52569f62592c2e9c8edc25462c",
+    "source_text": "Nguyễn An\nan@example.com\nPython, SQL\nExample Co | Backend Developer | 2022-03 - Present\nEnglish: B2\n",
+    "source_text_sha256": "7d9ba4707f5df02d92d33bd6ea5588b86bffe1ee424615378e45b545acdb9827",
+    "profile": {
+      "schema_version": "1.0",
+      "source_text_sha256": "7d9ba4707f5df02d92d33bd6ea5588b86bffe1ee424615378e45b545acdb9827",
+      "personal_info": {
+        "full_name": {
+          "status": "extracted",
+          "value": "Nguyễn An",
+          "evidence": [
+            {
+              "quote": "Nguyễn An",
+              "start": 0,
+              "end": 9
+            }
+          ],
+          "reason": null,
+          "alternatives": []
+        },
+        "email": {
+          "status": "extracted",
+          "value": "an@example.com",
+          "evidence": [
+            {
+              "quote": "an@example.com",
+              "start": 10,
+              "end": 24
+            }
+          ],
+          "reason": null,
+          "alternatives": []
+        },
+        "phone": {
+          "status": "insufficient_evidence",
+          "value": null,
+          "evidence": [],
+          "reason": "Not stated in the CV",
+          "alternatives": []
+        },
+        "location": {
+          "status": "insufficient_evidence",
+          "value": null,
+          "evidence": [],
+          "reason": "Not stated in the CV",
+          "alternatives": []
+        },
+        "links": {
+          "status": "insufficient_evidence",
+          "items": [],
+          "reason": "Not stated in the CV"
+        }
+      },
+      "summary": {
+        "status": "insufficient_evidence",
+        "value": null,
+        "evidence": [],
+        "reason": "Not stated in the CV",
+        "alternatives": []
+      },
+      "skills": {
+        "status": "extracted",
+        "items": [
+          {
+            "review_issues": [],
+            "name": {
+              "status": "extracted",
+              "value": "Python",
+              "evidence": [
+                {
+                  "quote": "Python",
+                  "start": 25,
+                  "end": 31
+                }
+              ],
+              "reason": null,
+              "alternatives": []
+            },
+            "level": {
+              "status": "insufficient_evidence",
+              "value": null,
+              "evidence": [],
+              "reason": "Not stated in the CV",
+              "alternatives": []
+            }
+          },
+          {
+            "review_issues": [],
+            "name": {
+              "status": "extracted",
+              "value": "SQL",
+              "evidence": [
+                {
+                  "quote": "SQL",
+                  "start": 33,
+                  "end": 36
+                }
+              ],
+              "reason": null,
+              "alternatives": []
+            },
+            "level": {
+              "status": "insufficient_evidence",
+              "value": null,
+              "evidence": [],
+              "reason": "Not stated in the CV",
+              "alternatives": []
+            }
+          }
+        ],
+        "reason": null
+      },
+      "experiences": {
+        "status": "extracted",
+        "items": [
+          {
+            "review_issues": [],
+            "start_date": {
+              "status": "extracted",
+              "value": {
+                "year": 2022,
+                "month": 3,
+                "day": null
+              },
+              "evidence": [
+                {
+                  "quote": "2022-03",
+                  "start": 70,
+                  "end": 77
+                }
+              ],
+              "reason": null,
+              "alternatives": []
+            },
+            "end_date": {
+              "status": "insufficient_evidence",
+              "value": null,
+              "evidence": [],
+              "reason": "Present; no end date stated",
+              "alternatives": []
+            },
+            "organization": {
+              "status": "extracted",
+              "value": "Example Co",
+              "evidence": [
+                {
+                  "quote": "Example Co",
+                  "start": 37,
+                  "end": 47
+                }
+              ],
+              "reason": null,
+              "alternatives": []
+            },
+            "role": {
+              "status": "extracted",
+              "value": "Backend Developer",
+              "evidence": [
+                {
+                  "quote": "Backend Developer",
+                  "start": 50,
+                  "end": 67
+                }
+              ],
+              "reason": null,
+              "alternatives": []
+            },
+            "location": {
+              "status": "insufficient_evidence",
+              "value": null,
+              "evidence": [],
+              "reason": "Not stated in the CV",
+              "alternatives": []
+            },
+            "is_current": {
+              "status": "extracted",
+              "value": true,
+              "evidence": [
+                {
+                  "quote": "Present",
+                  "start": 80,
+                  "end": 87
+                }
+              ],
+              "reason": null,
+              "alternatives": []
+            },
+            "description": {
+              "status": "insufficient_evidence",
+              "value": null,
+              "evidence": [],
+              "reason": "Not stated in the CV",
+              "alternatives": []
+            }
+          }
+        ],
+        "reason": null
+      },
+      "education": {
+        "status": "insufficient_evidence",
+        "items": [],
+        "reason": "Not stated in the CV"
+      },
+      "certifications": {
+        "status": "insufficient_evidence",
+        "items": [],
+        "reason": "Not stated in the CV"
+      },
+      "languages": {
+        "status": "extracted",
+        "items": [
+          {
+            "review_issues": [],
+            "name": {
+              "status": "extracted",
+              "value": "English",
+              "evidence": [
+                {
+                  "quote": "English",
+                  "start": 88,
+                  "end": 95
+                }
+              ],
+              "reason": null,
+              "alternatives": []
+            },
+            "proficiency": {
+              "status": "extracted",
+              "value": "B2",
+              "evidence": [
+                {
+                  "quote": "B2",
+                  "start": 97,
+                  "end": 99
+                }
+              ],
+              "reason": null,
+              "alternatives": []
+            }
+          }
+        ],
+        "reason": null
+      }
+    },
+    "extraction_model_name": "synthetic-extraction-model",
+    "extraction_prompt_version": "resume-extract-v1",
+    "extractor_version": "http-extractor-1.0"
+  },
+  "scorecard": {
+    "criteria": [
+      {
+        "code": "python",
+        "name": "Python",
+        "description": "Synthetic fixture skill criterion.",
+        "weight": 1.0,
+        "minimum_score": 60.0,
+        "required": true
+      }
+    ],
+    "pass_threshold": 70.0,
+    "scorecard_id": "888888888888888888888888",
+    "version": 1
+  },
+  "model": {
+    "ai_model_id": "777777777777777777777777",
+    "provider": "custom",
+    "model_id": "synthetic-screening-model",
+    "version": "1.0.0"
+  },
+  "prompt_version": "screening-v1"
+}

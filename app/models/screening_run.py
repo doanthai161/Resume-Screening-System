@@ -35,6 +35,8 @@ class ScreeningRun(Document):
     is_terminal: bool = False
     attempt: int = Field(0, ge=0)
     max_attempts: int = Field(3, ge=1, le=10)
+    # Missing in historical documents; null means the run is ready to claim.
+    next_retry_at: Optional[datetime] = None
     error_code: Optional[str] = Field(None, max_length=100)
     error_message: Optional[str] = Field(None, max_length=2000)
     worker_id: Optional[str] = Field(None, max_length=200)

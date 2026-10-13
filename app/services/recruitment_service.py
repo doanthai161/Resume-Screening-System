@@ -46,6 +46,7 @@ from app.services.tenant_access_service import TenantAccessService
 from app.services.extraction_service import ExtractionService
 from app.services.screening_source_service import fence_screening_source, screening_source_predicate
 from app.schemas.screening_source import ScreeningSourceSnapshot
+from app.schemas.screening_http import SCREENING_PROMPT_VERSION, ScreeningModelSpec
 from app.utils.time import ensure_utc, now_utc
 
 logger = logging.getLogger(__name__)
@@ -763,6 +764,13 @@ class ScreeningService:
             raise CustomError(
                 ErrorCodes.NOT_FOUND, "AI model not found", status.HTTP_404_NOT_FOUND
             )
+        try:
+            model_snapshot = ScreeningModelSpec(
+                ai_model_id=ai_model.id, provider=ai_model.provider,
+                model_id=ai_model.model_id, version=ai_model.version,
+            ).model_dump(mode="json")
+        except ValueError:
+            raise CustomError(ErrorCodes.VALIDATION, "Invalid screening model metadata", 422) from None
         if resume.status != "parsed" or not resume.parsed_data or not resume.latest_extraction_profile_id:
             raise CustomError(ErrorCodes.CONFLICT, "Resume requires a current extracted profile", 409)
         profile = await ResumeProfile.find_one({
@@ -797,6 +805,8 @@ class ScreeningService:
             "scorecard_version": scorecard.version,
             "ai_model_id": str(ai_model.id),
             "ai_model_version": ai_model.version,
+            "model": model_snapshot,
+            "screening_prompt_version": SCREENING_PROMPT_VERSION,
         }
         input_hash = hashlib.sha256(
             json.dumps(input_payload, sort_keys=True).encode("utf-8")
@@ -826,6 +836,8 @@ class ScreeningService:
                 "input": input_payload,
                 "scorecard": scorecard.model_dump(mode="json"),
                 "model_config": ai_model.config,
+                "model": model_snapshot,
+                "screening_prompt_version": SCREENING_PROMPT_VERSION,
             },
         )
         await run.insert(session=current_session())

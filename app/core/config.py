@@ -79,6 +79,9 @@ class Settings(BaseSettings):
     QUEUE_REDELIVERY_SECONDS: int = Field(default=600, ge=60, le=86400)
     MAINTENANCE_INTERVAL_SECONDS: int = Field(default=60, ge=15, le=3600)
     WORKER_ADAPTER_FACTORY: str = Field(default="", max_length=200)
+    SCREENING_API_URL: Optional[str] = None
+    SCREENING_SERVICE_TOKEN: Optional[SecretStr] = Field(default=None, min_length=32)
+    SCREENING_REQUEST_TIMEOUT_SECONDS: int = Field(default=240, ge=10, le=600)
     EXTRACTION_API_URL: Optional[str] = None
     EXTRACTION_SERVICE_TOKEN: Optional[SecretStr] = Field(default=None, min_length=32)
     EXTRACTION_MODEL_NAME: str = Field(default="", max_length=150)
@@ -91,19 +94,19 @@ class Settings(BaseSettings):
     EXTRACTION_LLM_TOKEN_PARAMETER: str = Field(default="max_completion_tokens", pattern="^(max_completion_tokens|max_tokens)$")
     EXTRACTION_SERVICE_CONCURRENCY: int = Field(default=2, ge=1, le=16)
 
-    @field_validator("EXTRACTION_SERVICE_TOKEN", "EXTRACTION_LLM_API_KEY", "EXTRACTION_API_URL", "EXTRACTION_LLM_CHAT_URL", mode="before")
+    @field_validator("EXTRACTION_SERVICE_TOKEN", "EXTRACTION_LLM_API_KEY", "EXTRACTION_API_URL", "EXTRACTION_LLM_CHAT_URL", "SCREENING_SERVICE_TOKEN", "SCREENING_API_URL", mode="before")
     @classmethod
     def empty_extraction_setting(cls, value):
         return None if isinstance(value, str) and not value.strip() else value
 
-    @field_validator("EXTRACTION_API_URL", "EXTRACTION_LLM_CHAT_URL")
+    @field_validator("EXTRACTION_API_URL", "EXTRACTION_LLM_CHAT_URL", "SCREENING_API_URL")
     @classmethod
     def validate_extraction_url(cls, value):
         from urllib.parse import urlsplit
         if value is not None:
             parsed = urlsplit(value)
             if parsed.scheme not in {"http", "https"} or not parsed.hostname or parsed.username or parsed.password or parsed.query or parsed.fragment:
-                raise ValueError("Extraction endpoints require plain HTTP(S) URLs without credentials")
+                raise ValueError("Service endpoints require plain HTTP(S) URLs without credentials")
         return value
 
     @model_validator(mode="after")

@@ -1,10 +1,13 @@
 # Resume Screening System
 
-Worker parse có pipeline MinerU 4 V1 với tự nhận biết PDF scan, OCR/tier fallback, quality gate, native PDF/DOCX fallback và circuit breaker Redis. Bật riêng bằng Compose profile `parse`; MinerU vẫn được triển khai ngoài stack. Bước trích xuất hồ sơ có HTTP service, worker và profile có phiên bản, bật bằng profile `extraction`; model cloud cần cấu hình riêng. Worker screening chưa có adapter AI. Xem [hướng dẫn MinerU](docs/MINERU_ADAPTER.md) và [trích xuất hồ sơ/cloud](docs/EXTRACTION_PHASE3.md).
+Worker parse có pipeline MinerU 4 V1 với tự nhận biết PDF scan, OCR/tier fallback, quality gate, native PDF/DOCX fallback và circuit breaker Redis. Bật riêng bằng Compose profile `parse`; MinerU vẫn được triển khai ngoài stack. Bước trích xuất hồ sơ có HTTP service, worker và profile có phiên bản, bật bằng profile `extraction`; model cloud cần cấu hình riêng. Worker screening đã có adapter HTTP, bật bằng profile `screening`; cần cung cấp AI service `/v1/screen` riêng. Xem [hướng dẫn MinerU](docs/MINERU_ADAPTER.md), [trích xuất hồ sơ/cloud](docs/EXTRACTION_PHASE3.md) và [kết nối screening](docs/SCREENING_HTTP_ADAPTER.md).
 
 Quy tắc làm việc cho AI được lưu tại [AGENTS.md](AGENTS.md). Đây là nguồn hướng dẫn chung của repository.
 
 Backend quản lý quy trình tuyển dụng và sàng lọc hồ sơ, xây dựng bằng FastAPI, MongoDB, Redis và Beanie ODM.
+
+Tra cứu toàn bộ tính năng, chức năng/input/output/quyền của từng API và các phần
+còn thiếu tại [Tổng hợp tính năng và API](docs/PROJECT_FEATURES_AND_API.md).
 
 Chạy local trên Windows với API ngoài Docker (sau khi có `.env`, Docker Desktop
 và dependency BE): trong **cùng terminal PowerShell** tại root, chạy
@@ -36,8 +39,9 @@ flowchart LR
     Redis -. parse jobs .-> Parser[Parse worker\nprofile parse]
     Parser --> MinerU[MinerU 4\nservice riêng]
     Parser -. raw_text .-> Mongo
-    Redis -. screening jobs .-> AI[AI worker\nchưa có adapter]
-    AI -. kết quả xử lý .-> Mongo
+    Redis -. screening jobs .-> Screening[Screening worker\nHTTP adapter]
+    Screening --> Scorer[AI service /v1/screen\ncần triển khai riêng]
+    Screening -. kết quả đã xác minh .-> Mongo
 ```
 
 ## Chức năng chính
@@ -65,6 +69,7 @@ Backend hiện chỉ cung cấp:
 - Vòng đời job `queued -> running -> completed/failed`.
 - Redis Stream cho parse/screening queue; parse worker có MinerU OCR pipeline và lưu lịch sử từng provider attempt.
 - Worker schemas và các thao tác claim, renew lease, complete, fail, retry.
+- Adapter HTTP screening gửi source/profile/scorecard/model đã đóng băng, kiểm tra binding và dẫn chứng trước khi BE tính điểm.
 - Biến cấu hình tùy chọn cho OpenAI, Azure OpenAI, Gemini và Hugging Face.
 
 Phần gọi model, prompt, embedding, inference và tài nguyên GPU nên được triển khai trong một service/worker độc lập. Không cần điền API key AI nếu chỉ chạy backend hiện tại.
@@ -376,7 +381,8 @@ worker, HTTP service và profile có phiên bản. Xem
 
 Screening dùng profile hiện tại, giữ snapshot theo run/result và xác minh dẫn
 chứng theo văn bản nguồn. Xem [contract nối profile với screening](docs/SCREENING_PROFILE_BINDING.md).
-Adapter AI screening vẫn cần triển khai để chạy đánh giá bằng model thật.
+Adapter HTTP phía BE đã triển khai; xem [contract và cấu hình screening](docs/SCREENING_HTTP_ADAPTER.md).
+AI service nhận `/v1/screen` và đánh giá bằng model thật vẫn cần triển khai riêng.
 
 ## Test
 

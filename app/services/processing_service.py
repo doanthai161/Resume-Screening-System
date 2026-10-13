@@ -67,6 +67,7 @@ class ProcessingService:
                 "_id": PydanticObjectId(run_id),
                 "status": ProcessingStatus.QUEUED.value,
                 "$expr": {"$lt": ["$attempt", "$max_attempts"]},
+                **parse_retry_due_filter(now),
             },
             session=current_session(),
         ).update(
@@ -76,6 +77,7 @@ class ProcessingService:
                     "worker_id": worker_id,
                     "lease_expires_at": now + LEASE_DURATION,
                     "started_at": now,
+                    "next_retry_at": None,
                     "updated_at": now,
                 },
                 "$inc": {"attempt": 1},
@@ -193,6 +195,8 @@ class ProcessingService:
                 job_requirement_id=run.job_requirement_id,
                 scorecard_id=run.scorecard_id,
                 ai_model_id=run.ai_model_id,
+                ai_model_used=run.config_snapshot.get("model", {}).get("model_id"),
+                ai_model_version=run.config_snapshot.get("model", {}).get("version"),
                 **assessment,
                 scorecard_snapshot=run.config_snapshot.get("scorecard", {}),
                 source_snapshot=run.source_snapshot.model_copy(deep=True),
@@ -265,6 +269,7 @@ class ProcessingService:
                     "status": ProcessingStatus.COMPLETED.value,
                     "is_terminal": True,
                     "result_id": result.id,
+                    "next_retry_at": None,
                     "finished_at": now,
                     "lease_expires_at": None,
                     "updated_at": now,
@@ -301,6 +306,8 @@ class ProcessingService:
             return False
         terminal = not retryable or run.attempt >= run.max_attempts
         now = now_utc()
+        delay = min(60, 5 * 2 ** min(max(run.attempt - 1, 0), 4))
+        next_retry_at = None if terminal else now + timedelta(seconds=delay)
         terminal_update = await ScreeningRun.find_one(
             {
                 "_id": run.id,
@@ -317,6 +324,7 @@ class ProcessingService:
                         ProcessingStatus.FAILED if terminal else ProcessingStatus.QUEUED
                     ).value,
                     "is_terminal": terminal,
+                    "next_retry_at": next_retry_at,
                     "error_code": error_code[:100],
                     "error_message": error_message[:2000],
                     "worker_id": None,
@@ -331,24 +339,8 @@ class ProcessingService:
         )
         if not terminal_update or terminal_update.modified_count != 1:
             raise CustomError(ErrorCodes.CONFLICT, "Worker lease lost", 409)
-        if not terminal:
-            message_id = await job_queue.enqueue(
-                "screening", str(run.id), str(run.company_id)
-            )
-            if message_id:
-                await ScreeningRun.find_one(
-                    {"_id": run.id, "status": ProcessingStatus.QUEUED.value},
-                    session=current_session(),
-                ).update(
-                    {
-                        "$set": {
-                            "queue_message_id": str(message_id),
-                            "last_enqueued_at": now,
-                            "updated_at": now,
-                        }
-                    },
-                    session=current_session(),
-                )
+        # Mongo owns the retry deadline. Maintenance republishes only when due;
+        # an upstream outage must not consume every attempt in an immediate burst.
         return True
 
     @staticmethod
@@ -590,7 +582,7 @@ class ProcessingService:
             attempt_count = (
                 parse_attempt_count_expression() if model is ResumeParseRun else "$attempt"
             )
-            due_filter = parse_retry_due_filter(now) if model in {ResumeParseRun, ResumeExtractionRun} else {}
+            due_filter = parse_retry_due_filter(now)
             stale = (
                 await model.find(
                     {
@@ -619,6 +611,7 @@ class ProcessingService:
                             "lease_expires_at": None,
                             "queue_message_id": None,
                             "last_enqueued_at": None,
+                            **({"next_retry_at": None} if model is ScreeningRun else {}),
                             "updated_at": now,
                         }
                     },
@@ -676,6 +669,7 @@ class ProcessingService:
                         "$set": {
                             "status": ProcessingStatus.FAILED.value,
                             "is_terminal": True,
+                            **({"next_retry_at": None} if model is ScreeningRun else {}),
                             "error_code": "worker_lease_expired",
                             "error_message": "Worker lease expired after the final attempt",
                             "worker_id": None,

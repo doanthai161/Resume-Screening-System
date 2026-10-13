@@ -59,11 +59,11 @@ services:
 
   worker-screening:
     <<: *worker_common
-    profiles: ["workers"]
+    profiles: ["workers", "screening"]
     command: ["python", "-m", "app.worker", "--queue", "screening"]
     environment:
       <<: *backend_environment
-      WORKER_ADAPTER_FACTORY: ${SCREENING_WORKER_ADAPTER_FACTORY:-}
+      WORKER_ADAPTER_FACTORY: ${SCREENING_WORKER_ADAPTER_FACTORY:-app.workers.screening_adapter:create_adapter}
 
   worker-extraction:
     <<: *worker_common

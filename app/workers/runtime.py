@@ -117,7 +117,8 @@ class Worker:
         except Exception as exc:
             fail_options = {"generation": run.attempt}
             from app.workers.extraction_adapter import ExtractionAdapterError
-            if isinstance(exc, (ParseAdapterError, ExtractionAdapterError)):
+            from app.workers.screening_adapter import ScreeningAdapterError
+            if isinstance(exc, (ParseAdapterError, ExtractionAdapterError, ScreeningAdapterError)):
                 code = exc.code
                 fail_options["retryable"] = exc.retryable
                 if self.queue == "resume-parse" and isinstance(exc, CircuitOpenError):

@@ -1,11 +1,13 @@
 # Gắn hồ sơ trích xuất với screening
 
-Ngày cập nhật: 2026-10-12. Đã triển khai BE nối profile vào screening và kiểm tra
+Ngày cập nhật: 2026-10-13. Đã triển khai BE nối profile vào screening và kiểm tra
 dẫn chứng. Bằng chứng kiểm thử của đợt này được ghi trong ISSUE_STATUS.md;
 regression không thay thế nghiệm thu chất lượng AI trên CV thật.
 
-Thay đổi này nối đầu ra phần 3 vào contract screening của BE. Adapter AI screening
-vẫn chưa được triển khai; tài liệu không xác nhận model đã đánh giá CV thật.
+Thay đổi này nối đầu ra phần 3 vào contract screening của BE. Adapter HTTP phía
+BE đã có; AI service inference riêng vẫn cần triển khai. Hướng dẫn và contract:
+[SCREENING_HTTP_ADAPTER.md](SCREENING_HTTP_ADAPTER.md). Chưa nghiệm thu model
+đánh giá CV thật.
 
 ## Workflow và nguồn dữ liệu
 
@@ -173,6 +175,6 @@ Kết quả lần chạy hiện tại được cập nhật tại
 [ISSUE_STATUS.md](reviews/ISSUE_STATUS.md). Con số **394 passed** thuộc lần sửa
 extraction trước đó, không phải bằng chứng của thay đổi screening này.
 
-Phần còn mở: adapter AI screening, nghiệm thu trên CV thật và nhãn HR, kiểm thử
+Phần còn mở: AI service screening riêng, nghiệm thu trên CV thật và nhãn HR, kiểm thử
 cloud/Redis thực tế, giao diện và HR chỉnh sửa profile/override có lịch sử. Việc
 đóng băng nguồn và xác minh dẫn chứng không tự hoàn thành các phần này.

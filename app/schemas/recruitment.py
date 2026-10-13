@@ -113,6 +113,7 @@ class ScreeningRunResponse(BaseModel):
     attempt: int
     max_attempts: int
     queued_at: datetime
+    next_retry_at: Optional[datetime] = None
     started_at: Optional[datetime] = None
     finished_at: Optional[datetime] = None
     resume_profile_id: Optional[str] = None

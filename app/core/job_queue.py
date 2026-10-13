@@ -96,7 +96,7 @@ async def publish_committed(queue: str, resource_id: str, company_id: str) -> No
     from app.utils.time import now_utc
 
     model = {"screening": ScreeningRun, "resume-parse": ResumeParseRun, "resume-extract": ResumeExtractionRun}[queue]
-    due_filter = parse_retry_due_filter(now_utc()) if model in {ResumeParseRun, ResumeExtractionRun} else {}
+    due_filter = parse_retry_due_filter(now_utc())
     run = await model.find_one(
         {"_id": PydanticObjectId(resource_id), "status": "queued", **due_filter}
     )

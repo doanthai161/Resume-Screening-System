@@ -213,3 +213,73 @@ Bằng chứng bản cuối:
 
 Mongo là DB thật; queue/Redis và model inference trong regression vẫn là test
 double. Adapter AI screening, chất lượng model/CV thật và E2E cloud/Redis vẫn mở.
+
+## Adapter BE screening qua HTTP — 2026-10-13
+
+Đã triển khai contract và adapter HTTP ở BE; bản cuối đạt **593 passed**, không
+skipped, với MongoDB replica set test riêng. Con số **484 passed** ở phần trước
+là lịch sử của screening profile binding, không phải kết quả adapter HTTP.
+
+| Finding / khoảng trống | Trạng thái đợt này | Cách xử lý |
+| --- | --- | --- |
+| Worker screening chưa có adapter gọi AI service riêng | Đã triển khai BE | Một POST `/v1/screen` cho mỗi attempt; service scorer được triển khai riêng, extraction `/v1/extract` không thay thế scorer |
+| HTTP response có thể đúng schema nhưng thuộc run/profile/scorecard khác | Đã chặn | Contract v1 echo identity và binding hash/profile version/scorecard/model/prompt; mismatch permanent trước completion |
+| Run cũ có source nhưng chưa có model/prompt metadata mới | Đã fail-closed | HTTP input phải có frozen model/prompt; worker nhận run đánh dấu failed terminal trước dispatch, không dựng metadata từ model live/config dict; historical read giữ nguyên |
+| Retry/redelivery có thể dùng key HTTP khác hoặc đầu vào live | Đã xử lý | `Idempotency-Key` ổn định bằng run ID, giữ source/profile/scorecard/model metadata đã đóng băng; không retry nội bộ adapter |
+| Lỗi HTTP tạm thời có thể dùng hết attempts liên tiếp, không có backoff bền vững | Đã chặn | Lưu `next_retry_at` Mongo theo 5/10/20/40 giây, tối đa 60; claim chỉ nhận run đến hạn, maintenance publish sau deadline, không publish ngay khi fail |
+| Deadline retry đọc từ Mongo có thể không kèm múi giờ khi trả API | Đã chuẩn hóa | `next_retry_at` được serialize UTC có `Z`; test đối chiếu BSON UTC qua `ensure_utc`, không so sánh trực tiếp naive/aware |
+| Toàn `AIModel.config` có thể đưa secret hoặc cấu hình không được phép sang wire | Đã chặn | Request allowlist metadata, không gửi config dict, JWT/cookie hoặc API key upstream; AI service quản lý provider credentials |
+| HTTP body/JSON hoặc thời gian xử lý không giới hạn | Đã giới hạn | Giới hạn request/response/depth, strict JSON và timeout; worker timeout phải lớn hơn request, validation trước tạo client |
+| Redirect/URL production có thể chuyển token và CV ra ngoài địa chỉ cấu hình | Đã chặn | Không theo redirect, không URL credentials/query/fragment; HTTPS cho external, HTTP chỉ host nội bộ được phép |
+| Lỗi tạm thời và permanent chưa được phân loại cho worker | Đã xử lý | Transport/timeout/408/429/5xx retryable có deadline/backoff; malformed/binding/auth và các response còn lại permanent; không log nội dung nhạy cảm |
+| Endpoint scorer và nghiệm thu model thật | Còn mở | Cần AI service `/v1/screen`, credentials provider, idempotency server và corpus có nhãn HR; BE adapter không thực thi server inference |
+
+Hướng dẫn cấu hình, contract, retry và giới hạn:
+[SCREENING_HTTP_ADAPTER.md](../SCREENING_HTTP_ADAPTER.md).
+
+Không thay URL business API hoặc cơ chế snapshot/evidence/scoring của BE.
+Worker chỉ hoạt động khi URL/token/factory hợp lệ và AI service scorer thực
+tế được cung cấp. Token service là secret riêng; không đưa API key cloud vào
+body từ BE. Timeout/disconnect vẫn có thể phát sinh phí hoặc inference lặp nếu
+AI service chưa thực thi idempotency phía server.
+
+Tương thích retry: run API thêm `next_retry_at` optional, serialize UTC khi có
+giá trị; document cũ thiếu field được đọc như null, không cần backfill.
+Claim/complete/terminal xóa deadline;
+default 3 attempts chỉ dùng 5/10 giây chờ sau hai lỗi đầu. Maintenance polling
+có thể khiến dispatch muộn hơn deadline (mặc định poll 60 giây), không cam kết
+chạy đúng giây. Retry/restart giữ nguyên run/key/body; client poll run cũ thay
+vì tạo key mới để bỏ qua backoff.
+
+Legacy thiếu model/prompt: worker hợp lệ nhận run sẽ fail permanent trước HTTP;
+run đang giữ lease cần chờ worker/recovery kết thúc. Client không tự sửa run
+hoặc snapshot; chỉ tạo command mới với key mới sau terminal nếu cần.
+
+Bằng chứng bản cuối:
+
+- `python -m pytest -q --disable-warnings --maxfail=1`: **593 passed**, không
+  skipped, với `TEST_MONGODB_URI` của replica set test riêng `phase3test` tại
+  loopback cổng 27131. Fixture tạo/dọn đúng database UUID test; không dùng DB
+  ứng dụng. Chạy ngoài sandbox để thư mục tạm/subprocess Windows hoạt động.
+- **95 unit cases mới** kiểm tra request/response binding, field allowlist,
+  quote/criteria, MIME/compression/body/depth limits, HTTP status/timeout,
+  cancellation/client close, endpoint/token/budget và settings không lộ input.
+- **14 integration cases mới** kiểm tra worker HTTP dùng frozen model/scorecard,
+  identity/evidence sai không ghi result/pointer, lỗi permanent, retry giữ cùng
+  run/key/body, commit rồi ACK thất bại không inference lại, deadline không bị
+  bypass, Redis publish lỗi rồi recovery, attempt budget và lease stale.
+- Lượt riêng **62 integration screening passed** và **472 unit passed** là
+  kiểm tra trung gian, không cộng vào tổng. Lần full suite đầu dừng ở **1 failed,
+  63 passed** do test so sánh datetime naive/aware; đã sửa bằng `ensure_utc` và
+  xác minh API deadline serialize UTC. Kết quả cuối **593 passed** là sau sửa.
+- Compile `app`/`tests`, `git diff --check`, hai JSON Schema khớp model và hai
+  ví dụ synthetic qua echo/source/evidence/scoring đạt. Compose production và
+  dev với `--profile screening config --quiet` đạt; không in resolved secrets.
+- Mongo test đã dừng sau kiểm thử; không xóa volume hoặc thay đổi service/DB
+  ứng dụng. Không build/smoke Docker image mới. Warnings dependency/deprecation
+  còn tồn tại, chưa xử lý trong phạm vi adapter HTTP.
+
+Mongo là DB thật; HTTP AI và Redis/queue trong regression vẫn là test double.
+Endpoint scorer, model/cloud, idempotency server, corpus có nhãn HR và E2E
+Redis/cloud vẫn mở. Không dùng **484 passed** lịch sử hoặc cộng lượt trung gian
+để thay thế nghiệm thu model/CV thật.

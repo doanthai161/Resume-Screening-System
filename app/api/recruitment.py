@@ -28,6 +28,7 @@ from app.services.recruitment_service import (
     ScreeningService,
 )
 from app.services.tenant_access_service import TenantAccessService
+from app.utils.time import ensure_utc
 
 router = APIRouter()
 
@@ -104,6 +105,7 @@ async def _run_response(item) -> ScreeningRunResponse:
         attempt=item.attempt,
         max_attempts=item.max_attempts,
         queued_at=item.queued_at,
+        next_retry_at=ensure_utc(item.next_retry_at) if item.next_retry_at else None,
         started_at=item.started_at,
         finished_at=item.finished_at,
         **await _source_metadata(item),

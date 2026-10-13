@@ -1,0 +1,44 @@
+{
+  "contract_version": "1.0",
+  "run_id": "111111111111111111111111",
+  "input_hash": "776c23105f8c73abf86df3682a9fdcd98a17f53cc4a9c5367fd09dc0bae39ff5",
+  "source_text_sha256": "7d9ba4707f5df02d92d33bd6ea5588b86bffe1ee424615378e45b545acdb9827",
+  "resume_profile_id": "555555555555555555555555",
+  "profile_version": 1,
+  "scorecard_id": "888888888888888888888888",
+  "scorecard_version": 1,
+  "model": {
+    "ai_model_id": "777777777777777777777777",
+    "provider": "custom",
+    "model_id": "synthetic-screening-model",
+    "version": "1.0.0"
+  },
+  "prompt_version": "screening-v1",
+  "output": {
+    "criteria_evaluations": {
+      "python": {
+        "status": "evaluated",
+        "score": 80.0,
+        "reason": "Synthetic fixture: the CV explicitly lists Python; score 80 is illustrative.",
+        "evidence": [
+          {
+            "page": null,
+            "text": "Python",
+            "start": 25,
+            "end": 31
+          }
+        ],
+        "verification_question": null
+      }
+    },
+    "strengths": [
+      "Python is explicitly listed in the synthetic CV."
+    ],
+    "weaknesses": [],
+    "missing_skills": [],
+    "matched_skills": [
+      "Python"
+    ],
+    "ai_confidence": null
+  }
+}

@@ -1,0 +1,1412 @@
+{
+  "$defs": {
+    "Certification": {
+      "additionalProperties": false,
+      "properties": {
+        "expiry_date": {
+          "$ref": "#/$defs/ExtractedValue_ResumeDate_"
+        },
+        "issued_date": {
+          "$ref": "#/$defs/ExtractedValue_ResumeDate_"
+        },
+        "issuer": {
+          "$ref": "#/$defs/app__schemas__resume_extraction__ExtractedValue_Annotated_str__StringConstraints____1"
+        },
+        "name": {
+          "$ref": "#/$defs/app__schemas__resume_extraction__ExtractedValue_Annotated_str__StringConstraints____1"
+        },
+        "review_issues": {
+          "items": {
+            "enum": [
+              "missing_identity",
+              "conflicting_dates",
+              "conflicting_current_role"
+            ],
+            "type": "string"
+          },
+          "maxItems": 3,
+          "title": "Review Issues",
+          "type": "array"
+        }
+      },
+      "required": [
+        "name",
+        "issuer",
+        "issued_date",
+        "expiry_date"
+      ],
+      "title": "Certification",
+      "type": "object"
+    },
+    "Education": {
+      "additionalProperties": false,
+      "properties": {
+        "degree": {
+          "$ref": "#/$defs/app__schemas__resume_extraction__ExtractedValue_Annotated_str__StringConstraints____1"
+        },
+        "end_date": {
+          "$ref": "#/$defs/ExtractedValue_ResumeDate_"
+        },
+        "field_of_study": {
+          "$ref": "#/$defs/app__schemas__resume_extraction__ExtractedValue_Annotated_str__StringConstraints____1"
+        },
+        "institution": {
+          "$ref": "#/$defs/app__schemas__resume_extraction__ExtractedValue_Annotated_str__StringConstraints____1"
+        },
+        "review_issues": {
+          "items": {
+            "enum": [
+              "missing_identity",
+              "conflicting_dates",
+              "conflicting_current_role"
+            ],
+            "type": "string"
+          },
+          "maxItems": 3,
+          "title": "Review Issues",
+          "type": "array"
+        },
+        "start_date": {
+          "$ref": "#/$defs/ExtractedValue_ResumeDate_"
+        }
+      },
+      "required": [
+        "start_date",
+        "end_date",
+        "institution",
+        "degree",
+        "field_of_study"
+      ],
+      "title": "Education",
+      "type": "object"
+    },
+    "EvidenceAlternative_Annotated_bool__Strict_strict_True___": {
+      "additionalProperties": false,
+      "properties": {
+        "evidence": {
+          "items": {
+            "$ref": "#/$defs/SourceEvidence"
+          },
+          "maxItems": 10,
+          "minItems": 1,
+          "title": "Evidence",
+          "type": "array"
+        },
+        "value": {
+          "title": "Value",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "value",
+        "evidence"
+      ],
+      "title": "EvidenceAlternative[Annotated[bool, Strict(strict=True)]]",
+      "type": "object"
+    },
+    "EvidenceAlternative_EmailStr_": {
+      "additionalProperties": false,
+      "properties": {
+        "evidence": {
+          "items": {
+            "$ref": "#/$defs/SourceEvidence"
+          },
+          "maxItems": 10,
+          "minItems": 1,
+          "title": "Evidence",
+          "type": "array"
+        },
+        "value": {
+          "format": "email",
+          "title": "Value",
+          "type": "string"
+        }
+      },
+      "required": [
+        "value",
+        "evidence"
+      ],
+      "title": "EvidenceAlternative[EmailStr]",
+      "type": "object"
+    },
+    "EvidenceAlternative_HttpUrl_": {
+      "additionalProperties": false,
+      "properties": {
+        "evidence": {
+          "items": {
+            "$ref": "#/$defs/SourceEvidence"
+          },
+          "maxItems": 10,
+          "minItems": 1,
+          "title": "Evidence",
+          "type": "array"
+        },
+        "value": {
+          "format": "uri",
+          "maxLength": 2083,
+          "minLength": 1,
+          "title": "Value",
+          "type": "string"
+        }
+      },
+      "required": [
+        "value",
+        "evidence"
+      ],
+      "title": "EvidenceAlternative[HttpUrl]",
+      "type": "object"
+    },
+    "EvidenceAlternative_ResumeDate_": {
+      "additionalProperties": false,
+      "properties": {
+        "evidence": {
+          "items": {
+            "$ref": "#/$defs/SourceEvidence"
+          },
+          "maxItems": 10,
+          "minItems": 1,
+          "title": "Evidence",
+          "type": "array"
+        },
+        "value": {
+          "$ref": "#/$defs/ResumeDate"
+        }
+      },
+      "required": [
+        "value",
+        "evidence"
+      ],
+      "title": "EvidenceAlternative[ResumeDate]",
+      "type": "object"
+    },
+    "Experience": {
+      "additionalProperties": false,
+      "properties": {
+        "description": {
+          "$ref": "#/$defs/app__schemas__resume_extraction__ExtractedValue_Annotated_str__StringConstraints____2"
+        },
+        "end_date": {
+          "$ref": "#/$defs/ExtractedValue_ResumeDate_"
+        },
+        "is_current": {
+          "$ref": "#/$defs/ExtractedValue_Annotated_bool__Strict_strict_True___"
+        },
+        "location": {
+          "$ref": "#/$defs/app__schemas__resume_extraction__ExtractedValue_Annotated_str__StringConstraints____1"
+        },
+        "organization": {
+          "$ref": "#/$defs/app__schemas__resume_extraction__ExtractedValue_Annotated_str__StringConstraints____1"
+        },
+        "review_issues": {
+          "items": {
+            "enum": [
+              "missing_identity",
+              "conflicting_dates",
+              "conflicting_current_role"
+            ],
+            "type": "string"
+          },
+          "maxItems": 3,
+          "title": "Review Issues",
+          "type": "array"
+        },
+        "role": {
+          "$ref": "#/$defs/app__schemas__resume_extraction__ExtractedValue_Annotated_str__StringConstraints____1"
+        },
+        "start_date": {
+          "$ref": "#/$defs/ExtractedValue_ResumeDate_"
+        }
+      },
+      "required": [
+        "start_date",
+        "end_date",
+        "organization",
+        "role",
+        "location",
+        "is_current",
+        "description"
+      ],
+      "title": "Experience",
+      "type": "object"
+    },
+    "ExtractedSection_Certification_": {
+      "additionalProperties": false,
+      "properties": {
+        "items": {
+          "items": {
+            "$ref": "#/$defs/Certification"
+          },
+          "maxItems": 200,
+          "title": "Items",
+          "type": "array"
+        },
+        "reason": {
+          "anyOf": [
+            {
+              "maxLength": 1000,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Reason"
+        },
+        "status": {
+          "enum": [
+            "extracted",
+            "insufficient_evidence"
+          ],
+          "title": "Status",
+          "type": "string"
+        }
+      },
+      "required": [
+        "status",
+        "items"
+      ],
+      "title": "ExtractedSection[Certification]",
+      "type": "object"
+    },
+    "ExtractedSection_Education_": {
+      "additionalProperties": false,
+      "properties": {
+        "items": {
+          "items": {
+            "$ref": "#/$defs/Education"
+          },
+          "maxItems": 200,
+          "title": "Items",
+          "type": "array"
+        },
+        "reason": {
+          "anyOf": [
+            {
+              "maxLength": 1000,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Reason"
+        },
+        "status": {
+          "enum": [
+            "extracted",
+            "insufficient_evidence"
+          ],
+          "title": "Status",
+          "type": "string"
+        }
+      },
+      "required": [
+        "status",
+        "items"
+      ],
+      "title": "ExtractedSection[Education]",
+      "type": "object"
+    },
+    "ExtractedSection_Experience_": {
+      "additionalProperties": false,
+      "properties": {
+        "items": {
+          "items": {
+            "$ref": "#/$defs/Experience"
+          },
+          "maxItems": 200,
+          "title": "Items",
+          "type": "array"
+        },
+        "reason": {
+          "anyOf": [
+            {
+              "maxLength": 1000,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Reason"
+        },
+        "status": {
+          "enum": [
+            "extracted",
+            "insufficient_evidence"
+          ],
+          "title": "Status",
+          "type": "string"
+        }
+      },
+      "required": [
+        "status",
+        "items"
+      ],
+      "title": "ExtractedSection[Experience]",
+      "type": "object"
+    },
+    "ExtractedSection_ProfileLink_": {
+      "additionalProperties": false,
+      "properties": {
+        "items": {
+          "items": {
+            "$ref": "#/$defs/ProfileLink"
+          },
+          "maxItems": 200,
+          "title": "Items",
+          "type": "array"
+        },
+        "reason": {
+          "anyOf": [
+            {
+              "maxLength": 1000,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Reason"
+        },
+        "status": {
+          "enum": [
+            "extracted",
+            "insufficient_evidence"
+          ],
+          "title": "Status",
+          "type": "string"
+        }
+      },
+      "required": [
+        "status",
+        "items"
+      ],
+      "title": "ExtractedSection[ProfileLink]",
+      "type": "object"
+    },
+    "ExtractedSection_ResumeLanguage_": {
+      "additionalProperties": false,
+      "properties": {
+        "items": {
+          "items": {
+            "$ref": "#/$defs/ResumeLanguage"
+          },
+          "maxItems": 200,
+          "title": "Items",
+          "type": "array"
+        },
+        "reason": {
+          "anyOf": [
+            {
+              "maxLength": 1000,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Reason"
+        },
+        "status": {
+          "enum": [
+            "extracted",
+            "insufficient_evidence"
+          ],
+          "title": "Status",
+          "type": "string"
+        }
+      },
+      "required": [
+        "status",
+        "items"
+      ],
+      "title": "ExtractedSection[ResumeLanguage]",
+      "type": "object"
+    },
+    "ExtractedSection_Skill_": {
+      "additionalProperties": false,
+      "properties": {
+        "items": {
+          "items": {
+            "$ref": "#/$defs/Skill"
+          },
+          "maxItems": 200,
+          "title": "Items",
+          "type": "array"
+        },
+        "reason": {
+          "anyOf": [
+            {
+              "maxLength": 1000,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Reason"
+        },
+        "status": {
+          "enum": [
+            "extracted",
+            "insufficient_evidence"
+          ],
+          "title": "Status",
+          "type": "string"
+        }
+      },
+      "required": [
+        "status",
+        "items"
+      ],
+      "title": "ExtractedSection[Skill]",
+      "type": "object"
+    },
+    "ExtractedValue_Annotated_bool__Strict_strict_True___": {
+      "additionalProperties": false,
+      "properties": {
+        "alternatives": {
+          "items": {
+            "$ref": "#/$defs/EvidenceAlternative_Annotated_bool__Strict_strict_True___"
+          },
+          "maxItems": 5,
+          "title": "Alternatives",
+          "type": "array"
+        },
+        "evidence": {
+          "items": {
+            "$ref": "#/$defs/SourceEvidence"
+          },
+          "maxItems": 10,
+          "title": "Evidence",
+          "type": "array"
+        },
+        "reason": {
+          "anyOf": [
+            {
+              "maxLength": 1000,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Reason"
+        },
+        "status": {
+          "$ref": "#/$defs/ExtractionStatus"
+        },
+        "value": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Value"
+        }
+      },
+      "required": [
+        "status"
+      ],
+      "title": "ExtractedValue[Annotated[bool, Strict(strict=True)]]",
+      "type": "object"
+    },
+    "ExtractedValue_EmailStr_": {
+      "additionalProperties": false,
+      "properties": {
+        "alternatives": {
+          "items": {
+            "$ref": "#/$defs/EvidenceAlternative_EmailStr_"
+          },
+          "maxItems": 5,
+          "title": "Alternatives",
+          "type": "array"
+        },
+        "evidence": {
+          "items": {
+            "$ref": "#/$defs/SourceEvidence"
+          },
+          "maxItems": 10,
+          "title": "Evidence",
+          "type": "array"
+        },
+        "reason": {
+          "anyOf": [
+            {
+              "maxLength": 1000,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Reason"
+        },
+        "status": {
+          "$ref": "#/$defs/ExtractionStatus"
+        },
+        "value": {
+          "anyOf": [
+            {
+              "format": "email",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Value"
+        }
+      },
+      "required": [
+        "status"
+      ],
+      "title": "ExtractedValue[EmailStr]",
+      "type": "object"
+    },
+    "ExtractedValue_HttpUrl_": {
+      "additionalProperties": false,
+      "properties": {
+        "alternatives": {
+          "items": {
+            "$ref": "#/$defs/EvidenceAlternative_HttpUrl_"
+          },
+          "maxItems": 5,
+          "title": "Alternatives",
+          "type": "array"
+        },
+        "evidence": {
+          "items": {
+            "$ref": "#/$defs/SourceEvidence"
+          },
+          "maxItems": 10,
+          "title": "Evidence",
+          "type": "array"
+        },
+        "reason": {
+          "anyOf": [
+            {
+              "maxLength": 1000,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Reason"
+        },
+        "status": {
+          "$ref": "#/$defs/ExtractionStatus"
+        },
+        "value": {
+          "anyOf": [
+            {
+              "format": "uri",
+              "maxLength": 2083,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Value"
+        }
+      },
+      "required": [
+        "status"
+      ],
+      "title": "ExtractedValue[HttpUrl]",
+      "type": "object"
+    },
+    "ExtractedValue_ResumeDate_": {
+      "additionalProperties": false,
+      "properties": {
+        "alternatives": {
+          "items": {
+            "$ref": "#/$defs/EvidenceAlternative_ResumeDate_"
+          },
+          "maxItems": 5,
+          "title": "Alternatives",
+          "type": "array"
+        },
+        "evidence": {
+          "items": {
+            "$ref": "#/$defs/SourceEvidence"
+          },
+          "maxItems": 10,
+          "title": "Evidence",
+          "type": "array"
+        },
+        "reason": {
+          "anyOf": [
+            {
+              "maxLength": 1000,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Reason"
+        },
+        "status": {
+          "$ref": "#/$defs/ExtractionStatus"
+        },
+        "value": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ResumeDate"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "status"
+      ],
+      "title": "ExtractedValue[ResumeDate]",
+      "type": "object"
+    },
+    "ExtractionStatus": {
+      "enum": [
+        "extracted",
+        "insufficient_evidence",
+        "conflicting_evidence"
+      ],
+      "title": "ExtractionStatus",
+      "type": "string"
+    },
+    "PersonalInfo": {
+      "additionalProperties": false,
+      "properties": {
+        "email": {
+          "$ref": "#/$defs/ExtractedValue_EmailStr_"
+        },
+        "full_name": {
+          "$ref": "#/$defs/app__schemas__resume_extraction__ExtractedValue_Annotated_str__StringConstraints____1"
+        },
+        "links": {
+          "$ref": "#/$defs/ExtractedSection_ProfileLink_"
+        },
+        "location": {
+          "$ref": "#/$defs/app__schemas__resume_extraction__ExtractedValue_Annotated_str__StringConstraints____1"
+        },
+        "phone": {
+          "$ref": "#/$defs/app__schemas__resume_extraction__ExtractedValue_Annotated_str__StringConstraints____1"
+        }
+      },
+      "required": [
+        "full_name",
+        "email",
+        "phone",
+        "location",
+        "links"
+      ],
+      "title": "PersonalInfo",
+      "type": "object"
+    },
+    "ProfileLink": {
+      "additionalProperties": false,
+      "properties": {
+        "label": {
+          "$ref": "#/$defs/app__schemas__resume_extraction__ExtractedValue_Annotated_str__StringConstraints____1"
+        },
+        "review_issues": {
+          "items": {
+            "enum": [
+              "missing_identity",
+              "conflicting_dates",
+              "conflicting_current_role"
+            ],
+            "type": "string"
+          },
+          "maxItems": 3,
+          "title": "Review Issues",
+          "type": "array"
+        },
+        "url": {
+          "$ref": "#/$defs/ExtractedValue_HttpUrl_"
+        }
+      },
+      "required": [
+        "label",
+        "url"
+      ],
+      "title": "ProfileLink",
+      "type": "object"
+    },
+    "ResumeDate": {
+      "additionalProperties": false,
+      "description": "Preserve date precision: a year is not silently converted to January 1.",
+      "properties": {
+        "day": {
+          "anyOf": [
+            {
+              "maximum": 31,
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Day"
+        },
+        "month": {
+          "anyOf": [
+            {
+              "maximum": 12,
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Month"
+        },
+        "year": {
+          "maximum": 9999,
+          "minimum": 1,
+          "title": "Year",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "year"
+      ],
+      "title": "ResumeDate",
+      "type": "object"
+    },
+    "ResumeExtractionOutput": {
+      "additionalProperties": false,
+      "properties": {
+        "certifications": {
+          "$ref": "#/$defs/ExtractedSection_Certification_"
+        },
+        "education": {
+          "$ref": "#/$defs/ExtractedSection_Education_"
+        },
+        "experiences": {
+          "$ref": "#/$defs/ExtractedSection_Experience_"
+        },
+        "languages": {
+          "$ref": "#/$defs/ExtractedSection_ResumeLanguage_"
+        },
+        "personal_info": {
+          "$ref": "#/$defs/PersonalInfo"
+        },
+        "schema_version": {
+          "const": "1.0",
+          "title": "Schema Version",
+          "type": "string"
+        },
+        "skills": {
+          "$ref": "#/$defs/ExtractedSection_Skill_"
+        },
+        "source_text_sha256": {
+          "maxLength": 64,
+          "minLength": 64,
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Source Text Sha256",
+          "type": "string"
+        },
+        "summary": {
+          "$ref": "#/$defs/app__schemas__resume_extraction__ExtractedValue_Annotated_str__StringConstraints____2"
+        }
+      },
+      "required": [
+        "schema_version",
+        "source_text_sha256",
+        "personal_info",
+        "summary",
+        "skills",
+        "experiences",
+        "education",
+        "certifications",
+        "languages"
+      ],
+      "title": "ResumeExtractionOutput",
+      "type": "object"
+    },
+    "ResumeLanguage": {
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "$ref": "#/$defs/app__schemas__resume_extraction__ExtractedValue_Annotated_str__StringConstraints____1"
+        },
+        "proficiency": {
+          "$ref": "#/$defs/app__schemas__resume_extraction__ExtractedValue_Annotated_str__StringConstraints____1"
+        },
+        "review_issues": {
+          "items": {
+            "enum": [
+              "missing_identity",
+              "conflicting_dates",
+              "conflicting_current_role"
+            ],
+            "type": "string"
+          },
+          "maxItems": 3,
+          "title": "Review Issues",
+          "type": "array"
+        }
+      },
+      "required": [
+        "name",
+        "proficiency"
+      ],
+      "title": "ResumeLanguage",
+      "type": "object"
+    },
+    "ScorecardCriterion": {
+      "properties": {
+        "code": {
+          "maxLength": 80,
+          "minLength": 1,
+          "pattern": "^[a-z0-9_\\-]+$",
+          "title": "Code",
+          "type": "string"
+        },
+        "description": {
+          "anyOf": [
+            {
+              "maxLength": 1000,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Description"
+        },
+        "minimum_score": {
+          "default": 0,
+          "maximum": 100,
+          "minimum": 0,
+          "title": "Minimum Score",
+          "type": "number"
+        },
+        "name": {
+          "maxLength": 150,
+          "minLength": 1,
+          "title": "Name",
+          "type": "string"
+        },
+        "required": {
+          "default": false,
+          "title": "Required",
+          "type": "boolean"
+        },
+        "weight": {
+          "exclusiveMinimum": 0,
+          "maximum": 1,
+          "title": "Weight",
+          "type": "number"
+        }
+      },
+      "required": [
+        "code",
+        "name",
+        "weight"
+      ],
+      "title": "ScorecardCriterion",
+      "type": "object"
+    },
+    "ScreeningHTTPScorecard": {
+      "additionalProperties": false,
+      "properties": {
+        "criteria": {
+          "items": {
+            "$ref": "#/$defs/ScorecardCriterion"
+          },
+          "maxItems": 50,
+          "minItems": 1,
+          "title": "Criteria",
+          "type": "array"
+        },
+        "pass_threshold": {
+          "maximum": 100,
+          "minimum": 0,
+          "title": "Pass Threshold",
+          "type": "number"
+        },
+        "scorecard_id": {
+          "example": "5eb7cf5a86d9755df3a6c593",
+          "title": "Scorecard Id",
+          "type": "string"
+        },
+        "version": {
+          "minimum": 1,
+          "title": "Version",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "criteria",
+        "pass_threshold",
+        "scorecard_id",
+        "version"
+      ],
+      "title": "ScreeningHTTPScorecard",
+      "type": "object"
+    },
+    "ScreeningModelSpec": {
+      "additionalProperties": false,
+      "properties": {
+        "ai_model_id": {
+          "example": "5eb7cf5a86d9755df3a6c593",
+          "title": "Ai Model Id",
+          "type": "string"
+        },
+        "model_id": {
+          "maxLength": 150,
+          "minLength": 1,
+          "title": "Model Id",
+          "type": "string"
+        },
+        "provider": {
+          "maxLength": 50,
+          "minLength": 1,
+          "title": "Provider",
+          "type": "string"
+        },
+        "version": {
+          "maxLength": 150,
+          "minLength": 1,
+          "title": "Version",
+          "type": "string"
+        }
+      },
+      "required": [
+        "ai_model_id",
+        "provider",
+        "model_id",
+        "version"
+      ],
+      "title": "ScreeningModelSpec",
+      "type": "object"
+    },
+    "ScreeningSourceSnapshot": {
+      "additionalProperties": false,
+      "properties": {
+        "extraction_model_name": {
+          "maxLength": 150,
+          "minLength": 1,
+          "title": "Extraction Model Name",
+          "type": "string"
+        },
+        "extraction_prompt_version": {
+          "maxLength": 150,
+          "minLength": 1,
+          "title": "Extraction Prompt Version",
+          "type": "string"
+        },
+        "extraction_run_id": {
+          "example": "5eb7cf5a86d9755df3a6c593",
+          "title": "Extraction Run Id",
+          "type": "string"
+        },
+        "extractor_version": {
+          "maxLength": 150,
+          "minLength": 1,
+          "title": "Extractor Version",
+          "type": "string"
+        },
+        "profile": {
+          "$ref": "#/$defs/ResumeExtractionOutput"
+        },
+        "profile_version": {
+          "minimum": 1,
+          "title": "Profile Version",
+          "type": "integer"
+        },
+        "resume_checksum": {
+          "maxLength": 128,
+          "minLength": 32,
+          "title": "Resume Checksum",
+          "type": "string"
+        },
+        "resume_profile_id": {
+          "example": "5eb7cf5a86d9755df3a6c593",
+          "title": "Resume Profile Id",
+          "type": "string"
+        },
+        "snapshot_version": {
+          "const": "1.0",
+          "default": "1.0",
+          "title": "Snapshot Version",
+          "type": "string"
+        },
+        "source_parse_revision": {
+          "minimum": 0,
+          "title": "Source Parse Revision",
+          "type": "integer"
+        },
+        "source_parse_run_id": {
+          "anyOf": [
+            {
+              "example": "5eb7cf5a86d9755df3a6c593",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Source Parse Run Id"
+        },
+        "source_text": {
+          "maxLength": 1000000,
+          "minLength": 1,
+          "title": "Source Text",
+          "type": "string"
+        },
+        "source_text_sha256": {
+          "maxLength": 64,
+          "minLength": 64,
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Source Text Sha256",
+          "type": "string"
+        }
+      },
+      "required": [
+        "resume_profile_id",
+        "profile_version",
+        "extraction_run_id",
+        "source_parse_revision",
+        "resume_checksum",
+        "source_text",
+        "source_text_sha256",
+        "profile",
+        "extraction_model_name",
+        "extraction_prompt_version",
+        "extractor_version"
+      ],
+      "title": "ScreeningSourceSnapshot",
+      "type": "object"
+    },
+    "Skill": {
+      "additionalProperties": false,
+      "properties": {
+        "level": {
+          "$ref": "#/$defs/app__schemas__resume_extraction__ExtractedValue_Annotated_str__StringConstraints____1"
+        },
+        "name": {
+          "$ref": "#/$defs/app__schemas__resume_extraction__ExtractedValue_Annotated_str__StringConstraints____1"
+        },
+        "review_issues": {
+          "items": {
+            "enum": [
+              "missing_identity",
+              "conflicting_dates",
+              "conflicting_current_role"
+            ],
+            "type": "string"
+          },
+          "maxItems": 3,
+          "title": "Review Issues",
+          "type": "array"
+        }
+      },
+      "required": [
+        "name",
+        "level"
+      ],
+      "title": "Skill",
+      "type": "object"
+    },
+    "SourceEvidence": {
+      "additionalProperties": false,
+      "description": "Exact raw_text slice, with zero-based Unicode character offsets [start, end).",
+      "properties": {
+        "end": {
+          "exclusiveMinimum": 0,
+          "maximum": 1000000,
+          "title": "End",
+          "type": "integer"
+        },
+        "quote": {
+          "maxLength": 2000,
+          "minLength": 1,
+          "title": "Quote",
+          "type": "string"
+        },
+        "start": {
+          "exclusiveMaximum": 1000000,
+          "minimum": 0,
+          "title": "Start",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "quote",
+        "start",
+        "end"
+      ],
+      "title": "SourceEvidence",
+      "type": "object"
+    },
+    "app__schemas__resume_extraction__EvidenceAlternative_Annotated_str__StringConstraints____1": {
+      "additionalProperties": false,
+      "properties": {
+        "evidence": {
+          "items": {
+            "$ref": "#/$defs/SourceEvidence"
+          },
+          "maxItems": 10,
+          "minItems": 1,
+          "title": "Evidence",
+          "type": "array"
+        },
+        "value": {
+          "maxLength": 300,
+          "minLength": 1,
+          "title": "Value",
+          "type": "string"
+        }
+      },
+      "required": [
+        "value",
+        "evidence"
+      ],
+      "title": "EvidenceAlternative[Annotated[str, StringConstraints]]",
+      "type": "object"
+    },
+    "app__schemas__resume_extraction__EvidenceAlternative_Annotated_str__StringConstraints____2": {
+      "additionalProperties": false,
+      "properties": {
+        "evidence": {
+          "items": {
+            "$ref": "#/$defs/SourceEvidence"
+          },
+          "maxItems": 10,
+          "minItems": 1,
+          "title": "Evidence",
+          "type": "array"
+        },
+        "value": {
+          "maxLength": 5000,
+          "minLength": 1,
+          "title": "Value",
+          "type": "string"
+        }
+      },
+      "required": [
+        "value",
+        "evidence"
+      ],
+      "title": "EvidenceAlternative[Annotated[str, StringConstraints]]",
+      "type": "object"
+    },
+    "app__schemas__resume_extraction__ExtractedValue_Annotated_str__StringConstraints____1": {
+      "additionalProperties": false,
+      "properties": {
+        "alternatives": {
+          "items": {
+            "$ref": "#/$defs/app__schemas__resume_extraction__EvidenceAlternative_Annotated_str__StringConstraints____1"
+          },
+          "maxItems": 5,
+          "title": "Alternatives",
+          "type": "array"
+        },
+        "evidence": {
+          "items": {
+            "$ref": "#/$defs/SourceEvidence"
+          },
+          "maxItems": 10,
+          "title": "Evidence",
+          "type": "array"
+        },
+        "reason": {
+          "anyOf": [
+            {
+              "maxLength": 1000,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Reason"
+        },
+        "status": {
+          "$ref": "#/$defs/ExtractionStatus"
+        },
+        "value": {
+          "anyOf": [
+            {
+              "maxLength": 300,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Value"
+        }
+      },
+      "required": [
+        "status"
+      ],
+      "title": "ExtractedValue[Annotated[str, StringConstraints]]",
+      "type": "object"
+    },
+    "app__schemas__resume_extraction__ExtractedValue_Annotated_str__StringConstraints____2": {
+      "additionalProperties": false,
+      "properties": {
+        "alternatives": {
+          "items": {
+            "$ref": "#/$defs/app__schemas__resume_extraction__EvidenceAlternative_Annotated_str__StringConstraints____2"
+          },
+          "maxItems": 5,
+          "title": "Alternatives",
+          "type": "array"
+        },
+        "evidence": {
+          "items": {
+            "$ref": "#/$defs/SourceEvidence"
+          },
+          "maxItems": 10,
+          "title": "Evidence",
+          "type": "array"
+        },
+        "reason": {
+          "anyOf": [
+            {
+              "maxLength": 1000,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Reason"
+        },
+        "status": {
+          "$ref": "#/$defs/ExtractionStatus"
+        },
+        "value": {
+          "anyOf": [
+            {
+              "maxLength": 5000,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Value"
+        }
+      },
+      "required": [
+        "status"
+      ],
+      "title": "ExtractedValue[Annotated[str, StringConstraints]]",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "application_id": {
+      "example": "5eb7cf5a86d9755df3a6c593",
+      "title": "Application Id",
+      "type": "string"
+    },
+    "company_id": {
+      "example": "5eb7cf5a86d9755df3a6c593",
+      "title": "Company Id",
+      "type": "string"
+    },
+    "contract_version": {
+      "const": "1.0",
+      "default": "1.0",
+      "title": "Contract Version",
+      "type": "string"
+    },
+    "input_hash": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Input Hash",
+      "type": "string"
+    },
+    "model": {
+      "$ref": "#/$defs/ScreeningModelSpec"
+    },
+    "prompt_version": {
+      "const": "screening-v1",
+      "title": "Prompt Version",
+      "type": "string"
+    },
+    "resume_file_id": {
+      "example": "5eb7cf5a86d9755df3a6c593",
+      "title": "Resume File Id",
+      "type": "string"
+    },
+    "run_id": {
+      "example": "5eb7cf5a86d9755df3a6c593",
+      "title": "Run Id",
+      "type": "string"
+    },
+    "scorecard": {
+      "$ref": "#/$defs/ScreeningHTTPScorecard"
+    },
+    "source": {
+      "$ref": "#/$defs/ScreeningSourceSnapshot"
+    }
+  },
+  "required": [
+    "run_id",
+    "company_id",
+    "application_id",
+    "resume_file_id",
+    "input_hash",
+    "source",
+    "scorecard",
+    "model",
+    "prompt_version"
+  ],
+  "title": "ScreeningServiceRequest",
+  "type": "object"
+}
