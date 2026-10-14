@@ -14,7 +14,7 @@ import asyncio
 from app.models.audit_log import AuditLog
 from app.models.user import User
 from app.utils.time import now_utc
-from app.core.security import get_current_user
+from app.core.security import CurrentUser, get_current_user
 from app.core.config import settings
 
 logger = logging.getLogger(__name__)
@@ -210,13 +210,13 @@ def audit_log_action(
                 current_user = None
                 try:
                     for arg in args:
-                        if isinstance(arg, User):
+                        if isinstance(arg, (User, CurrentUser)):
                             current_user = arg
                             break
                     
                     if current_user is None:
                         for key, value in kwargs.items():
-                            if isinstance(value, User):
+                            if isinstance(value, (User, CurrentUser)):
                                 current_user = value
                                 break
                     
@@ -351,10 +351,10 @@ async def _log_audit_entry(audit_data: Dict[str, Any], async_mode: bool = True):
             resource_id=ObjectId(entry.resource_id) if entry.resource_id else None,
             user_id=ObjectId(entry.user_id) if entry.user_id else None,
             user_email=entry.user_email,
-            ip_address=entry.ip_address,
+            user_ip=entry.ip_address,
             user_agent=entry.user_agent,
-            request_method=entry.request_method,
-            request_path=entry.request_path,
+            method=entry.request_method,
+            endpoint=entry.request_path,
             request_params=entry.request_params,
             request_body=entry.request_body,
             response_status=entry.response_status,

@@ -38,6 +38,12 @@ class AuditEventType(str, Enum):
     COMPANY_BRANCH_CREATED = "company_branch.created"
     COMPANY_BRANCH_UPDATED = "company_branch.updated"
     COMPANY_BRANCH_DELETED = "company_branch.deleted"
+
+    # Membership API actions use their existing public event names.
+    USER_COMPANY_ASSIGNED = "user_company.assigned"
+    USER_COMPANY_UNASSIGNED = "user_company.unassigned"
+    USER_COMPANY_DELETED = "user_company.deleted"
+    USER_COMPANY_ROLE_UPDATED = "user_company.role_updated"
     
     # Job events
     JOB_REQUIREMENT_CREATED = "job_requirement.created"

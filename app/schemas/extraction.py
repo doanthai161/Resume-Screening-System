@@ -6,7 +6,9 @@ from pydantic import BaseModel, ConfigDict, Field
 from app.models.screening_run import ProcessingStatus
 from app.schemas.resume import _object_id
 from app.schemas.resume_extraction import ResumeExtractionOutput
+from app.schemas.resume_profile_review import HRConfirmedFact
 from pydantic import field_validator
+from app.utils.time import ensure_utc
 
 
 class StartExtractionRequest(BaseModel):
@@ -59,3 +61,9 @@ class ProfileResponse(BaseModel):
     is_current: bool
     created_at: datetime
     profile: ResumeExtractionOutput
+    origin: Literal["ai", "hr"] = "ai"
+    parent_profile_id: Optional[str] = None
+    edited_by: Optional[str] = None
+    edit_reason: Optional[str] = None
+    hr_annotations: list[HRConfirmedFact] = Field(default_factory=list)
+    _created_utc = field_validator("created_at")(ensure_utc)

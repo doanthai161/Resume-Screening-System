@@ -283,3 +283,83 @@ Mongo là DB thật; HTTP AI và Redis/queue trong regression vẫn là test dou
 Endpoint scorer, model/cloud, idempotency server, corpus có nhãn HR và E2E
 Redis/cloud vẫn mở. Không dùng **484 passed** lịch sử hoặc cộng lượt trung gian
 để thay thế nghiệm thu model/CV thật.
+
+## Năm ưu tiên BE MVP — 2026-10-14
+
+Phạm vi: hoàn thiện API BE, phân quyền và nghiệp vụ HR trước; AI service
+screening inference được để lại theo yêu cầu. Hướng dẫn tích hợp và chín API
+mới: [BE_MVP.md](../BE_MVP.md). Inventory hiện có **103 endpoint explicit**,
+gồm 93 business, 7 root vận hành và 3 extractor; không tính docs tự sinh.
+
+| Finding / khoảng trống | Bản sửa |
+| --- | --- |
+| Company response thiếu ID/state; update buộc gửi lại toàn bộ hoặc nhận field nội bộ | Thêm ID/state/time; optional allowlist, field nghiệp vụ bắt buộc không nhận null, field nội bộ nhận 422 |
+| Company/branch reads có thể dùng quyền global hoặc membership hết hạn; warm cache trả dữ liệu sai kiểu/scope | Recheck DB user/company/branch/membership, không bypass bằng Administrator; deserialize cache về đúng model, cache hỏng refetch |
+| Assignment trùng trả lỗi DB; reassign dùng thời hạn cũ; actor mapping khó unassign | Duplicate 409, inactive role update 400, reset lịch mặc định khi reassign; response có mapping IDs |
+| Audit membership không lưu vì event enum không khớp; caller/method/endpoint/IP bị bỏ | Bổ sung bốn user_company events, nhận CurrentUser, map field đúng model; regression bốn thao tác JWT kiểm AuditLog Mongo thật |
+| Thiếu API tra cứu/tải CV và chọn model screening | Thêm CV list/detail/download có scope/pagination; model active allowlist, không config/credentials |
+| CV không gắn branch hoặc CV khác branch được mở qua application/screening | Chỉ actual owner/superuser dùng CV branchless trong HR workflow; Candidate giữ ngoại lệ đọc CV của mình; kiểm cả job và CV ở application, result/history/assessment |
+| Application list/count dùng scope snapshot/cache đã lỗi thời | Join job và CV trong Mongo trước count/pagination, kiểm branch nhất quán; HR list không sử dụng cache làm nguồn quyền |
+| Review duplicate và list không giới hạn; stage replay bỏ qua quyền đã mất | Duplicate review 409, list có page/size, quyền application/CV; stage kiểm quyền trước replay |
+| Download có thể lộ đường dẫn/tải file thay đổi hoặc rò handle khi disconnect | Attachment private/no-store, không public static; xác minh root/company/path/reparse/regular file/identity/size/SHA-256, đóng handle theo lifecycle; open/hash pool riêng tối đa 4, cancellation giữ quota đến native completion, busy 429 |
+| Parse key alias theo checksum của CV khác; key khác nhận active run ngoài command | Hash mới gồm resume ID; legacy replay đối chiếu CV/parser/options trước live model lookup nên parser đã inactive vẫn đọc được command gốc; khác key khi active trả 409 |
+| HR chưa sửa profile có phiên bản; thông tin ngoài CV có thể thành quote giả | Append-only profile revision, reason/reviewer/version/key; CV correction vẫn exact evidence, HR facts riêng có server ID/time |
+| HR source/evidence chưa có provenance hoặc xác minh fact | Snapshot lưu origin/reviewer/reason/time/facts; HR evidence cần đúng ID/value và không page/offsets; CV evidence vẫn exact quote |
+| HR revision chạy đồng thời parse/extraction/screening; stale pointer/partial insert | Shared ResumeFile fence + CAS + transaction, active parse/extract chặn edit; stale screening fail; rollback cả revision/pointer |
+| Unique index extraction run cũ không cho HR revision cùng nguồn | Backfill origin ai, thay duy nhất index cũ đã biết bằng unique partial AI; unique version/key giữ nguyên, không xóa hồ sơ |
+| Legacy CV thiếu parse_revision không khớp fence mới | Revision 0 nhận missing/null theo policy nguồn; test start/complete trên raw legacy document |
+| HR override có thể ghi đè AI hoặc mất lịch sử; concurrent/stale base được chấp nhận | Collection append-only riêng, reason/reviewer/version/idempotency; CAS result/application + CV fence, source/latest-result checks, original AI bất biến |
+| Đánh giá AI và HR không tách rõ trên API | Giữ `/result` là AI; `/assessment` trả ai/effective/history và current/latest/review flags; không tự chuyển stage hoặc carry override sang result mới |
+| Timestamp HR khác giữa response đầu và Mongo replay | Chuẩn hóa BSON milliseconds trước ghi và UTC khi serialize profile/facts/snapshot/override |
+| Run status có thể trả nguyên thông điệp lỗi provider | Chỉ error_code và thông báo chung; không raw lỗi/CV/secret |
+
+Tương thích: thêm permissions `resume_profiles:edit`, `screening_results:override`;
+role custom phải được cấp đúng quyền. Scope HR hiện chặt hơn theo branch của cả
+job và CV, CV branchless không mở cho member thường. Reviews GET giữ list
+envelope nhưng mặc định phân trang 20, tối đa 100. Source/evidence thêm field
+optional/default, contract screening giữ `1.0`; caller AI strict allowlist cũ
+cần cập nhật schema. API/worker cần restart cùng contract, chưa tự triển khai.
+
+Bằng chứng bản cuối của đợt này:
+
+- `python -m pytest -q --disable-warnings --maxfail=5`: **808 passed**, không
+  skipped, trong 550 giây. `TEST_MONGODB_URI` trỏ replica set test `phase3test`
+  tại loopback 27131; `TEST_REDIS_URL` trỏ Redis test riêng tại loopback 27132.
+  Fixture tạo/dọn database và namespace UUID riêng, không dùng DB ứng dụng.
+- Suite gồm **564 unit**, **241 integration** và **3 E2E/router cases**.
+  Integration dùng Mongo replica set thật; riêng ba workflow dưới đây dùng
+  Redis thật. Cache/HTTP model giả lập ở các nhóm khác vẫn có nhãn rõ ràng.
+- **215 cases mới**: 92 unit và 123 integration cho tenant/contract/cache,
+  CV/download/cancellation/model catalog/parse replay, profile HR/provenance,
+  override/history/CAS/rollback, audit và workflow. Không cộng các lượt chạy
+  riêng vào tổng **808**.
+- Compile `app`/`tests`, `git diff --check`, JSON Schema/ví dụ screening khớp
+  model/binding/evidence đạt. Compose production/dev với `--profile workers
+  config --quiet` đạt; không in resolved secrets. Inventory AST có 103/103
+  endpoint khớp tài liệu, đường dẫn local đã kiểm tra.
+- Lượt riêng tenant **19 passed**, workflow **3 passed**, replay override UTC
+  **1 passed** và rollback stage **1 passed** là kiểm tra trung gian/subset.
+  Các lượt full trước dừng ở timezone/replay hoặc fixture cache JSON/HTTP 201/
+  CV thiếu; bản cuối đã sửa và chạy lại. Test không bị sửa để bỏ kiểm tra quyền
+  hoặc rollback; fixture nay cung cấp CV thật trong DB đúng scope.
+- Warnings Beanie/Pydantic/dependency/deprecation còn tồn tại. Không build/
+  smoke Docker image mới, không nghiệm thu model/provider/MinerU thật trong
+  đợt này. Hai container test được dừng sau kiểm tra, không xóa volume.
+
+**593 passed** ở phần trước là lịch sử, không phải kết quả lần chạy MVP hiện tại.
+
+Lượt riêng `tests/integration/test_mvp_be_workflow.py`: **3 passed** trên cả
+MongoDB replica set và Redis thật. Kiểm tra HTTP/JWT/storage → parse/extract →
+profile HR → screening → override/assessment; Redis consumer mới reclaim
+pending sau lỗi ACK không xử lý lại; và recovery publish khi XADD lỗi sau
+commit Mongo. Adapter parsing/extraction/screening là test double synthetic,
+chưa kiểm thử process kill/restart container hoặc endpoint model thật.
+
+Việc còn mở: server AI `/v1/screen`, provider/cloud idempotency, nghiệm thu
+CV Việt/Anh/PDF scan và chất lượng model, giao diện. Workflow synthetic dùng
+parser/extractor/scorer có kiểm soát; không coi kết quả đó là model thật.
+Audit decorator chung vẫn dùng cơ chế lưu best-effort async cũ; bản sửa enum/
+mapping không tạo audit outbox hoặc bảo đảm log chung tồn tại khi process bị
+kill. Lịch sử profile/override HR được lưu transaction riêng, không dựa vào
+audit decorator này.
+Không deploy, commit/push hoặc thay database/volume ứng dụng trong đợt này.

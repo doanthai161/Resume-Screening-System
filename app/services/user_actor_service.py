@@ -63,9 +63,11 @@ class UserActorService:
                 raise
 
             return UserActorResponse(
+                id=str(user_actor.id),
+                user_actor_id=str(user_actor.id),
                 user_id=str(user.id),
                 full_name=user.full_name,
-                actor=ActorResponse(name=actor.name, description=actor.description)
+                actor=ActorResponse(id=str(actor.id), name=actor.name, description=actor.description)
             )
         except CustomError:
             raise
@@ -113,9 +115,11 @@ class UserActorService:
                 )
 
             return UserActorResponse(
+                id=str(user_actor.id),
+                user_actor_id=str(user_actor.id),
                 user_id=str(user_actor.user_id),
                 full_name=user.full_name,
-                actor=ActorResponse(name=actor.name, description=actor.description)
+                actor=ActorResponse(id=str(actor.id), name=actor.name, description=actor.description)
             )
         except CustomError:
             raise

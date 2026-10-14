@@ -49,6 +49,8 @@ class ScreeningResult(Document):
     score_upper_bound: Optional[float] = Field(None, ge=0, le=100)
     scorecard_snapshot: Dict[str, Any] = Field(default_factory=dict)
     source_snapshot: Optional[ScreeningSourceSnapshot] = None
+    override_revision: int = Field(0, ge=0)
+    latest_override_id: Optional[PydanticObjectId] = None
     strengths: List[str] = Field(default_factory=list, max_length=100)
     weaknesses: List[str] = Field(default_factory=list, max_length=100)
     missing_skills: List[str] = Field(default_factory=list, max_length=200)

@@ -258,7 +258,12 @@
     },
     "extraction_model_name": "synthetic-extraction-model",
     "extraction_prompt_version": "resume-extract-v1",
-    "extractor_version": "http-extractor-1.0"
+    "extractor_version": "http-extractor-1.0",
+    "profile_origin": "ai",
+    "profile_edited_by": null,
+    "profile_edit_reason": null,
+    "profile_created_at": null,
+    "hr_annotations": []
   },
   "scorecard": {
     "criteria": [

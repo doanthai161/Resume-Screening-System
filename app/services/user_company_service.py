@@ -26,6 +26,11 @@ from app.models.user_company import UserCompany
 
 class UserCompanyService:
     @staticmethod
+    def _valid_id(value: str) -> None:
+        if not ObjectId.is_valid(value):
+            raise CustomError(ErrorCodes.VALIDATION, "Invalid membership resource ID", 422)
+
+    @staticmethod
     async def _authorize_change(
         branch_id: str,
         target_id: str,
@@ -238,6 +243,7 @@ class UserCompanyService:
     async def delete_assignment(
         assignment_id: str, current_user: Any
     ) -> Dict[str, Any]:
+        UserCompanyService._valid_id(assignment_id)
         target = await UserCompanyRepository.get_assignment(assignment_id)
         if not target:
             raise CustomError(ErrorCodes.NOT_FOUND, "Assignment not found", 404)
@@ -287,6 +293,7 @@ class UserCompanyService:
     async def get_assignment(
         assignment_id: str, current_user: Any
     ) -> UserCompanyResponse:
+        UserCompanyService._valid_id(assignment_id)
         assignment = await UserCompanyRepository.get_assignment(assignment_id)
         if not assignment:
             raise CustomError(
@@ -317,6 +324,7 @@ class UserCompanyService:
         size: int,
         current_user: Any,
     ) -> UserCompanyListResponse:
+        UserCompanyService._valid_id(company_branch_id)
         has_access = await CompanyRepository.validate_user_access(
             user_id=str(current_user.id), company_branch_id=company_branch_id
         )
@@ -428,6 +436,7 @@ class UserCompanyService:
     async def get_branch_assignment_stats(
         company_branch_id: str, current_user: Any
     ) -> UserCompanyStats:
+        UserCompanyService._valid_id(company_branch_id)
         has_access = await CompanyRepository.validate_user_access(
             user_id=str(current_user.id), company_branch_id=company_branch_id
         )
@@ -454,6 +463,7 @@ class UserCompanyService:
     async def update_assignment_role(
         assignment_id: str, role: str, current_user: Any
     ) -> UserCompanyResponse:
+        UserCompanyService._valid_id(assignment_id)
         assignment = await UserCompanyRepository.get_assignment(assignment_id)
         if not assignment:
             raise CustomError(

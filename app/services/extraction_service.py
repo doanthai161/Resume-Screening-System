@@ -59,17 +59,8 @@ def requires_review(value) -> bool:
 class ExtractionService:
     @staticmethod
     async def authorized_resume(resume_id: str, current_user: CurrentUser, *, permission: str) -> ResumeFile:
-        if not current_user.has_permission(permission):
-            raise CustomError(ErrorCodes.FORBIDDEN, "Resume permission denied", 403)
-        if not ObjectId.is_valid(resume_id):
-            raise CustomError(ErrorCodes.VALIDATION, "Invalid resume ID", 422)
-        resume = await ResumeFile.find_one({"_id": ObjectId(resume_id), "is_deleted": False}, session=current_session())
-        if not resume or not resume.company_id:
-            raise CustomError(ErrorCodes.NOT_FOUND, "Resume not found", 404)
-        await TenantAccessService.require_company_access(current_user, str(resume.company_id))
-        if resume.company_branch_id and not await branch_role(current_user.user_id, str(resume.company_branch_id)):
-            raise CustomError(ErrorCodes.FORBIDDEN, "Resume branch access denied", 403)
-        return resume
+        from app.services.resume_service import ResumeService
+        return await ResumeService.authorized_resume(resume_id, current_user, permission=permission)
 
     @staticmethod
     @transactional
@@ -105,6 +96,16 @@ class ExtractionService:
             source_text=raw_text, source_text_sha256=source_hash, source_parse_revision=resume.parse_revision,
             source_parse_run_id=resume.latest_parse_run_id, model_name=settings.EXTRACTION_MODEL_NAME,
         )
+        # Start and completion use the same zero/null compatibility policy for
+        # resumes predating parse_revision, without weakening nonzero revisions.
+        predicate = source_predicate(run)
+        predicate["latest_extraction_profile_id"] = resume.latest_extraction_profile_id
+        changed = await ResumeFile.get_motor_collection().update_one(
+            predicate,
+            {"$inc": {"screening_fence_version": 1}}, session=current_session(),
+        )
+        if changed.matched_count != 1:
+            raise CustomError(ErrorCodes.CONFLICT, "Resume changed concurrently; retry with the same key", 409)
         try:
             await run.insert(session=current_session())
         except DuplicateKeyError:

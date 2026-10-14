@@ -17,6 +17,7 @@ from app.core.redis import get_redis, is_redis_available
 from app.core import cache as shared_cache
 from app.core.monitoring import monitor_db_operation, monitor_cache_operation
 from app.utils.time import now_utc
+from app.core.errors import CustomError, ErrorCodes
 
 logger = logging.getLogger(__name__)
 
@@ -71,7 +72,7 @@ class UserCompanyRepository:
             )
 
             if existing_assignment:
-                raise ValueError("User is already assigned to this branch")
+                raise CustomError(ErrorCodes.CONFLICT, "User is already assigned to this branch", 409)
 
             inactive_assignment = await UserCompany.find_one(
                 {
@@ -90,6 +91,8 @@ class UserCompanyRepository:
                 inactive_assignment.assigned_by = ObjectId(assigned_by)
                 inactive_assignment.unassigned_at = None
                 inactive_assignment.unassigned_by = None
+                inactive_assignment.start_date = start_date or now_utc()
+                inactive_assignment.end_date = end_date
                 inactive_assignment.updated_at = now_utc()
                 await inactive_assignment.save(session=current_session())
 
@@ -124,7 +127,7 @@ class UserCompanyRepository:
             raise
         except DuplicateKeyError as e:
             logger.error(f"Duplicate key error assigning user to branch: {e}")
-            raise ValueError("Assignment with similar criteria already exists")
+            raise CustomError(ErrorCodes.CONFLICT, "User is already assigned to this branch", 409) from None
         except Exception as e:
             logger.error(f"Error assigning user to branch: {e}", exc_info=True)
             raise
@@ -367,7 +370,7 @@ class UserCompanyRepository:
                 return None
 
             if not assignment.is_active:
-                raise ValueError("Cannot update role of inactive assignment")
+                raise CustomError(ErrorCodes.BAD_REQUEST, "Cannot update role of inactive assignment", 400)
 
             old_role = assignment.role
             assignment.role = role
@@ -383,6 +386,8 @@ class UserCompanyRepository:
             return assignment
 
         except ValueError as e:
+            raise
+        except CustomError:
             raise
         except Exception as e:
             logger.error(f"Error updating assignment role: {e}")

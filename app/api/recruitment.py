@@ -106,6 +106,8 @@ async def _run_response(item) -> ScreeningRunResponse:
         max_attempts=item.max_attempts,
         queued_at=item.queued_at,
         next_retry_at=ensure_utc(item.next_retry_at) if item.next_retry_at else None,
+        error_code=item.error_code,
+        error_message="Screening processing failed" if item.error_message else None,
         started_at=item.started_at,
         finished_at=item.finished_at,
         **await _source_metadata(item),
@@ -258,8 +260,9 @@ async def list_reviews(
     request: Request,
     application_id: str,
     company_id: str,
+    page: int = Query(1, ge=1),
+    size: int = Query(20, ge=1, le=100),
     current_user: CurrentUser = Depends(require_permission("application_reviews:list")),
 ):
-    await TenantAccessService.require_company_access(current_user, company_id)
-    items = await RecruitmentRepository.list_reviews(application_id, company_id)
+    items = await ReviewService.list(application_id, company_id, current_user, page, size)
     return ApiResponse(success=True, data=[_review_response(item) for item in items])

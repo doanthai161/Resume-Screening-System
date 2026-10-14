@@ -2,6 +2,7 @@ from app.core.transactions import current_session, transactional
 import asyncio
 import hashlib
 import os
+import stat
 import uuid
 import zipfile
 from pathlib import Path
@@ -17,13 +18,16 @@ from app.core import job_queue
 from app.core.config import settings
 from app.core.errors import CustomError, ErrorCodes
 from app.core.security import CurrentUser
+from app.core.tenant_policy import active_membership_filter, branch_role
 from app.models.ai_model import AIModel
 from app.models.candidate import Candidate
 from app.models.company_branch import CompanyBranch
 from app.models.company import Company
+from app.models.user import User
+from app.models.user_company import UserCompany
 from app.models.resume_file import ResumeFile
 from app.models.screening_run import ResumeParseRun
-from app.schemas.resume import ParseResumeRequest
+from app.schemas.resume import ParseResumeRequest, ResumeListResponse, ResumeResponse
 from app.services.tenant_access_service import TenantAccessService
 from app.utils.time import now_utc
 
@@ -67,6 +71,146 @@ def _validate_docx_archive(path: Path) -> bool:
 
 class ResumeService:
     @staticmethod
+    async def _owned_candidate(resume: ResumeFile, current_user: CurrentUser) -> bool:
+        if not current_user.is_candidate or not resume.candidate_id:
+            return False
+        return bool(await Candidate.find_one({
+            "_id": resume.candidate_id, "company_id": resume.company_id,
+            "user_id": ObjectId(current_user.user_id), "is_deleted": False,
+        }, session=current_session()))
+
+    @staticmethod
+    async def _authorize_record(resume: ResumeFile, current_user: CurrentUser, *, allow_own: bool = False) -> None:
+        user = await User.get(ObjectId(current_user.user_id), session=current_session())
+        if not user or not user.is_active:
+            raise CustomError(ErrorCodes.FORBIDDEN, "Active user required", 403)
+        company = await Company.get(resume.company_id, session=current_session())
+        if not company or not company.is_active:
+            raise CustomError(ErrorCodes.NOT_FOUND, "Company not found", 404)
+        if resume.company_branch_id:
+            branch = await CompanyBranch.find_one({
+                "_id": resume.company_branch_id, "company_id": resume.company_id, "is_active": True,
+            }, session=current_session())
+            if not branch:
+                raise CustomError(ErrorCodes.FORBIDDEN, "Resume branch access denied", 403)
+        if allow_own and await ResumeService._owned_candidate(resume, current_user):
+            return
+        await TenantAccessService.require_company_access(current_user, str(resume.company_id))
+        if resume.company_branch_id:
+            if not await branch_role(current_user.user_id, str(resume.company_branch_id)):
+                raise CustomError(ErrorCodes.FORBIDDEN, "Resume branch access denied", 403)
+        elif not (user.is_superuser or company.user_id == user.id):
+            raise CustomError(ErrorCodes.FORBIDDEN, "Branchless resumes require company ownership", 403)
+
+    @staticmethod
+    async def authorized_resume(resume_id: str, current_user: CurrentUser, *, permission: str = "resume_files:view") -> ResumeFile:
+        if not current_user.has_permission(permission):
+            raise CustomError(ErrorCodes.FORBIDDEN, "Resume permission denied", 403)
+        if not ObjectId.is_valid(resume_id):
+            raise CustomError(ErrorCodes.VALIDATION, "Invalid resume ID", 422)
+        resume = await ResumeFile.find_one({"_id": ObjectId(resume_id), "is_deleted": False}, session=current_session())
+        if not resume or not resume.company_id:
+            raise CustomError(ErrorCodes.NOT_FOUND, "Resume not found", 404)
+        await ResumeService._authorize_record(resume, current_user, allow_own=permission == "resume_files:view")
+        return resume
+
+    @staticmethod
+    async def list_resumes(company_id: str, current_user: CurrentUser, *, page: int = 1, size: int = 20,
+                           candidate_id: str | None = None) -> ResumeListResponse:
+        if not current_user.has_permission("resume_files:view"):
+            raise CustomError(ErrorCodes.FORBIDDEN, "Resume permission denied", 403)
+        if (not ObjectId.is_valid(company_id) or (candidate_id and not ObjectId.is_valid(candidate_id))
+                or page < 1 or not 1 <= size <= 100):
+            raise CustomError(ErrorCodes.VALIDATION, "Invalid resume filter or pagination", 422)
+        user = await User.get(ObjectId(current_user.user_id), session=current_session())
+        company = await Company.get(ObjectId(company_id), session=current_session())
+        if not user or not user.is_active:
+            raise CustomError(ErrorCodes.FORBIDDEN, "Active user required", 403)
+        if not company or not company.is_active:
+            raise CustomError(ErrorCodes.NOT_FOUND, "Company not found", 404)
+        branches = await CompanyBranch.get_motor_collection().find(
+            {"company_id": company.id, "is_active": True}, {"_id": 1}, session=current_session()
+        ).to_list(length=None)
+        active_ids = [item["_id"] for item in branches]
+        owner = user.is_superuser or company.user_id == user.id
+        owned_ids = []
+        if current_user.is_candidate:
+            owned = await Candidate.get_motor_collection().find({
+                "company_id": company.id, "user_id": user.id, "is_deleted": False,
+            }, {"_id": 1}, session=current_session()).to_list(length=None)
+            owned_ids = [item["_id"] for item in owned]
+        if owner:
+            scope = {"company_branch_id": {"$in": active_ids + [None]}}
+        else:
+            memberships = await UserCompany.get_motor_collection().find({
+                "user_id": user.id, "company_branch_id": {"$in": active_ids}, **active_membership_filter(),
+            }, {"company_branch_id": 1}, session=current_session()).to_list(length=None)
+            allowed = [item["company_branch_id"] for item in memberships]
+            if not allowed and not owned_ids:
+                raise CustomError(ErrorCodes.FORBIDDEN, "Company access denied", 403)
+            clauses = [{"company_branch_id": {"$in": allowed}}]
+            if owned_ids:
+                clauses.append({"candidate_id": {"$in": owned_ids},
+                                "company_branch_id": {"$in": active_ids + [None]}})
+            scope = {"$or": clauses}
+        query = {"company_id": company.id, "is_deleted": False, **scope}
+        if candidate_id:
+            query["candidate_id"] = ObjectId(candidate_id)
+        projection = {"_id": 1, **{field: 1 for field in ResumeResponse.model_fields if field != "id"}}
+        collection = ResumeFile.get_motor_collection()
+        total = await collection.count_documents(query, session=current_session())
+        items = await collection.find(query, projection, session=current_session()).sort(
+            [("uploaded_at", -1), ("_id", -1)]
+        ).skip((page - 1) * size).limit(size).to_list(length=size)
+        return ResumeListResponse(items=[ResumeResponse.model_validate(item) for item in items],
+                                  total=total, page=page, size=size)
+
+    @staticmethod
+    def _open_download(resume: ResumeFile):
+        if resume.storage_provider != "local":
+            raise CustomError(ErrorCodes.NOT_FOUND, "Resume download is unavailable", 404)
+        try:
+            root = settings.resume_upload_path.absolute()
+            target = Path(resume.file_path).absolute()
+            relative = target.relative_to(root)
+            if any(part in {"", ".", ".."} for part in relative.parts):
+                raise ValueError()
+            # Flat files remain readable for legacy uploads. New company folders
+            # must match this document's tenant exactly.
+            if len(relative.parts) not in {1, 2} or (len(relative.parts) == 2 and relative.parts[0] != str(resume.company_id)):
+                raise ValueError()
+            walk = root
+            for part in (None, *relative.parts):
+                if part is not None:
+                    walk /= part
+                info = walk.lstat()
+                if stat.S_ISLNK(info.st_mode) or getattr(info, "st_file_attributes", 0) & getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0):
+                    raise ValueError()
+            if not target.resolve(strict=True).is_relative_to(root.resolve(strict=True)):
+                raise ValueError()
+            before = target.lstat()
+            if not stat.S_ISREG(before.st_mode) or before.st_size != resume.file_size or before.st_size > settings.MAX_RESUME_SIZE:
+                raise ValueError()
+            fd = os.open(target, os.O_RDONLY | getattr(os, "O_BINARY", 0) | getattr(os, "O_NOFOLLOW", 0))
+            handle = os.fdopen(fd, "rb")
+            try:
+                opened = os.fstat(handle.fileno())
+                if (before.st_dev, before.st_ino) != (opened.st_dev, opened.st_ino) or opened.st_size != resume.file_size:
+                    raise ValueError()
+                digest = hashlib.sha256()
+                while chunk := handle.read(64 * 1024):
+                    digest.update(chunk)
+                if digest.hexdigest() != resume.checksum:
+                    raise ValueError()
+                handle.seek(0)
+                return handle
+            except BaseException:
+                handle.close()
+                raise
+        except (OSError, ValueError):
+            raise CustomError(ErrorCodes.NOT_FOUND, "Resume file is unavailable", 404) from None
+
+    @staticmethod
     async def get_parse_run(
         resume_id: str,
         run_id: str,
@@ -78,10 +222,12 @@ class ResumeService:
                 "Invalid resume or parse run ID",
                 status.HTTP_422_UNPROCESSABLE_ENTITY,
             )
+        resume = await ResumeService.authorized_resume(resume_id, current_user)
         run = await ResumeParseRun.find_one(
             {
                 "_id": PydanticObjectId(run_id),
                 "resume_file_id": PydanticObjectId(resume_id),
+                "company_id": resume.company_id,
             }
         )
         if not run:
@@ -90,9 +236,6 @@ class ResumeService:
                 "Resume parse run not found",
                 status.HTTP_404_NOT_FOUND,
             )
-        await TenantAccessService.require_company_access(
-            current_user, str(run.company_id)
-        )
         return run
 
     @staticmethod
@@ -164,6 +307,10 @@ class ResumeService:
                     status.HTTP_404_NOT_FOUND,
                 )
             branch_id = branch.id
+            if not is_own_candidate and not await branch_role(current_user.user_id, company_branch_id):
+                raise CustomError(ErrorCodes.FORBIDDEN, "Resume branch access denied", 403)
+        elif not is_own_candidate and not (current_user.is_superuser or str(company.user_id) == current_user.user_id):
+            raise CustomError(ErrorCodes.FORBIDDEN, "A permitted branch is required for resume upload", 403)
 
         original_name = Path((file.filename or "resume").replace("\\", "/")).name
         if len(original_name) > 255:
@@ -191,7 +338,11 @@ class ResumeService:
         token = uuid.uuid4().hex
         temp_path = settings.temp_upload_path / f"{token}.upload"
         final_name = f"{token}.{extension}"
-        final_path = settings.resume_upload_path / final_name
+        company_dir = settings.resume_upload_path / str(company.id)
+        company_dir.mkdir(parents=True, exist_ok=True)
+        if company_dir.is_symlink() or company_dir.resolve().parent != settings.resume_upload_path.resolve():
+            raise CustomError(ErrorCodes.INTERNAL, "Resume storage is unavailable", 503)
+        final_path = company_dir / final_name
         digest = hashlib.sha256()
         total_size = 0
         header = b""
@@ -245,6 +396,9 @@ class ResumeService:
                 }
             )
             if existing:
+                if existing.company_branch_id != branch_id:
+                    raise CustomError(ErrorCodes.CONFLICT, "Resume already exists in another branch", 409)
+                await ResumeService._authorize_record(existing, current_user, allow_own=is_own_candidate)
                 return existing
 
             await asyncio.to_thread(os.replace, temp_path, final_path)
@@ -261,7 +415,7 @@ class ResumeService:
                 company_branch_id=branch_id,
                 checksum=checksum,
                 storage_provider="local",
-                object_key=final_name,
+                object_key=f"{company.id}/{final_name}",
             )
             try:
                 await resume.insert()
@@ -277,6 +431,9 @@ class ResumeService:
                 )
                 if duplicate:
                     await asyncio.to_thread(final_path.unlink, True)
+                    if duplicate.company_branch_id != branch_id:
+                        raise CustomError(ErrorCodes.CONFLICT, "Resume already exists in another branch", 409)
+                    await ResumeService._authorize_record(duplicate, current_user, allow_own=is_own_candidate)
                     return duplicate
                 raise
             except Exception:
@@ -296,19 +453,20 @@ class ResumeService:
         idempotency_key: str,
         current_user: CurrentUser,
     ) -> ResumeParseRun:
-        await TenantAccessService.require_company_access(current_user, data.company_id)
-        resume = await ResumeFile.find_one(
-            {
-                "_id": PydanticObjectId(resume_id),
-                "company_id": PydanticObjectId(data.company_id),
-                "is_deleted": False,
-            },
-            session=current_session(),
-        )
-        if not resume:
-            raise CustomError(
-                ErrorCodes.NOT_FOUND, "Resume not found", status.HTTP_404_NOT_FOUND
-            )
+        resume = await ResumeService.authorized_resume(resume_id, current_user, permission="resume_files:parse")
+        if str(resume.company_id) != data.company_id:
+            raise CustomError(ErrorCodes.FORBIDDEN, "Resume does not belong to this company", 403)
+
+        requested_model_id = PydanticObjectId(data.parser_model_id) if data.parser_model_id else None
+        existing = await ResumeParseRun.find_one({
+            "company_id": resume.company_id, "idempotency_key": idempotency_key,
+        }, session=current_session())
+        if existing:
+            if (existing.resume_file_id != resume.id or existing.parser_version != data.parser_version
+                    or existing.parser_model_id != requested_model_id):
+                raise CustomError(ErrorCodes.CONFLICT, "Idempotency key was already used for a different request", 409)
+            # Replay the durable command even if its original parser is now inactive.
+            return existing
 
         parser_model_id = None
         if data.parser_model_id:
@@ -329,31 +487,20 @@ class ResumeService:
             parser_model_id = model.id
 
         input_hash = hashlib.sha256(
-            f"{resume.checksum}:{data.parser_version}:{parser_model_id or 'default'}".encode(
+            f"{resume.id}:{resume.checksum}:{data.parser_version}:{parser_model_id or 'default'}".encode(
                 "utf-8"
             )
         ).hexdigest()
-        existing = await ResumeParseRun.find_one(
-            {
-                "company_id": PydanticObjectId(data.company_id),
-                "$or": [
-                    {"idempotency_key": idempotency_key},
-                    {"input_hash": input_hash, "is_terminal": False},
-                ],
-            },
-            session=current_session(),
-        )
-        if existing:
-            if (
-                existing.idempotency_key == idempotency_key
-                and existing.input_hash != input_hash
-            ):
-                raise CustomError(
-                    ErrorCodes.CONFLICT,
-                    "Idempotency key was already used for a different request",
-                    status.HTTP_409_CONFLICT,
-                )
-            return existing
+        if await ResumeParseRun.find_one({"resume_file_id": resume.id, "is_terminal": False}, session=current_session()):
+            raise CustomError(ErrorCodes.CONFLICT, "Another parse is active; retry with its original idempotency key", 409)
+        # Serialize parsing with source-sensitive HR/screening writes. No file
+        # work occurs inside this transaction; only the resume document is fenced.
+        fenced = await ResumeFile.find_one({
+            "_id": resume.id, "company_id": resume.company_id, "is_deleted": False,
+            "checksum": resume.checksum, "company_branch_id": resume.company_branch_id,
+        }, session=current_session()).update({"$inc": {"screening_fence_version": 1}}, session=current_session())
+        if not fenced or fenced.matched_count != 1:
+            raise CustomError(ErrorCodes.CONFLICT, "Resume changed concurrently", 409)
 
         owner_token = uuid.uuid4().hex
         if not await cache.reserve_idempotency(

@@ -8,6 +8,9 @@ Backend quản lý quy trình tuyển dụng và sàng lọc hồ sơ, xây dự
 
 Tra cứu toàn bộ tính năng, chức năng/input/output/quyền của từng API và các phần
 còn thiếu tại [Tổng hợp tính năng và API](docs/PROJECT_FEATURES_AND_API.md).
+Contract tích hợp frontend cho CV, chọn model, HR sửa hồ sơ và ghi đè đánh giá
+kèm lịch sử: [Backend MVP](docs/BE_MVP.md). BE đã có các API này; AI service
+inference screening và nghiệm thu model thật vẫn cần triển khai riêng.
 
 Chạy local trên Windows với API ngoài Docker (sau khi có `.env`, Docker Desktop
 và dependency BE): trong **cùng terminal PowerShell** tại root, chạy
@@ -16,11 +19,12 @@ và dependency BE): trong **cùng terminal PowerShell** tại root, chạy
 Launcher chỉ chuẩn bị Mongo/Redis, giữ nguyên `.env` và Brevo; MinerU/worker chạy
 sau. Xem [hướng dẫn local](docs/LOCAL_DEVELOPMENT.md).
 
-Phiên bản hiện tại tập trung vào khung backend: quản lý tenant, ứng viên, hồ sơ, đơn ứng tuyển, scorecard, vòng đời screening, phân quyền, audit log và hàng đợi xử lý. AI inference được thiết kế để tách thành service/worker riêng và chưa nằm trong Docker stack này.
+Backend hiện có quản lý tenant/branch, ứng viên, CV, application, scorecard, pipeline worker và HR review/revision/override có lịch sử. HTTP extractor có container tùy chọn; AI service inference screening `/v1/screen` cần triển khai riêng.
 
 ## Trạng thái hệ thống
 
-Docker Compose hiện khởi chạy đúng ba service:
+Docker Compose mặc định có ba service chạy dài hạn bên dưới. `mongo-key` và
+`mongo-init-replica` là bước khởi tạo; workers/extractor dùng profile tùy chọn.
 
 | Service | Container | Truy cập | Vai trò |
 | --- | --- | --- | --- |
@@ -48,13 +52,15 @@ flowchart LR
 
 - Đăng ký, xác thực OTP, đăng nhập, refresh token và logout.
 - Quản lý user, company, branch, actor, permission và quan hệ phân quyền.
-- Cô lập dữ liệu theo company/tenant.
+- Cô lập dữ liệu theo company/branch và membership còn hiệu lực.
 - Quản lý candidate, job requirement và job application.
 - Theo dõi lịch sử chuyển stage của application.
 - Version hóa scorecard và lưu snapshot cấu hình khi screening.
-- Upload PDF/DOCX, kiểm soát kích thước và tạo parse run bất đồng bộ.
+- Upload/list/detail/download PDF/DOCX, kiểm soát kích thước và tạo parse run bất đồng bộ.
+- Trích xuất hồ sơ có dẫn chứng; HR tạo revision và xác nhận thông tin ngoài CV với lịch sử.
+- Liệt kê model screening active để frontend chọn mà không lộ config/credentials.
 - Tạo screening run, retry theo lease và lưu screening result bất biến.
-- Review ứng viên và lưu audit log.
+- Review ứng viên, HR override có lý do/phiên bản và đọc assessment AI/HR; lưu audit log.
 - Cache có TTL, idempotency key và Redis Stream có giới hạn độ dài.
 - Maintenance task phục hồi job hết lease và dọn audit log theo retention policy.
 
@@ -266,7 +272,8 @@ Base path: `/api/v1`
 | Jobs | `/api/v1/job-requirements` | Job requirement |
 | Candidates | `/api/v1/candidates` | Candidate CRUD/search |
 | Recruitment | `/api/v1/recruitment` | Applications, stages, scorecards, screenings, reviews |
-| Resumes | `/api/v1/resumes` | Upload và parse runs |
+| Resumes | `/api/v1/resumes` | Upload/list/detail/download, parse/extraction runs và profile/revision HR |
+| Screening models | `/api/v1/ai-models` | Danh sách model active để chọn khi screening |
 
 ### Authentication cookie và CSRF
 
@@ -301,7 +308,7 @@ Logout cũng cần `credentials: "include"` và `X-CSRF-Token`. Backend revoke s
 
 Mỗi lần refresh sẽ rotate cả refresh token và CSRF token. Nếu refresh token cũ bị dùng lại, toàn bộ session family bị revoke. Refresh token không được chấp nhận làm Bearer token cho các protected endpoint.
 
-Các write endpoint quan trọng như tạo application, đổi stage, tạo scorecard, screening và parse run yêu cầu header:
+Các write endpoint quan trọng như tạo application, đổi stage, tạo scorecard, screening, parse/extraction run, profile revision HR và screening override yêu cầu header:
 
 ```http
 Idempotency-Key: <giá-trị-duy-nhất-từ-8-đến-128-ký-tự>
@@ -367,7 +374,7 @@ mongo-init.js
 
 ## Bản vá P1 và yêu cầu chạy mới
 
-Xem [P1 remediation](docs/reviews/P1_REMEDIATION.md) cho thay đổi quyền, session, worker và hướng triển khai. MongoDB phải là replica set/sharded cluster; standalone không hỗ trợ các transaction mới. Compose tự tạo replica set `rs0` bằng `mongo-key` và `mongo-init-replica`. Người dùng cần đăng nhập lại sau cập nhật vì token cũ không có registry session sẽ bị từ chối.
+Xem [trạng thái lỗi và bản sửa](docs/reviews/ISSUE_STATUS.md) cho thay đổi quyền, session, worker và giới hạn xác minh. MongoDB phải là replica set/sharded cluster; standalone không hỗ trợ các transaction mới. Compose tự tạo replica set `rs0` bằng `mongo-key` và `mongo-init-replica`. Người dùng cần đăng nhập lại sau cập nhật vì token cũ không có registry session sẽ bị từ chối.
 
 Worker phải giữ `generation=claimed_run.attempt` khi renew/complete/fail. `/live` kiểm tra process; `/ready` kiểm tra dependency, trả 503 khi production không có Redis hoặc Mongo không sẵn sàng cho transaction.
 
@@ -386,9 +393,9 @@ AI service nhận `/v1/screen` và đánh giá bằng model thật vẫn cần t
 
 ## Test
 
-Đánh giá backend, bằng chứng kiểm tra và kế hoạch khắc phục theo ưu tiên:
-[Backend review — 24/09/2026](docs/reviews/BACKEND_REVIEW_2026-09-24.md).
-Tài liệu phản ánh trạng thái tại thời điểm review; các đề xuất chưa đồng nghĩa với bản vá đã triển khai.
+Đánh giá backend, bằng chứng kiểm tra và phần còn mở:
+[ISSUE_STATUS.md](docs/reviews/ISSUE_STATUS.md). Các số test có nhãn thời điểm;
+bằng chứng lịch sử không thay kết quả kiểm thử của bản hiện tại.
 
 ```bash
 pytest -q
@@ -409,4 +416,4 @@ pytest -q tests/unit
 - Backup MongoDB và thư mục `uploads/` trước khi xóa volume hoặc redeploy phá hủy dữ liệu.
 # Cập nhật vận hành P2
 
-API Docker chạy bằng UID/GID `10001:10001`; thư mục host `uploads` và `logs` cần cho user này ghi. Production dùng code trong image; source mount/reload chỉ ở Compose dev. Xem [P2 remediation](docs/reviews/P2_REMEDIATION.md) và [danh sách lỗi hiện tại](docs/reviews/ISSUE_STATUS.md) trước triển khai.
+API Docker chạy bằng UID/GID `10001:10001`; thư mục host `uploads` và `logs` cần cho user này ghi. Production dùng code trong image; source mount/reload chỉ ở Compose dev. Xem [danh sách lỗi hiện tại](docs/reviews/ISSUE_STATUS.md) trước triển khai.

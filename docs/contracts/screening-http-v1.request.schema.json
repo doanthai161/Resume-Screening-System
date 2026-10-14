@@ -3,18 +3,6 @@
     "Certification": {
       "additionalProperties": false,
       "properties": {
-        "expiry_date": {
-          "$ref": "#/$defs/ExtractedValue_ResumeDate_"
-        },
-        "issued_date": {
-          "$ref": "#/$defs/ExtractedValue_ResumeDate_"
-        },
-        "issuer": {
-          "$ref": "#/$defs/app__schemas__resume_extraction__ExtractedValue_Annotated_str__StringConstraints____1"
-        },
-        "name": {
-          "$ref": "#/$defs/app__schemas__resume_extraction__ExtractedValue_Annotated_str__StringConstraints____1"
-        },
         "review_issues": {
           "items": {
             "enum": [
@@ -27,6 +15,18 @@
           "maxItems": 3,
           "title": "Review Issues",
           "type": "array"
+        },
+        "name": {
+          "$ref": "#/$defs/app__schemas__resume_extraction__ExtractedValue_Annotated_str__StringConstraints____1"
+        },
+        "issuer": {
+          "$ref": "#/$defs/app__schemas__resume_extraction__ExtractedValue_Annotated_str__StringConstraints____1"
+        },
+        "issued_date": {
+          "$ref": "#/$defs/ExtractedValue_ResumeDate_"
+        },
+        "expiry_date": {
+          "$ref": "#/$defs/ExtractedValue_ResumeDate_"
         }
       },
       "required": [
@@ -41,18 +41,6 @@
     "Education": {
       "additionalProperties": false,
       "properties": {
-        "degree": {
-          "$ref": "#/$defs/app__schemas__resume_extraction__ExtractedValue_Annotated_str__StringConstraints____1"
-        },
-        "end_date": {
-          "$ref": "#/$defs/ExtractedValue_ResumeDate_"
-        },
-        "field_of_study": {
-          "$ref": "#/$defs/app__schemas__resume_extraction__ExtractedValue_Annotated_str__StringConstraints____1"
-        },
-        "institution": {
-          "$ref": "#/$defs/app__schemas__resume_extraction__ExtractedValue_Annotated_str__StringConstraints____1"
-        },
         "review_issues": {
           "items": {
             "enum": [
@@ -68,6 +56,18 @@
         },
         "start_date": {
           "$ref": "#/$defs/ExtractedValue_ResumeDate_"
+        },
+        "end_date": {
+          "$ref": "#/$defs/ExtractedValue_ResumeDate_"
+        },
+        "institution": {
+          "$ref": "#/$defs/app__schemas__resume_extraction__ExtractedValue_Annotated_str__StringConstraints____1"
+        },
+        "degree": {
+          "$ref": "#/$defs/app__schemas__resume_extraction__ExtractedValue_Annotated_str__StringConstraints____1"
+        },
+        "field_of_study": {
+          "$ref": "#/$defs/app__schemas__resume_extraction__ExtractedValue_Annotated_str__StringConstraints____1"
         }
       },
       "required": [
@@ -83,6 +83,10 @@
     "EvidenceAlternative_Annotated_bool__Strict_strict_True___": {
       "additionalProperties": false,
       "properties": {
+        "value": {
+          "title": "Value",
+          "type": "boolean"
+        },
         "evidence": {
           "items": {
             "$ref": "#/$defs/SourceEvidence"
@@ -91,10 +95,6 @@
           "minItems": 1,
           "title": "Evidence",
           "type": "array"
-        },
-        "value": {
-          "title": "Value",
-          "type": "boolean"
         }
       },
       "required": [
@@ -107,6 +107,11 @@
     "EvidenceAlternative_EmailStr_": {
       "additionalProperties": false,
       "properties": {
+        "value": {
+          "format": "email",
+          "title": "Value",
+          "type": "string"
+        },
         "evidence": {
           "items": {
             "$ref": "#/$defs/SourceEvidence"
@@ -115,11 +120,6 @@
           "minItems": 1,
           "title": "Evidence",
           "type": "array"
-        },
-        "value": {
-          "format": "email",
-          "title": "Value",
-          "type": "string"
         }
       },
       "required": [
@@ -132,6 +132,13 @@
     "EvidenceAlternative_HttpUrl_": {
       "additionalProperties": false,
       "properties": {
+        "value": {
+          "format": "uri",
+          "maxLength": 2083,
+          "minLength": 1,
+          "title": "Value",
+          "type": "string"
+        },
         "evidence": {
           "items": {
             "$ref": "#/$defs/SourceEvidence"
@@ -140,13 +147,6 @@
           "minItems": 1,
           "title": "Evidence",
           "type": "array"
-        },
-        "value": {
-          "format": "uri",
-          "maxLength": 2083,
-          "minLength": 1,
-          "title": "Value",
-          "type": "string"
         }
       },
       "required": [
@@ -159,6 +159,9 @@
     "EvidenceAlternative_ResumeDate_": {
       "additionalProperties": false,
       "properties": {
+        "value": {
+          "$ref": "#/$defs/ResumeDate"
+        },
         "evidence": {
           "items": {
             "$ref": "#/$defs/SourceEvidence"
@@ -167,9 +170,6 @@
           "minItems": 1,
           "title": "Evidence",
           "type": "array"
-        },
-        "value": {
-          "$ref": "#/$defs/ResumeDate"
         }
       },
       "required": [
@@ -182,21 +182,6 @@
     "Experience": {
       "additionalProperties": false,
       "properties": {
-        "description": {
-          "$ref": "#/$defs/app__schemas__resume_extraction__ExtractedValue_Annotated_str__StringConstraints____2"
-        },
-        "end_date": {
-          "$ref": "#/$defs/ExtractedValue_ResumeDate_"
-        },
-        "is_current": {
-          "$ref": "#/$defs/ExtractedValue_Annotated_bool__Strict_strict_True___"
-        },
-        "location": {
-          "$ref": "#/$defs/app__schemas__resume_extraction__ExtractedValue_Annotated_str__StringConstraints____1"
-        },
-        "organization": {
-          "$ref": "#/$defs/app__schemas__resume_extraction__ExtractedValue_Annotated_str__StringConstraints____1"
-        },
         "review_issues": {
           "items": {
             "enum": [
@@ -210,11 +195,26 @@
           "title": "Review Issues",
           "type": "array"
         },
+        "start_date": {
+          "$ref": "#/$defs/ExtractedValue_ResumeDate_"
+        },
+        "end_date": {
+          "$ref": "#/$defs/ExtractedValue_ResumeDate_"
+        },
+        "organization": {
+          "$ref": "#/$defs/app__schemas__resume_extraction__ExtractedValue_Annotated_str__StringConstraints____1"
+        },
         "role": {
           "$ref": "#/$defs/app__schemas__resume_extraction__ExtractedValue_Annotated_str__StringConstraints____1"
         },
-        "start_date": {
-          "$ref": "#/$defs/ExtractedValue_ResumeDate_"
+        "location": {
+          "$ref": "#/$defs/app__schemas__resume_extraction__ExtractedValue_Annotated_str__StringConstraints____1"
+        },
+        "is_current": {
+          "$ref": "#/$defs/ExtractedValue_Annotated_bool__Strict_strict_True___"
+        },
+        "description": {
+          "$ref": "#/$defs/app__schemas__resume_extraction__ExtractedValue_Annotated_str__StringConstraints____2"
         }
       },
       "required": [
@@ -232,6 +232,14 @@
     "ExtractedSection_Certification_": {
       "additionalProperties": false,
       "properties": {
+        "status": {
+          "enum": [
+            "extracted",
+            "insufficient_evidence"
+          ],
+          "title": "Status",
+          "type": "string"
+        },
         "items": {
           "items": {
             "$ref": "#/$defs/Certification"
@@ -253,14 +261,6 @@
           ],
           "default": null,
           "title": "Reason"
-        },
-        "status": {
-          "enum": [
-            "extracted",
-            "insufficient_evidence"
-          ],
-          "title": "Status",
-          "type": "string"
         }
       },
       "required": [
@@ -273,6 +273,14 @@
     "ExtractedSection_Education_": {
       "additionalProperties": false,
       "properties": {
+        "status": {
+          "enum": [
+            "extracted",
+            "insufficient_evidence"
+          ],
+          "title": "Status",
+          "type": "string"
+        },
         "items": {
           "items": {
             "$ref": "#/$defs/Education"
@@ -294,14 +302,6 @@
           ],
           "default": null,
           "title": "Reason"
-        },
-        "status": {
-          "enum": [
-            "extracted",
-            "insufficient_evidence"
-          ],
-          "title": "Status",
-          "type": "string"
         }
       },
       "required": [
@@ -314,6 +314,14 @@
     "ExtractedSection_Experience_": {
       "additionalProperties": false,
       "properties": {
+        "status": {
+          "enum": [
+            "extracted",
+            "insufficient_evidence"
+          ],
+          "title": "Status",
+          "type": "string"
+        },
         "items": {
           "items": {
             "$ref": "#/$defs/Experience"
@@ -335,14 +343,6 @@
           ],
           "default": null,
           "title": "Reason"
-        },
-        "status": {
-          "enum": [
-            "extracted",
-            "insufficient_evidence"
-          ],
-          "title": "Status",
-          "type": "string"
         }
       },
       "required": [
@@ -355,6 +355,14 @@
     "ExtractedSection_ProfileLink_": {
       "additionalProperties": false,
       "properties": {
+        "status": {
+          "enum": [
+            "extracted",
+            "insufficient_evidence"
+          ],
+          "title": "Status",
+          "type": "string"
+        },
         "items": {
           "items": {
             "$ref": "#/$defs/ProfileLink"
@@ -376,14 +384,6 @@
           ],
           "default": null,
           "title": "Reason"
-        },
-        "status": {
-          "enum": [
-            "extracted",
-            "insufficient_evidence"
-          ],
-          "title": "Status",
-          "type": "string"
         }
       },
       "required": [
@@ -396,6 +396,14 @@
     "ExtractedSection_ResumeLanguage_": {
       "additionalProperties": false,
       "properties": {
+        "status": {
+          "enum": [
+            "extracted",
+            "insufficient_evidence"
+          ],
+          "title": "Status",
+          "type": "string"
+        },
         "items": {
           "items": {
             "$ref": "#/$defs/ResumeLanguage"
@@ -417,14 +425,6 @@
           ],
           "default": null,
           "title": "Reason"
-        },
-        "status": {
-          "enum": [
-            "extracted",
-            "insufficient_evidence"
-          ],
-          "title": "Status",
-          "type": "string"
         }
       },
       "required": [
@@ -437,6 +437,14 @@
     "ExtractedSection_Skill_": {
       "additionalProperties": false,
       "properties": {
+        "status": {
+          "enum": [
+            "extracted",
+            "insufficient_evidence"
+          ],
+          "title": "Status",
+          "type": "string"
+        },
         "items": {
           "items": {
             "$ref": "#/$defs/Skill"
@@ -458,14 +466,6 @@
           ],
           "default": null,
           "title": "Reason"
-        },
-        "status": {
-          "enum": [
-            "extracted",
-            "insufficient_evidence"
-          ],
-          "title": "Status",
-          "type": "string"
         }
       },
       "required": [
@@ -478,36 +478,6 @@
     "ExtractedValue_Annotated_bool__Strict_strict_True___": {
       "additionalProperties": false,
       "properties": {
-        "alternatives": {
-          "items": {
-            "$ref": "#/$defs/EvidenceAlternative_Annotated_bool__Strict_strict_True___"
-          },
-          "maxItems": 5,
-          "title": "Alternatives",
-          "type": "array"
-        },
-        "evidence": {
-          "items": {
-            "$ref": "#/$defs/SourceEvidence"
-          },
-          "maxItems": 10,
-          "title": "Evidence",
-          "type": "array"
-        },
-        "reason": {
-          "anyOf": [
-            {
-              "maxLength": 1000,
-              "minLength": 1,
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Reason"
-        },
         "status": {
           "$ref": "#/$defs/ExtractionStatus"
         },
@@ -522,24 +492,6 @@
           ],
           "default": null,
           "title": "Value"
-        }
-      },
-      "required": [
-        "status"
-      ],
-      "title": "ExtractedValue[Annotated[bool, Strict(strict=True)]]",
-      "type": "object"
-    },
-    "ExtractedValue_EmailStr_": {
-      "additionalProperties": false,
-      "properties": {
-        "alternatives": {
-          "items": {
-            "$ref": "#/$defs/EvidenceAlternative_EmailStr_"
-          },
-          "maxItems": 5,
-          "title": "Alternatives",
-          "type": "array"
         },
         "evidence": {
           "items": {
@@ -563,6 +515,24 @@
           "default": null,
           "title": "Reason"
         },
+        "alternatives": {
+          "items": {
+            "$ref": "#/$defs/EvidenceAlternative_Annotated_bool__Strict_strict_True___"
+          },
+          "maxItems": 5,
+          "title": "Alternatives",
+          "type": "array"
+        }
+      },
+      "required": [
+        "status"
+      ],
+      "title": "ExtractedValue[Annotated[bool, Strict(strict=True)]]",
+      "type": "object"
+    },
+    "ExtractedValue_EmailStr_": {
+      "additionalProperties": false,
+      "properties": {
         "status": {
           "$ref": "#/$defs/ExtractionStatus"
         },
@@ -578,24 +548,6 @@
           ],
           "default": null,
           "title": "Value"
-        }
-      },
-      "required": [
-        "status"
-      ],
-      "title": "ExtractedValue[EmailStr]",
-      "type": "object"
-    },
-    "ExtractedValue_HttpUrl_": {
-      "additionalProperties": false,
-      "properties": {
-        "alternatives": {
-          "items": {
-            "$ref": "#/$defs/EvidenceAlternative_HttpUrl_"
-          },
-          "maxItems": 5,
-          "title": "Alternatives",
-          "type": "array"
         },
         "evidence": {
           "items": {
@@ -619,6 +571,24 @@
           "default": null,
           "title": "Reason"
         },
+        "alternatives": {
+          "items": {
+            "$ref": "#/$defs/EvidenceAlternative_EmailStr_"
+          },
+          "maxItems": 5,
+          "title": "Alternatives",
+          "type": "array"
+        }
+      },
+      "required": [
+        "status"
+      ],
+      "title": "ExtractedValue[EmailStr]",
+      "type": "object"
+    },
+    "ExtractedValue_HttpUrl_": {
+      "additionalProperties": false,
+      "properties": {
         "status": {
           "$ref": "#/$defs/ExtractionStatus"
         },
@@ -636,24 +606,6 @@
           ],
           "default": null,
           "title": "Value"
-        }
-      },
-      "required": [
-        "status"
-      ],
-      "title": "ExtractedValue[HttpUrl]",
-      "type": "object"
-    },
-    "ExtractedValue_ResumeDate_": {
-      "additionalProperties": false,
-      "properties": {
-        "alternatives": {
-          "items": {
-            "$ref": "#/$defs/EvidenceAlternative_ResumeDate_"
-          },
-          "maxItems": 5,
-          "title": "Alternatives",
-          "type": "array"
         },
         "evidence": {
           "items": {
@@ -677,6 +629,24 @@
           "default": null,
           "title": "Reason"
         },
+        "alternatives": {
+          "items": {
+            "$ref": "#/$defs/EvidenceAlternative_HttpUrl_"
+          },
+          "maxItems": 5,
+          "title": "Alternatives",
+          "type": "array"
+        }
+      },
+      "required": [
+        "status"
+      ],
+      "title": "ExtractedValue[HttpUrl]",
+      "type": "object"
+    },
+    "ExtractedValue_ResumeDate_": {
+      "additionalProperties": false,
+      "properties": {
         "status": {
           "$ref": "#/$defs/ExtractionStatus"
         },
@@ -690,6 +660,36 @@
             }
           ],
           "default": null
+        },
+        "evidence": {
+          "items": {
+            "$ref": "#/$defs/SourceEvidence"
+          },
+          "maxItems": 10,
+          "title": "Evidence",
+          "type": "array"
+        },
+        "reason": {
+          "anyOf": [
+            {
+              "maxLength": 1000,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Reason"
+        },
+        "alternatives": {
+          "items": {
+            "$ref": "#/$defs/EvidenceAlternative_ResumeDate_"
+          },
+          "maxItems": 5,
+          "title": "Alternatives",
+          "type": "array"
         }
       },
       "required": [
@@ -707,23 +707,85 @@
       "title": "ExtractionStatus",
       "type": "string"
     },
+    "HRConfirmedFact": {
+      "additionalProperties": false,
+      "properties": {
+        "section": {
+          "enum": [
+            "personal_info",
+            "summary",
+            "skills",
+            "experiences",
+            "education",
+            "certifications",
+            "languages"
+          ],
+          "title": "Section",
+          "type": "string"
+        },
+        "label": {
+          "maxLength": 100,
+          "minLength": 1,
+          "title": "Label",
+          "type": "string"
+        },
+        "value": {
+          "maxLength": 2000,
+          "minLength": 1,
+          "title": "Value",
+          "type": "string"
+        },
+        "reason": {
+          "maxLength": 1000,
+          "minLength": 1,
+          "title": "Reason",
+          "type": "string"
+        },
+        "id": {
+          "example": "5eb7cf5a86d9755df3a6c593",
+          "title": "Id",
+          "type": "string"
+        },
+        "confirmed_by": {
+          "example": "5eb7cf5a86d9755df3a6c593",
+          "title": "Confirmed By",
+          "type": "string"
+        },
+        "confirmed_at": {
+          "format": "date-time",
+          "title": "Confirmed At",
+          "type": "string"
+        }
+      },
+      "required": [
+        "section",
+        "label",
+        "value",
+        "reason",
+        "id",
+        "confirmed_by",
+        "confirmed_at"
+      ],
+      "title": "HRConfirmedFact",
+      "type": "object"
+    },
     "PersonalInfo": {
       "additionalProperties": false,
       "properties": {
-        "email": {
-          "$ref": "#/$defs/ExtractedValue_EmailStr_"
-        },
         "full_name": {
           "$ref": "#/$defs/app__schemas__resume_extraction__ExtractedValue_Annotated_str__StringConstraints____1"
         },
-        "links": {
-          "$ref": "#/$defs/ExtractedSection_ProfileLink_"
+        "email": {
+          "$ref": "#/$defs/ExtractedValue_EmailStr_"
+        },
+        "phone": {
+          "$ref": "#/$defs/app__schemas__resume_extraction__ExtractedValue_Annotated_str__StringConstraints____1"
         },
         "location": {
           "$ref": "#/$defs/app__schemas__resume_extraction__ExtractedValue_Annotated_str__StringConstraints____1"
         },
-        "phone": {
-          "$ref": "#/$defs/app__schemas__resume_extraction__ExtractedValue_Annotated_str__StringConstraints____1"
+        "links": {
+          "$ref": "#/$defs/ExtractedSection_ProfileLink_"
         }
       },
       "required": [
@@ -739,9 +801,6 @@
     "ProfileLink": {
       "additionalProperties": false,
       "properties": {
-        "label": {
-          "$ref": "#/$defs/app__schemas__resume_extraction__ExtractedValue_Annotated_str__StringConstraints____1"
-        },
         "review_issues": {
           "items": {
             "enum": [
@@ -754,6 +813,9 @@
           "maxItems": 3,
           "title": "Review Issues",
           "type": "array"
+        },
+        "label": {
+          "$ref": "#/$defs/app__schemas__resume_extraction__ExtractedValue_Annotated_str__StringConstraints____1"
         },
         "url": {
           "$ref": "#/$defs/ExtractedValue_HttpUrl_"
@@ -770,19 +832,11 @@
       "additionalProperties": false,
       "description": "Preserve date precision: a year is not silently converted to January 1.",
       "properties": {
-        "day": {
-          "anyOf": [
-            {
-              "maximum": 31,
-              "minimum": 1,
-              "type": "integer"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Day"
+        "year": {
+          "maximum": 9999,
+          "minimum": 1,
+          "title": "Year",
+          "type": "integer"
         },
         "month": {
           "anyOf": [
@@ -798,11 +852,19 @@
           "default": null,
           "title": "Month"
         },
-        "year": {
-          "maximum": 9999,
-          "minimum": 1,
-          "title": "Year",
-          "type": "integer"
+        "day": {
+          "anyOf": [
+            {
+              "maximum": 31,
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Day"
         }
       },
       "required": [
@@ -814,28 +876,10 @@
     "ResumeExtractionOutput": {
       "additionalProperties": false,
       "properties": {
-        "certifications": {
-          "$ref": "#/$defs/ExtractedSection_Certification_"
-        },
-        "education": {
-          "$ref": "#/$defs/ExtractedSection_Education_"
-        },
-        "experiences": {
-          "$ref": "#/$defs/ExtractedSection_Experience_"
-        },
-        "languages": {
-          "$ref": "#/$defs/ExtractedSection_ResumeLanguage_"
-        },
-        "personal_info": {
-          "$ref": "#/$defs/PersonalInfo"
-        },
         "schema_version": {
           "const": "1.0",
           "title": "Schema Version",
           "type": "string"
-        },
-        "skills": {
-          "$ref": "#/$defs/ExtractedSection_Skill_"
         },
         "source_text_sha256": {
           "maxLength": 64,
@@ -844,8 +888,26 @@
           "title": "Source Text Sha256",
           "type": "string"
         },
+        "personal_info": {
+          "$ref": "#/$defs/PersonalInfo"
+        },
         "summary": {
           "$ref": "#/$defs/app__schemas__resume_extraction__ExtractedValue_Annotated_str__StringConstraints____2"
+        },
+        "skills": {
+          "$ref": "#/$defs/ExtractedSection_Skill_"
+        },
+        "experiences": {
+          "$ref": "#/$defs/ExtractedSection_Experience_"
+        },
+        "education": {
+          "$ref": "#/$defs/ExtractedSection_Education_"
+        },
+        "certifications": {
+          "$ref": "#/$defs/ExtractedSection_Certification_"
+        },
+        "languages": {
+          "$ref": "#/$defs/ExtractedSection_ResumeLanguage_"
         }
       },
       "required": [
@@ -865,12 +927,6 @@
     "ResumeLanguage": {
       "additionalProperties": false,
       "properties": {
-        "name": {
-          "$ref": "#/$defs/app__schemas__resume_extraction__ExtractedValue_Annotated_str__StringConstraints____1"
-        },
-        "proficiency": {
-          "$ref": "#/$defs/app__schemas__resume_extraction__ExtractedValue_Annotated_str__StringConstraints____1"
-        },
         "review_issues": {
           "items": {
             "enum": [
@@ -883,6 +939,12 @@
           "maxItems": 3,
           "title": "Review Issues",
           "type": "array"
+        },
+        "name": {
+          "$ref": "#/$defs/app__schemas__resume_extraction__ExtractedValue_Annotated_str__StringConstraints____1"
+        },
+        "proficiency": {
+          "$ref": "#/$defs/app__schemas__resume_extraction__ExtractedValue_Annotated_str__StringConstraints____1"
         }
       },
       "required": [
@@ -901,6 +963,12 @@
           "title": "Code",
           "type": "string"
         },
+        "name": {
+          "maxLength": 150,
+          "minLength": 1,
+          "title": "Name",
+          "type": "string"
+        },
         "description": {
           "anyOf": [
             {
@@ -914,6 +982,12 @@
           "default": null,
           "title": "Description"
         },
+        "weight": {
+          "exclusiveMinimum": 0,
+          "maximum": 1,
+          "title": "Weight",
+          "type": "number"
+        },
         "minimum_score": {
           "default": 0,
           "maximum": 100,
@@ -921,22 +995,10 @@
           "title": "Minimum Score",
           "type": "number"
         },
-        "name": {
-          "maxLength": 150,
-          "minLength": 1,
-          "title": "Name",
-          "type": "string"
-        },
         "required": {
           "default": false,
           "title": "Required",
           "type": "boolean"
-        },
-        "weight": {
-          "exclusiveMinimum": 0,
-          "maximum": 1,
-          "title": "Weight",
-          "type": "number"
         }
       },
       "required": [
@@ -993,16 +1055,16 @@
           "title": "Ai Model Id",
           "type": "string"
         },
-        "model_id": {
-          "maxLength": 150,
-          "minLength": 1,
-          "title": "Model Id",
-          "type": "string"
-        },
         "provider": {
           "maxLength": 50,
           "minLength": 1,
           "title": "Provider",
+          "type": "string"
+        },
+        "model_id": {
+          "maxLength": 150,
+          "minLength": 1,
+          "title": "Model Id",
           "type": "string"
         },
         "version": {
@@ -1024,41 +1086,10 @@
     "ScreeningSourceSnapshot": {
       "additionalProperties": false,
       "properties": {
-        "extraction_model_name": {
-          "maxLength": 150,
-          "minLength": 1,
-          "title": "Extraction Model Name",
-          "type": "string"
-        },
-        "extraction_prompt_version": {
-          "maxLength": 150,
-          "minLength": 1,
-          "title": "Extraction Prompt Version",
-          "type": "string"
-        },
-        "extraction_run_id": {
-          "example": "5eb7cf5a86d9755df3a6c593",
-          "title": "Extraction Run Id",
-          "type": "string"
-        },
-        "extractor_version": {
-          "maxLength": 150,
-          "minLength": 1,
-          "title": "Extractor Version",
-          "type": "string"
-        },
-        "profile": {
-          "$ref": "#/$defs/ResumeExtractionOutput"
-        },
-        "profile_version": {
-          "minimum": 1,
-          "title": "Profile Version",
-          "type": "integer"
-        },
-        "resume_checksum": {
-          "maxLength": 128,
-          "minLength": 32,
-          "title": "Resume Checksum",
+        "snapshot_version": {
+          "const": "1.0",
+          "default": "1.0",
+          "title": "Snapshot Version",
           "type": "string"
         },
         "resume_profile_id": {
@@ -1066,10 +1097,14 @@
           "title": "Resume Profile Id",
           "type": "string"
         },
-        "snapshot_version": {
-          "const": "1.0",
-          "default": "1.0",
-          "title": "Snapshot Version",
+        "profile_version": {
+          "minimum": 1,
+          "title": "Profile Version",
+          "type": "integer"
+        },
+        "extraction_run_id": {
+          "example": "5eb7cf5a86d9755df3a6c593",
+          "title": "Extraction Run Id",
           "type": "string"
         },
         "source_parse_revision": {
@@ -1090,6 +1125,12 @@
           "default": null,
           "title": "Source Parse Run Id"
         },
+        "resume_checksum": {
+          "maxLength": 128,
+          "minLength": 32,
+          "title": "Resume Checksum",
+          "type": "string"
+        },
         "source_text": {
           "maxLength": 1000000,
           "minLength": 1,
@@ -1102,6 +1143,84 @@
           "pattern": "^[0-9a-f]{64}$",
           "title": "Source Text Sha256",
           "type": "string"
+        },
+        "profile": {
+          "$ref": "#/$defs/ResumeExtractionOutput"
+        },
+        "extraction_model_name": {
+          "maxLength": 150,
+          "minLength": 1,
+          "title": "Extraction Model Name",
+          "type": "string"
+        },
+        "extraction_prompt_version": {
+          "maxLength": 150,
+          "minLength": 1,
+          "title": "Extraction Prompt Version",
+          "type": "string"
+        },
+        "extractor_version": {
+          "maxLength": 150,
+          "minLength": 1,
+          "title": "Extractor Version",
+          "type": "string"
+        },
+        "profile_origin": {
+          "default": "ai",
+          "enum": [
+            "ai",
+            "hr"
+          ],
+          "title": "Profile Origin",
+          "type": "string"
+        },
+        "profile_edited_by": {
+          "anyOf": [
+            {
+              "example": "5eb7cf5a86d9755df3a6c593",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Profile Edited By"
+        },
+        "profile_edit_reason": {
+          "anyOf": [
+            {
+              "maxLength": 1000,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Profile Edit Reason"
+        },
+        "profile_created_at": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Profile Created At"
+        },
+        "hr_annotations": {
+          "items": {
+            "$ref": "#/$defs/HRConfirmedFact"
+          },
+          "maxItems": 100,
+          "title": "Hr Annotations",
+          "type": "array"
         }
       },
       "required": [
@@ -1123,12 +1242,6 @@
     "Skill": {
       "additionalProperties": false,
       "properties": {
-        "level": {
-          "$ref": "#/$defs/app__schemas__resume_extraction__ExtractedValue_Annotated_str__StringConstraints____1"
-        },
-        "name": {
-          "$ref": "#/$defs/app__schemas__resume_extraction__ExtractedValue_Annotated_str__StringConstraints____1"
-        },
         "review_issues": {
           "items": {
             "enum": [
@@ -1141,6 +1254,12 @@
           "maxItems": 3,
           "title": "Review Issues",
           "type": "array"
+        },
+        "name": {
+          "$ref": "#/$defs/app__schemas__resume_extraction__ExtractedValue_Annotated_str__StringConstraints____1"
+        },
+        "level": {
+          "$ref": "#/$defs/app__schemas__resume_extraction__ExtractedValue_Annotated_str__StringConstraints____1"
         }
       },
       "required": [
@@ -1154,12 +1273,6 @@
       "additionalProperties": false,
       "description": "Exact raw_text slice, with zero-based Unicode character offsets [start, end).",
       "properties": {
-        "end": {
-          "exclusiveMinimum": 0,
-          "maximum": 1000000,
-          "title": "End",
-          "type": "integer"
-        },
         "quote": {
           "maxLength": 2000,
           "minLength": 1,
@@ -1170,6 +1283,12 @@
           "exclusiveMaximum": 1000000,
           "minimum": 0,
           "title": "Start",
+          "type": "integer"
+        },
+        "end": {
+          "exclusiveMinimum": 0,
+          "maximum": 1000000,
+          "title": "End",
           "type": "integer"
         }
       },
@@ -1184,6 +1303,12 @@
     "app__schemas__resume_extraction__EvidenceAlternative_Annotated_str__StringConstraints____1": {
       "additionalProperties": false,
       "properties": {
+        "value": {
+          "maxLength": 300,
+          "minLength": 1,
+          "title": "Value",
+          "type": "string"
+        },
         "evidence": {
           "items": {
             "$ref": "#/$defs/SourceEvidence"
@@ -1192,12 +1317,6 @@
           "minItems": 1,
           "title": "Evidence",
           "type": "array"
-        },
-        "value": {
-          "maxLength": 300,
-          "minLength": 1,
-          "title": "Value",
-          "type": "string"
         }
       },
       "required": [
@@ -1210,6 +1329,12 @@
     "app__schemas__resume_extraction__EvidenceAlternative_Annotated_str__StringConstraints____2": {
       "additionalProperties": false,
       "properties": {
+        "value": {
+          "maxLength": 5000,
+          "minLength": 1,
+          "title": "Value",
+          "type": "string"
+        },
         "evidence": {
           "items": {
             "$ref": "#/$defs/SourceEvidence"
@@ -1218,12 +1343,6 @@
           "minItems": 1,
           "title": "Evidence",
           "type": "array"
-        },
-        "value": {
-          "maxLength": 5000,
-          "minLength": 1,
-          "title": "Value",
-          "type": "string"
         }
       },
       "required": [
@@ -1236,36 +1355,6 @@
     "app__schemas__resume_extraction__ExtractedValue_Annotated_str__StringConstraints____1": {
       "additionalProperties": false,
       "properties": {
-        "alternatives": {
-          "items": {
-            "$ref": "#/$defs/app__schemas__resume_extraction__EvidenceAlternative_Annotated_str__StringConstraints____1"
-          },
-          "maxItems": 5,
-          "title": "Alternatives",
-          "type": "array"
-        },
-        "evidence": {
-          "items": {
-            "$ref": "#/$defs/SourceEvidence"
-          },
-          "maxItems": 10,
-          "title": "Evidence",
-          "type": "array"
-        },
-        "reason": {
-          "anyOf": [
-            {
-              "maxLength": 1000,
-              "minLength": 1,
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Reason"
-        },
         "status": {
           "$ref": "#/$defs/ExtractionStatus"
         },
@@ -1282,24 +1371,6 @@
           ],
           "default": null,
           "title": "Value"
-        }
-      },
-      "required": [
-        "status"
-      ],
-      "title": "ExtractedValue[Annotated[str, StringConstraints]]",
-      "type": "object"
-    },
-    "app__schemas__resume_extraction__ExtractedValue_Annotated_str__StringConstraints____2": {
-      "additionalProperties": false,
-      "properties": {
-        "alternatives": {
-          "items": {
-            "$ref": "#/$defs/app__schemas__resume_extraction__EvidenceAlternative_Annotated_str__StringConstraints____2"
-          },
-          "maxItems": 5,
-          "title": "Alternatives",
-          "type": "array"
         },
         "evidence": {
           "items": {
@@ -1323,6 +1394,24 @@
           "default": null,
           "title": "Reason"
         },
+        "alternatives": {
+          "items": {
+            "$ref": "#/$defs/app__schemas__resume_extraction__EvidenceAlternative_Annotated_str__StringConstraints____1"
+          },
+          "maxItems": 5,
+          "title": "Alternatives",
+          "type": "array"
+        }
+      },
+      "required": [
+        "status"
+      ],
+      "title": "ExtractedValue[Annotated[str, StringConstraints]]",
+      "type": "object"
+    },
+    "app__schemas__resume_extraction__ExtractedValue_Annotated_str__StringConstraints____2": {
+      "additionalProperties": false,
+      "properties": {
         "status": {
           "$ref": "#/$defs/ExtractionStatus"
         },
@@ -1339,6 +1428,36 @@
           ],
           "default": null,
           "title": "Value"
+        },
+        "evidence": {
+          "items": {
+            "$ref": "#/$defs/SourceEvidence"
+          },
+          "maxItems": 10,
+          "title": "Evidence",
+          "type": "array"
+        },
+        "reason": {
+          "anyOf": [
+            {
+              "maxLength": 1000,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Reason"
+        },
+        "alternatives": {
+          "items": {
+            "$ref": "#/$defs/app__schemas__resume_extraction__EvidenceAlternative_Annotated_str__StringConstraints____2"
+          },
+          "maxItems": 5,
+          "title": "Alternatives",
+          "type": "array"
         }
       },
       "required": [
@@ -1350,9 +1469,15 @@
   },
   "additionalProperties": false,
   "properties": {
-    "application_id": {
+    "contract_version": {
+      "const": "1.0",
+      "default": "1.0",
+      "title": "Contract Version",
+      "type": "string"
+    },
+    "run_id": {
       "example": "5eb7cf5a86d9755df3a6c593",
-      "title": "Application Id",
+      "title": "Run Id",
       "type": "string"
     },
     "company_id": {
@@ -1360,16 +1485,26 @@
       "title": "Company Id",
       "type": "string"
     },
-    "contract_version": {
-      "const": "1.0",
-      "default": "1.0",
-      "title": "Contract Version",
+    "application_id": {
+      "example": "5eb7cf5a86d9755df3a6c593",
+      "title": "Application Id",
+      "type": "string"
+    },
+    "resume_file_id": {
+      "example": "5eb7cf5a86d9755df3a6c593",
+      "title": "Resume File Id",
       "type": "string"
     },
     "input_hash": {
       "pattern": "^[0-9a-f]{64}$",
       "title": "Input Hash",
       "type": "string"
+    },
+    "source": {
+      "$ref": "#/$defs/ScreeningSourceSnapshot"
+    },
+    "scorecard": {
+      "$ref": "#/$defs/ScreeningHTTPScorecard"
     },
     "model": {
       "$ref": "#/$defs/ScreeningModelSpec"
@@ -1378,22 +1513,6 @@
       "const": "screening-v1",
       "title": "Prompt Version",
       "type": "string"
-    },
-    "resume_file_id": {
-      "example": "5eb7cf5a86d9755df3a6c593",
-      "title": "Resume File Id",
-      "type": "string"
-    },
-    "run_id": {
-      "example": "5eb7cf5a86d9755df3a6c593",
-      "title": "Run Id",
-      "type": "string"
-    },
-    "scorecard": {
-      "$ref": "#/$defs/ScreeningHTTPScorecard"
-    },
-    "source": {
-      "$ref": "#/$defs/ScreeningSourceSnapshot"
     }
   },
   "required": [

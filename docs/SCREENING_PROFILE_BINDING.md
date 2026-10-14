@@ -1,6 +1,6 @@
 # Gắn hồ sơ trích xuất với screening
 
-Ngày cập nhật: 2026-10-13. Đã triển khai BE nối profile vào screening và kiểm tra
+Ngày cập nhật: 2026-10-14. Đã triển khai BE nối profile vào screening và kiểm tra
 dẫn chứng. Bằng chứng kiểm thử của đợt này được ghi trong ISSUE_STATUS.md;
 regression không thay thế nghiệm thu chất lượng AI trên CV thật.
 
@@ -29,6 +29,12 @@ giữ văn bản gốc cùng SHA-256, parse revision, ID/version của profile v
 trích xuất, kèm metadata truy nguồn parsing/extraction. Scorecard và cấu hình
 model tiếp tục được đóng băng theo cơ chế screening hiện có.
 
+Profile có thể là bản AI hoặc revision do HR tạo. Snapshot thêm `profile_origin`,
+`profile_edited_by`, `profile_edit_reason`, `profile_created_at` và
+`hr_annotations`. Facts HR có ID, nội dung, lý do, người/thời điểm xác nhận do
+BE lưu; adapter chỉ sử dụng danh sách đã đóng băng. HR không sửa profile AI gốc.
+API chỉnh sửa và lịch sử được mô tả tại [BE_MVP.md](BE_MVP.md).
+
 Worker dùng snapshot của run cho toàn bộ một lần xử lý, kể cả retry. Worker không
 đọc profile mới nhất để âm thầm thay đầu vào của run đang chạy. Client không được
 tự gửi raw text, snapshot, worker ID, lease hoặc kết quả chấm điểm vào API tạo run.
@@ -54,6 +60,9 @@ legacy thiếu snapshot thì null. Kết quả lịch sử giữ nguyên dữ li
 Kiểm tra diễn ra ở service và router theo policy hiện có. Membership của một
 branch không cấp quyền đọc hoặc ghi branch khác trong cùng company. Company ID
 từ request phải khớp tài nguyên; ID/version profile do BE chọn và kiểm tra.
+CV không gắn branch chỉ actual owner/superuser được dùng trong screening;
+membership branch của application không tự mở quyền đọc CV này. Đọc lịch sử
+vẫn kiểm tra quyền hiện tại của nguồn gốc, kể cả khi application đổi CV.
 
 Candidate chỉ có quyền xem CV không được dùng đường screening để đọc toàn bộ
 profile. Role custom cần được cấp đủ quyền phù hợp với nghiệp vụ.
@@ -77,7 +86,7 @@ mới cần tạo run mới; không retry run cũ bằng cách sửa snapshot.
 
 ## Dẫn chứng chấm điểm
 
-BE kiểm tra mọi dẫn chứng với `raw_text` đã đóng băng, bao gồm dẫn chứng của tiêu
+Với evidence mặc định `origin=cv`, BE kiểm tra mọi dẫn chứng với `raw_text` đã đóng băng, bao gồm dẫn chứng của tiêu
 chí đã chấm, thiếu dữ liệu hoặc mâu thuẫn. Chuỗi `text` phải khớp nguyên văn;
 không fuzzy matching, không tự sửa OCR hoặc chuẩn hóa lại nguồn.
 
@@ -112,6 +121,18 @@ Quote đúng chỉ chứng minh đoạn trích tồn tại. Việc suy luận m�
 nghiệm hoặc mức điểm từ đoạn đó vẫn cần nghiệm thu model và HR review. Tổng
 điểm, coverage và quyết định cuối cùng tiếp tục do BE tính theo scorecard.
 
+Với thông tin đã được HR xác nhận ngoài CV, output dùng `origin=hr`,
+`hr_fact_id` và `text` bằng đúng `value` của fact trong snapshot. Evidence HR
+không nhận page hoặc offsets CV. ID không thuộc snapshot, value khác fact,
+hoặc evidence CV giả làm xác nhận HR đều bị từ chối. Ví dụ:
+
+```json
+{"origin":"hr","hr_fact_id":"333333333333333333333333","text":"Kubernetes"}
+```
+
+Fact ID trong ví dụ chỉ là synthetic; service phải sử dụng ID thực trong
+`source.hr_annotations` của request. Không tạo xác nhận mới trong output AI.
+
 ## Nguồn thay đổi và tính nhất quán
 
 Trước inference và completion, BE yêu cầu CV vẫn tồn tại, vẫn `parsed`, cùng parse revision,
@@ -126,7 +147,7 @@ Chỉ đọc ResumeFile trong Mongo snapshot transaction không đủ bảo vệ
 này: parsing/extraction có thể ghi ResumeFile trong khi screening chỉ ghi run
 và application. Start/preflight/completion screening vì vậy dùng CAS trên cùng ResumeFile
 và tăng `screening_fence_version` bằng `$inc` trong transaction. Đây là write
-thực sự, tạo xung đột với parse/extraction concurrent; không dùng một `$set`
+thực sự, tạo xung đột với parse/extraction và HR revision concurrent; không dùng một `$set`
 không đổi dữ liệu làm lock và không tăng `parse_revision`/file `version` để né
 race.
 
@@ -175,6 +196,8 @@ Kết quả lần chạy hiện tại được cập nhật tại
 [ISSUE_STATUS.md](reviews/ISSUE_STATUS.md). Con số **394 passed** thuộc lần sửa
 extraction trước đó, không phải bằng chứng của thay đổi screening này.
 
-Phần còn mở: AI service screening riêng, nghiệm thu trên CV thật và nhãn HR, kiểm thử
-cloud/Redis thực tế, giao diện và HR chỉnh sửa profile/override có lịch sử. Việc
-đóng băng nguồn và xác minh dẫn chứng không tự hoàn thành các phần này.
+HR chỉnh sửa profile và override có lịch sử đã có API BE, xem [BE_MVP.md](BE_MVP.md).
+Phần còn mở: AI service screening riêng, nghiệm thu model/CV thật và nhãn HR,
+cloud/provider idempotency và giao diện. Kết quả kiểm thử Mongo/Redis của BE
+được ghi riêng tại ISSUE_STATUS; không dùng regression synthetic để kết luận
+chất lượng AI.

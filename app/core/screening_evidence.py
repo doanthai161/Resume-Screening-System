@@ -38,8 +38,14 @@ def bind_screening_output(
         data = output.model_dump(mode="python", warnings=False) if isinstance(output, ScreeningOutput) else output
         result = ScreeningOutput.model_validate(data)
         data = result.model_dump(mode="python", warnings=False)
+        hr_facts = {str(fact.id): fact for fact in source.hr_annotations}
         for evaluation in data["criteria_evaluations"].values():
             for evidence in evaluation["evidence"]:
+                if evidence["origin"] == "hr":
+                    fact = hr_facts.get(str(evidence["hr_fact_id"]))
+                    if fact is None or evidence["text"] != fact.value:
+                        raise ValueError("HR evidence does not match a frozen confirmation")
+                    continue
                 if evidence["page"] is not None:
                     raise ValueError("Screening source has no verified page map")
                 quote, start, end = evidence["text"], evidence["start"], evidence["end"]

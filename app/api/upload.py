@@ -1,17 +1,64 @@
 from typing import Optional
 
-from fastapi import APIRouter, Depends, File, Form, Header, Request, UploadFile, status
+from fastapi import APIRouter, Depends, File, Form, Header, Query, Request, UploadFile, status
+from fastapi.responses import StreamingResponse
+import anyio
+import asyncio
+from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
+import threading
+from urllib.parse import quote
 
 from app.core.config import settings
 from app.core.rate_limiter import limiter
 from app.core.security import CurrentUser, require_permission
 from app.schemas.response import ApiResponse
-from app.schemas.resume import ParseResumeRequest, ParseRunResponse, ResumeResponse
+from app.schemas.resume import ParseResumeRequest, ParseRunResponse, ResumeListResponse, ResumeResponse
 from app.services.resume_service import ResumeService
+from app.core.errors import CustomError, ErrorCodes
 from app.services.extraction_service import ExtractionService
 from app.schemas.extraction import StartExtractionRequest, ExtractionRunResponse, ProfileResponse
 
 router = APIRouter()
+_download_executor = ThreadPoolExecutor(max_workers=4, thread_name_prefix="resume-download")
+_download_slots = threading.BoundedSemaphore(4)
+
+
+async def _open_download_managed(item):
+    # Reserve before submit: both queued and native work are bounded. Cancellation
+    # never releases the permit while the OS read/hash is still running.
+    slots = _download_slots
+    if not slots.acquire(blocking=False):
+        raise CustomError(ErrorCodes.RATE_LIMIT, "Resume download is busy", 429)
+    lock = threading.Lock()
+    state = {"abandoned": False, "handle": None}
+
+    def native_open():
+        handle = ResumeService._open_download(item)
+        with lock:
+            if state["abandoned"]:
+                handle.close()
+                return None
+            state["handle"] = handle
+        return handle
+
+    try:
+        future = _download_executor.submit(native_open)
+    except BaseException:
+        slots.release()
+        raise
+    future.add_done_callback(lambda _: slots.release())
+    try:
+        return await asyncio.wrap_future(future)
+    except BaseException:
+        with lock:
+            state["abandoned"] = True
+            handle = state["handle"]
+            state["handle"] = None
+        if handle is not None:
+            handle.close()
+        future.cancel()  # Cancels queued work; running work closes its late handle.
+        raise
 
 
 def _extraction_run_response(item) -> ExtractionRunResponse:
@@ -31,6 +78,10 @@ def _profile_response(item, is_current: bool) -> ProfileResponse:
         version=item.version, source_parse_revision=item.source_parse_revision, model_name=item.model_name,
         prompt_version=item.prompt_version, extractor_version=item.extractor_version,
         review_required=item.review_required, is_current=is_current, created_at=item.created_at, profile=item.profile,
+        origin=item.origin,
+        parent_profile_id=str(item.parent_profile_id) if item.parent_profile_id else None,
+        edited_by=str(item.edited_by) if item.edited_by else None,
+        edit_reason=item.edit_reason, hr_annotations=item.hr_annotations,
     )
 
 
@@ -79,7 +130,8 @@ def _resume_response(item) -> ResumeResponse:
     return ResumeResponse(
         id=str(item.id),
         company_id=str(item.company_id),
-        candidate_id=str(item.candidate_id),
+        candidate_id=str(item.candidate_id) if item.candidate_id else None,
+        company_branch_id=str(item.company_branch_id) if item.company_branch_id else None,
         original_filename=item.original_filename,
         file_size=item.file_size,
         mime_type=item.mime_type,
@@ -87,6 +139,9 @@ def _resume_response(item) -> ResumeResponse:
         status=item.status,
         uploaded_at=item.uploaded_at,
         processed_at=item.processed_at,
+        parse_revision=item.parse_revision,
+        latest_parse_run_id=str(item.latest_parse_run_id) if item.latest_parse_run_id else None,
+        latest_extraction_profile_id=str(item.latest_extraction_profile_id) if item.latest_extraction_profile_id else None,
     )
 
 
@@ -126,6 +181,74 @@ async def upload_resume(
         company_id, candidate_id, company_branch_id, file, current_user
     )
     return ApiResponse(success=True, data=_resume_response(item), message="Resume uploaded")
+
+
+@router.get("", response_model=ApiResponse[ResumeListResponse])
+@limiter.limit(settings.RATE_LIMIT_READ)
+async def list_resumes(
+    request: Request, company_id: str, candidate_id: Optional[str] = None,
+    page: int = Query(1, ge=1), size: int = Query(20, ge=1, le=100),
+    current_user: CurrentUser = Depends(require_permission("resume_files:view")),
+):
+    data = await ResumeService.list_resumes(company_id, current_user, page=page, size=size, candidate_id=candidate_id)
+    return ApiResponse(success=True, data=data, message="Resumes retrieved")
+
+
+@router.get("/{resume_id}", response_model=ApiResponse[ResumeResponse])
+@limiter.limit(settings.RATE_LIMIT_READ)
+async def get_resume(
+    request: Request, resume_id: str,
+    current_user: CurrentUser = Depends(require_permission("resume_files:view")),
+):
+    item = await ResumeService.authorized_resume(resume_id, current_user)
+    return ApiResponse(success=True, data=_resume_response(item), message="Resume retrieved")
+
+
+class _ResumeDownloadResponse(StreamingResponse):
+    def __init__(self, handle, item):
+        self.handle = handle
+        filename = Path(item.original_filename.replace("\\", "/")).name
+        filename = "".join(character for character in filename if ord(character) >= 32 and ord(character) != 127) or "resume"
+
+        async def content():
+            remaining = item.file_size
+            while remaining:
+                chunk = await anyio.to_thread.run_sync(handle.read, min(64 * 1024, remaining))
+                if not chunk:
+                    raise RuntimeError("Resume file changed during download")
+                remaining -= len(chunk)
+                yield chunk
+
+        media_type = item.mime_type if item.mime_type in settings.allowed_resume_mime_types else "application/octet-stream"
+        super().__init__(content(), media_type=media_type, headers={
+            "Content-Disposition": "attachment; filename*=utf-8''" + quote(filename, safe=""),
+            "Content-Length": str(item.file_size), "Cache-Control": "private, no-store",
+            "X-Content-Type-Options": "nosniff",
+        })
+
+    async def __call__(self, scope, receive, send):
+        try:
+            await super().__call__(scope, receive, send)
+        finally:
+            # Also closes when disconnected before the generator's first read.
+            # anyio keeps native reads joined before releasing the file handle.
+            self.handle.close()
+
+
+@router.get("/{resume_id}/download", response_class=StreamingResponse)
+@limiter.limit(settings.RATE_LIMIT_READ)
+async def download_resume(
+    request: Request, resume_id: str,
+    current_user: CurrentUser = Depends(require_permission("resume_files:view")),
+):
+    item = await ResumeService.authorized_resume(resume_id, current_user)
+    # File hashing/opening happen off the event loop and outside a DB transaction.
+    handle = await _open_download_managed(item)
+    try:
+        return _ResumeDownloadResponse(handle, item)
+    except BaseException:
+        handle.close()
+        raise
 
 
 @router.post("/{resume_id}/parse-runs", response_model=ApiResponse[ParseRunResponse], status_code=status.HTTP_202_ACCEPTED)

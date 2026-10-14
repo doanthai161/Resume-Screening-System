@@ -1,12 +1,11 @@
-from typing import Tuple, List, Any
+from typing import Tuple, List
 from bson import ObjectId
 from app.repositories.company_repository import CompanyRepository
 from app.schemas.company import CompanyCreate, CompanyUpdate
 from app.models.company import Company
-from app.models.company_branch import CompanyBranch
-from app.models.user_company import UserCompany
 from app.core.errors import CustomError, ErrorCodes
 from fastapi import status
+from app.core.transactions import current_session
 
 class CompanyService:
     @staticmethod
@@ -37,33 +36,14 @@ class CompanyService:
             if page < 1: page = 1
             if size < 1 or size > 100: size = 10
             
-            if is_superuser:
-                companies, total = await CompanyRepository.list_all_active_companies(
-                    page=page,
-                    size=size,
-                )
-                return companies, total
-
-            assignments = await UserCompany.find(
-                {"user_id": ObjectId(user_id), "is_active": True}
-            ).to_list()
-            branch_ids = [assignment.company_branch_id for assignment in assignments]
-            branches = (
-                await CompanyBranch.find({"_id": {"$in": branch_ids}, "is_active": True}).to_list()
-                if branch_ids
-                else []
-            )
-            accessible_company_ids = list({branch.company_id for branch in branches})
-            query = {
-                "is_active": True,
-                "$or": [
-                    {"user_id": ObjectId(user_id)},
-                    {"_id": {"$in": accessible_company_ids}},
-                ],
-            }
-            total = await Company.find(query).count()
-            companies = await Company.find(query).sort("-created_at").skip((page - 1) * size).limit(size).to_list()
+            query = await CompanyRepository.accessible_company_filter(user_id)
+            total = await Company.find(query, session=current_session()).count()
+            companies = await Company.find(query, session=current_session()).sort(
+                [("created_at", -1), ("_id", -1)]
+            ).skip((page - 1) * size).limit(size).to_list()
             return companies, total
+        except CustomError:
+            raise
         except Exception as e:
             raise CustomError(
                 ErrorCodes.INTERNAL,
@@ -73,7 +53,13 @@ class CompanyService:
 
     @staticmethod
     async def get_company(company_id: str, user_id: str, is_superuser: bool, permissions: List[str]) -> Company:
-        company = await CompanyRepository.get_company(company_id)
+        if not ObjectId.is_valid(company_id):
+            raise CustomError(ErrorCodes.VALIDATION, "Invalid company ID", 422)
+        # Flags/permission lists from callers do not substitute for persisted tenant access.
+        query = await CompanyRepository.accessible_company_filter(user_id)
+        company = await Company.find_one(
+            {"_id": ObjectId(company_id), "is_active": True}, session=current_session()
+        )
         if not company:
             raise CustomError(
                 ErrorCodes.NOT_FOUND,
@@ -81,11 +67,7 @@ class CompanyService:
                 status_code=status.HTTP_404_NOT_FOUND
             )
             
-        user_companies = await CompanyRepository.get_user_companies(user_id)
-        has_access = any(str(c.id) == company_id for c in user_companies)
-        permission_names = [getattr(p, "name", p) for p in permissions]
-
-        if not has_access and not (is_superuser or "admin" in permission_names):
+        if not await Company.find_one({"_id": company.id, **query}, session=current_session()):
             raise CustomError(
                 ErrorCodes.FORBIDDEN,
                 "Access denied",

@@ -119,6 +119,7 @@ async def test_result_http_tenant_authorization_and_null_json(async_client, monk
     from app.models.user_actor import UserActor
     from app.models.company_branch import CompanyBranch
     from app.models.job_application import JobApplication
+    from app.models.resume_file import ResumeFile
     from app.models.screening_run import ScreeningRun
 
     monkeypatch.setattr(settings, "ENVIRONMENT", "development")
@@ -141,9 +142,15 @@ async def test_result_http_tenant_authorization_and_null_json(async_client, monk
     else:
         caller_branch = branch
     await membership(caller, caller_branch)
+    candidate_id = ObjectId()
+    resume = await ResumeFile(
+        company_id=company.id, company_branch_id=branch.id, candidate_id=candidate_id,
+        filename="synthetic.pdf", original_filename="synthetic.pdf", file_path="unused",
+        file_size=100, mime_type="application/pdf", uploader_id=owner.id, checksum="a" * 64,
+    ).insert()
     application = await JobApplication(
         company_id=company.id, company_branch_id=branch.id,
-        candidate_id=ObjectId(), resume_file_id=ObjectId(),
+        candidate_id=candidate_id, resume_file_id=resume.id,
         job_requirement_id=ObjectId(), applied_by=owner.id,
     ).insert()
     run = await ScreeningRun(

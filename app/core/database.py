@@ -29,6 +29,7 @@ from app.models.resume_file import ResumeFile
 from app.models.resume_extraction import ResumeExtractionRun, ResumeProfile
 from app.models.resume_parse_attempt import ResumeParseAttempt
 from app.models.screening_result import ScreeningResult
+from app.models.screening_override import ScreeningOverride
 from app.models.screening_run import ResumeParseRun, ScreeningRun
 from app.models.user import User
 from app.models.auth_session import AuthSession
@@ -67,6 +68,7 @@ DOCUMENT_MODELS: list[type[Document]] = [
     ResumeParseRun,
     ResumeParseAttempt,
     ApplicationReview,
+    ScreeningOverride,
     DatabaseMigration,
 ]
 
@@ -74,7 +76,7 @@ DOCUMENT_MODELS: list[type[Document]] = [
 PERMISSION_MODELS: Sequence[type[Document]] = tuple(
     model
     for model in DOCUMENT_MODELS
-    if model not in {DatabaseMigration, AuthSession, ResumeParseAttempt, ResumeExtractionRun, ResumeProfile}
+    if model not in {DatabaseMigration, AuthSession, ResumeParseAttempt, ResumeExtractionRun, ResumeProfile, ScreeningOverride}
 )
 
 
@@ -97,6 +99,8 @@ async def _ensure_default_permissions() -> None:
             "resume_files:parse",
             "resume_files:extract",
             "resume_profiles:view",
+            "resume_profiles:edit",
+            "screening_results:override",
             "resume_files:screen",
             "screening_results:evaluate",
             "ai_models:train",
@@ -190,6 +194,7 @@ async def _ensure_default_actors() -> None:
         "application_stage_events:",
         "job_scorecards:",
         "screening_runs:",
+        "screening_results:",
         "screening_results:",
         "resume_parse_runs:",
         "application_reviews:",
@@ -381,7 +386,13 @@ async def _run_pre_init_index_migrations(database) -> None:
     """Remove only indexes explicitly replaced by this schema revision."""
     replacements = {
         "resume_files": {"uq_resume_company_checksum"},
+        "resume_profiles": {"extraction_run_id_1"},
     }
+    # Existing extraction profiles are AI results. HR revisions may share their
+    # extraction-run provenance while AI completion remains unique per run.
+    await database["resume_profiles"].update_many(
+        {"origin": {"$exists": False}}, {"$set": {"origin": "ai"}}
+    )
     for collection_name, obsolete_names in replacements.items():
         existing = await database[collection_name].index_information()
         for index_name in obsolete_names.intersection(existing):

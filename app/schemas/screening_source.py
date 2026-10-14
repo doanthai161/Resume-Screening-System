@@ -1,10 +1,13 @@
 """Immutable input provenance for a screening run, independent of live CV data."""
+from datetime import datetime
 from typing import Annotated, Literal
 
 from beanie import PydanticObjectId
-from pydantic import BaseModel, ConfigDict, Field, StringConstraints
+from pydantic import BaseModel, ConfigDict, Field, StringConstraints, field_validator, model_validator
 
 from app.schemas.resume_extraction import MAX_SOURCE_CHARACTERS, ResumeExtractionOutput
+from app.schemas.resume_profile_review import HRConfirmedFact
+from app.utils.time import ensure_utc
 
 
 VersionName = Annotated[
@@ -28,3 +31,24 @@ class ScreeningSourceSnapshot(BaseModel):
     extraction_model_name: VersionName
     extraction_prompt_version: VersionName
     extractor_version: VersionName
+    profile_origin: Literal["ai", "hr"] = "ai"
+    profile_edited_by: PydanticObjectId | None = None
+    profile_edit_reason: str | None = Field(None, min_length=1, max_length=1000)
+    profile_created_at: datetime | None = None
+    hr_annotations: list[HRConfirmedFact] = Field(default_factory=list, max_length=100)
+
+    @field_validator("profile_created_at")
+    @classmethod
+    def profile_timestamp_utc(cls, value: datetime | None) -> datetime | None:
+        return ensure_utc(value) if value is not None else None
+
+    @model_validator(mode="after")
+    def validate_hr_provenance(self):
+        if self.profile_origin == "hr":
+            if not self.profile_edited_by or not self.profile_created_at or not self.profile_edit_reason or not self.profile_edit_reason.strip():
+                raise ValueError("HR profile requires reviewer, timestamp and reason")
+        elif self.hr_annotations or self.profile_edited_by or self.profile_edit_reason:
+            raise ValueError("AI profile cannot claim HR confirmations")
+        if len({fact.id for fact in self.hr_annotations}) != len(self.hr_annotations):
+            raise ValueError("Duplicate HR confirmation identity")
+        return self

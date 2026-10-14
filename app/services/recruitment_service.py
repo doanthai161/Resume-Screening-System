@@ -7,6 +7,7 @@ from typing import Optional
 
 from beanie import PydanticObjectId
 from fastapi import status
+from pymongo.errors import DuplicateKeyError
 
 from app.core import cache
 from app.core import job_queue
@@ -145,6 +146,34 @@ async def _load_job_company(
     return job, branch
 
 
+async def _authorize_application_branch(application: JobApplication, company_id: str, caller: CurrentUser) -> None:
+    job = await JobRequirement.get(application.job_requirement_id, session=current_session())
+    if not job:
+        raise CustomError(ErrorCodes.NOT_FOUND, "Application job not found", 404)
+    branch = await CompanyBranch.get(job.company_branch_id, session=current_session())
+    if (not branch or str(branch.company_id) != company_id
+            or (application.company_branch_id and application.company_branch_id != branch.id)):
+        raise CustomError(ErrorCodes.FORBIDDEN, "Application branch does not match its job", 403)
+    if not await branch_role(caller.user_id, str(branch.id)):
+        raise CustomError(ErrorCodes.FORBIDDEN, "Application branch access denied", 403)
+    resume = await ResumeFile.find_one({"_id": application.resume_file_id,
+                                      "company_id": branch.company_id, "is_deleted": False},
+                                     session=current_session())
+    if not resume:
+        raise CustomError(ErrorCodes.NOT_FOUND, "Application resume not found", 404)
+    if resume.company_branch_id:
+        cv_branch = await CompanyBranch.get(resume.company_branch_id, session=current_session())
+        if not cv_branch or not cv_branch.is_active or cv_branch.company_id != branch.company_id:
+            raise CustomError(ErrorCodes.FORBIDDEN, "Application resume branch does not belong to company", 403)
+        if not await branch_role(caller.user_id, str(resume.company_branch_id)):
+            raise CustomError(ErrorCodes.FORBIDDEN, "Application resume branch access denied", 403)
+    else:
+        user = await User.get(PydanticObjectId(caller.user_id), session=current_session())
+        company = await Company.get(branch.company_id, session=current_session())
+        if not user or not user.is_active or not (user.is_superuser or company.user_id == user.id):
+            raise CustomError(ErrorCodes.FORBIDDEN, "Branchless application resume access denied", 403)
+
+
 class ApplicationService:
     @staticmethod
     @transactional
@@ -191,6 +220,8 @@ class ApplicationService:
             await TenantAccessService.require_company_access(
                 current_user, data.company_id
             )
+            if not await branch_role(current_user.user_id, str(branch.id)):
+                raise CustomError(ErrorCodes.FORBIDDEN, "Job branch access denied", 403)
 
         assigned_recruiter_id = None
         if data.assigned_recruiter_id:
@@ -258,6 +289,10 @@ class ApplicationService:
                 "Candidate resume not found",
                 status.HTTP_404_NOT_FOUND,
             )
+
+        if not is_self_service:
+            from app.services.resume_service import ResumeService
+            await ResumeService.authorized_resume(str(resume.id), current_user, permission="job_applications:create")
 
         existing_id = await cache.get_idempotency_result(
             "application", data.company_id, idempotency_key
@@ -356,6 +391,7 @@ class ApplicationService:
         )
         if not is_owner:
             await TenantAccessService.require_company_access(current_user, company_id)
+            await _authorize_application_branch(application, company_id, current_user)
         return application
 
     @staticmethod
@@ -380,6 +416,7 @@ class ApplicationService:
         )
         if not is_candidate_self_service:
             await TenantAccessService.require_company_access(current_user, company_id)
+        branch_ids = None if is_candidate_self_service else await TenantAccessService.authorized_branch_ids(current_user, company_id)
         size = min(size, settings.MAX_PAGE_SIZE)
         if job_requirement_id and not PydanticObjectId.is_valid(job_requirement_id):
             raise CustomError(
@@ -394,8 +431,19 @@ class ApplicationService:
             size,
             job_requirement_id or "all",
             stage.value if stage else "all",
-            current_user.user_id if is_candidate_self_service else "tenant",
+            current_user.user_id if is_candidate_self_service else ",".join(sorted(str(item) for item in branch_ids)),
         )
+        if branch_ids is not None:
+            # A CV may change branch or be deleted without changing the app.
+            # Apply both resource scopes in Mongo before count/pagination;
+            # cached list totals must never become an authorization source.
+            company = await Company.get(PydanticObjectId(company_id))
+            user = await User.get(PydanticObjectId(current_user.user_id))
+            return await RecruitmentRepository.list_applications(
+                company_id, page, size, job_requirement_id, stage.value if stage else None,
+                branch_ids=branch_ids, scope_resume=True,
+                allow_branchless=bool(user.is_superuser or company.user_id == user.id),
+            )
         cached = await cache.get_json(key)
         if cached is not None:
             try:
@@ -411,6 +459,7 @@ class ApplicationService:
             job_requirement_id,
             stage.value if stage else None,
             current_user.user_id if is_candidate_self_service else None,
+            branch_ids=branch_ids,
         )
         await cache.set_json(
             key,
@@ -432,6 +481,10 @@ class ApplicationService:
         current_user: CurrentUser,
     ) -> JobApplication:
         await TenantAccessService.require_company_access(current_user, company_id)
+        authorized_application = await RecruitmentRepository.get_application(application_id, company_id)
+        if not authorized_application:
+            raise CustomError(ErrorCodes.NOT_FOUND, "Application not found", 404)
+        await _authorize_application_branch(authorized_application, company_id, current_user)
         existing_event = await ApplicationStageEvent.find_one(
             {
                 "company_id": PydanticObjectId(company_id),
@@ -540,7 +593,9 @@ class ScorecardService:
         current_user: CurrentUser,
     ) -> JobScorecard:
         await TenantAccessService.require_company_access(current_user, data.company_id)
-        job, _ = await _load_job_company(data.job_requirement_id, data.company_id)
+        job, branch = await _load_job_company(data.job_requirement_id, data.company_id)
+        if not await branch_role(current_user.user_id, str(branch.id)):
+            raise CustomError(ErrorCodes.FORBIDDEN, "Scorecard branch access denied", 403)
         existing_request = await JobScorecard.find_one(
             {
                 "company_id": PydanticObjectId(data.company_id),
@@ -627,6 +682,9 @@ class ScorecardService:
         job_requirement_id: str, company_id: str, current_user: CurrentUser
     ) -> JobScorecard:
         await TenantAccessService.require_company_access(current_user, company_id)
+        _, branch = await _load_job_company(job_requirement_id, company_id)
+        if not await branch_role(current_user.user_id, str(branch.id)):
+            raise CustomError(ErrorCodes.FORBIDDEN, "Scorecard branch access denied", 403)
         key = cache.cache_key("scorecard", company_id, job_requirement_id, "active")
         cached = await cache.get_json(key)
         if cached:
@@ -670,7 +728,7 @@ class ScreeningService:
             raise CustomError(ErrorCodes.FORBIDDEN, "Screening access denied", 403)
         if not PydanticObjectId.is_valid(run_id):
             raise CustomError(ErrorCodes.VALIDATION, "Invalid screening run ID", 422)
-        await TenantAccessService.require_company_access(current_user, company_id)
+        company = await TenantAccessService.require_company_access(current_user, company_id)
         run = await RecruitmentRepository.get_screening_run(run_id, company_id)
         if not run:
             raise CustomError(ErrorCodes.NOT_FOUND, "Screening run not found", 404)
@@ -679,13 +737,20 @@ class ScreeningService:
             current_user.user_id, str(application.company_branch_id)
         ):
             raise CustomError(ErrorCodes.FORBIDDEN, "Application branch access denied", 403)
-        resume = await ResumeFile.get_motor_collection().find_one(
-            {"_id": run.resume_file_id}, projection={"company_id": 1, "company_branch_id": 1}, session=current_session()
-        )
-        if resume and (resume.get("company_id") != run.company_id or (
-            resume.get("company_branch_id") and not await branch_role(current_user.user_id, str(resume["company_branch_id"]))
-        )):
-            raise CustomError(ErrorCodes.FORBIDDEN, "Resume branch access denied", 403)
+        resume = await ResumeFile.find_one({"_id": run.resume_file_id}, session=current_session())
+        if resume:
+            if resume.company_id != run.company_id:
+                raise CustomError(ErrorCodes.FORBIDDEN, "Resume does not belong to this company", 403)
+            from app.services.resume_service import ResumeService
+            # Historical results survive soft deletion, but their original CV
+            # retains the same live company/branch policy as CV reads.
+            await ResumeService._authorize_record(resume, current_user)
+        else:
+            # A missing CV cannot supply its branch scope. Only the company's
+            # actual owner or a current superuser may read the retained audit.
+            user = await User.get(PydanticObjectId(current_user.user_id), session=current_session())
+            if not user or not user.is_active or not (user.is_superuser or company.user_id == user.id):
+                raise CustomError(ErrorCodes.FORBIDDEN, "Historical resume access denied", 403)
         return run
 
     @staticmethod
@@ -789,6 +854,9 @@ class ScreeningService:
                 source_text=resume.parsed_data.raw_text, source_text_sha256=profile.profile.source_text_sha256,
                 profile=profile.profile, extraction_model_name=profile.model_name,
                 extraction_prompt_version=profile.prompt_version, extractor_version=profile.extractor_version,
+                profile_origin=profile.origin, profile_edited_by=profile.edited_by,
+                profile_edit_reason=profile.edit_reason, profile_created_at=profile.created_at,
+                hr_annotations=profile.hr_annotations,
             ))
         except ValueError:
             raise CustomError(ErrorCodes.CONFLICT, "Invalid extracted profile source", 409) from None
@@ -888,6 +956,7 @@ class ReviewService:
             raise CustomError(
                 ErrorCodes.NOT_FOUND, "Application not found", status.HTTP_404_NOT_FOUND
             )
+        await _authorize_application_branch(application, data.company_id, current_user)
         review = ApplicationReview(
             company_id=PydanticObjectId(data.company_id),
             application_id=application.id,
@@ -898,5 +967,17 @@ class ReviewService:
             recommendation=data.recommendation,
             summary=data.summary,
         )
-        await review.insert(session=current_session())
+        try:
+            await review.insert(session=current_session())
+        except DuplicateKeyError:
+            raise CustomError(ErrorCodes.CONFLICT, "A review already exists for this reviewer and round", 409) from None
         return review
+
+    @staticmethod
+    async def list(application_id: str, company_id: str, caller: CurrentUser, page: int = 1, size: int = 20):
+        await TenantAccessService.require_company_access(caller, company_id)
+        application = await RecruitmentRepository.get_application(application_id, company_id)
+        if not application:
+            raise CustomError(ErrorCodes.NOT_FOUND, "Application not found", 404)
+        await _authorize_application_branch(application, company_id, caller)
+        return await RecruitmentRepository.list_reviews(application_id, company_id, page, size)

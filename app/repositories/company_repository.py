@@ -17,8 +17,24 @@ from app.core.redis import get_redis, is_redis_available
 from app.core import cache as shared_cache
 from app.core.monitoring import monitor_db_operation, monitor_cache_operation
 from app.utils.time import now_utc
+from app.core.errors import CustomError, ErrorCodes
+from app.core.tenant_policy import active_membership_filter
+from app.core.transactions import current_session
 
 logger = logging.getLogger(__name__)
+
+
+def restore_cached_document(data: Any, document_model):
+    """Restore BSON identity fields before validating cached business metadata."""
+    if not isinstance(data, dict):
+        raise ValueError("Cached document must be an object")
+    data = dict(data)
+    for key in ("_id", "id", "user_id", "company_id", "created_by", "updated_by"):
+        if isinstance(data.get(key), str):
+            if not ObjectId.is_valid(data[key]):
+                raise ValueError("Invalid cached document identity")
+            data[key] = ObjectId(data[key])
+    return document_model.model_validate(data)
 
 
 class CompanyRepository:
@@ -26,6 +42,28 @@ class CompanyRepository:
     COMPANY_CACHE_TTL = 3600
     BRANCH_CACHE_TTL = 3600
     USER_COMPANY_CACHE_TTL = 1800
+
+    @staticmethod
+    async def accessible_company_filter(user_id: str) -> dict:
+        """Authorize from current DB state; cached company lists never grant access."""
+        if not ObjectId.is_valid(user_id):
+            raise CustomError(ErrorCodes.VALIDATION, "Invalid user ID", 422)
+        user_id_obj = ObjectId(user_id)
+        caller = await User.get(user_id_obj, session=current_session())
+        if not caller or not caller.is_active:
+            raise CustomError(ErrorCodes.FORBIDDEN, "Active user required", 403)
+        if caller.is_superuser:
+            return {"is_active": True}
+        assignments = await UserCompany.find(
+            {"user_id": user_id_obj, **active_membership_filter()}, session=current_session()
+        ).to_list()
+        branches = await CompanyBranch.find(
+            {"_id": {"$in": [item.company_branch_id for item in assignments]}, "is_active": True},
+            session=current_session(),
+        ).to_list() if assignments else []
+        return {"is_active": True, "$or": [
+            {"user_id": user_id_obj}, {"_id": {"$in": list({item.company_id for item in branches})}},
+        ]}
 
     @staticmethod
     def _get_company_cache_key(company_id: str) -> str:
@@ -132,10 +170,13 @@ class CompanyRepository:
         cached_data = await CompanyRepository._get_from_cache(cache_key)
 
         if cached_data:
-            logger.debug(f"Cache hit for company: {company_id}")
-            company = Company.model_validate(cached_data)
-            setattr(company, "_from_cache", True)
-            return company
+            try:
+                company = restore_cached_document(cached_data, Company)
+                if str(company.id) != company_id:
+                    raise ValueError("Cached company identity mismatch")
+                return company
+            except (ValueError, TypeError):
+                await CompanyRepository._delete_cache(cache_key)
 
         try:
             company = await Company.get(ObjectId(company_id))
@@ -253,10 +294,13 @@ class CompanyRepository:
         cached_data = await CompanyRepository._get_from_cache(cache_key)
 
         if cached_data:
-            logger.debug(f"Cache hit for branch: {branch_id}")
-            branch = CompanyBranch.model_validate(cached_data)
-            setattr(branch, "_from_cache", True)
-            return branch
+            try:
+                branch = restore_cached_document(cached_data, CompanyBranch)
+                if str(branch.id) != branch_id:
+                    raise ValueError("Cached branch identity mismatch")
+                return branch
+            except (ValueError, TypeError):
+                await CompanyRepository._delete_cache(cache_key)
 
         try:
             branch = await CompanyBranch.get(ObjectId(branch_id))
@@ -347,88 +391,30 @@ class CompanyRepository:
     @monitor_db_operation("company_list_user")
     @monitor_cache_operation("company_list_user")
     async def get_user_companies(user_id: str) -> List[Company]:
-        cache_key = CompanyRepository._get_user_companies_cache_key(user_id)
-        cached_data = await CompanyRepository._get_from_cache(cache_key)
-
-        if cached_data:
-            logger.debug(f"Cache hit for user companies: {user_id}")
-            companies = [Company.model_validate(item) for item in cached_data]
-            for company in companies:
-                setattr(company, "_from_cache", True)
-            return companies
-
-        try:
-            assigned_branches = await UserCompany.find(
-                {"user_id": ObjectId(user_id), "is_active": True}
-            ).to_list()
-            branch_ids = [a.company_branch_id for a in assigned_branches]
-
-            company_ids_from_branches = []
-            if branch_ids:
-                branches = await CompanyBranch.find(
-                    {"_id": {"$in": branch_ids}}
-                ).to_list()
-                company_ids_from_branches = [b.company_id for b in branches]
-
-            companies = await Company.find(
-                {
-                    "$or": [
-                        {"user_id": ObjectId(user_id)},
-                        {"_id": {"$in": company_ids_from_branches}},
-                    ],
-                    "is_active": True,
-                }
-            ).to_list()
-
-            if companies:
-                await CompanyRepository._set_cache(
-                    cache_key,
-                    [company.dict() for company in companies],
-                    CompanyRepository.USER_COMPANY_CACHE_TTL,
-                )
-                logger.debug(f"Cache set for user companies: {user_id}")
-
-            return companies
-
-        except Exception as e:
-            logger.error(f"Error getting user companies for {user_id}: {e}")
-            return []
+        query = await CompanyRepository.accessible_company_filter(user_id)
+        return await Company.find(query, session=current_session()).sort(
+            [("created_at", -1), ("_id", -1)]
+        ).to_list()
 
     @staticmethod
     @monitor_db_operation("branch_list_user")
     @monitor_cache_operation("branch_list_user")
     async def get_user_company_branches(user_id: str) -> List[CompanyBranch]:
-        cache_key = CompanyRepository._get_user_branches_cache_key(user_id)
-        cached_data = await CompanyRepository._get_from_cache(cache_key)
-
-        if cached_data:
-            logger.debug(f"Cache hit for user branches: {user_id}")
-            branches = [CompanyBranch.model_validate(item) for item in cached_data]
-            for branch in branches:
-                setattr(branch, "_from_cache", True)
-            return branches
-
-        try:
-            companies = await CompanyRepository.get_user_companies(user_id)
-            company_ids = [company.id for company in companies]
-
-            branches = await CompanyBranch.find(
-                {"company_id": {"$in": company_ids}, "is_active": True}
+        companies = await CompanyRepository.get_user_companies(user_id)
+        caller = await User.get(ObjectId(user_id), session=current_session())
+        if not caller or not caller.is_active:
+            raise CustomError(ErrorCodes.FORBIDDEN, "Active user required", 403)
+        query = {"company_id": {"$in": [item.id for item in companies]}, "is_active": True}
+        if not caller.is_superuser:
+            links = await UserCompany.find(
+                {"user_id": caller.id, **active_membership_filter()}, session=current_session()
             ).to_list()
-
-            if branches:
-                await CompanyRepository._set_cache(
-                    cache_key,
-                    [branch.dict() for branch in branches],
-                    CompanyRepository.USER_COMPANY_CACHE_TTL,
-                )
-                logger.debug(f"Cache set for user branches: {user_id}")
-
-            return branches
-
-        except Exception as e:
-            logger.error(f"Error getting user branches for {user_id}: {e}")
-            return []
+            owned = [item.id for item in companies if item.user_id == caller.id]
+            query["$or"] = [{"company_id": {"$in": owned}},
+                            {"_id": {"$in": [item.company_branch_id for item in links]}}]
+        return await CompanyBranch.find(query, session=current_session()).sort(
+            [("branch_name", 1), ("_id", 1)]
+        ).to_list()
 
     @staticmethod
     @monitor_db_operation("branch_list_company")
@@ -438,11 +424,15 @@ class CompanyRepository:
         cached_data = await CompanyRepository._get_from_cache(cache_key)
 
         if cached_data:
-            logger.debug(f"Cache hit for company branches: {company_id}")
-            branches = [CompanyBranch.model_validate(item) for item in cached_data]
-            for branch in branches:
-                setattr(branch, "_from_cache", True)
-            return branches
+            try:
+                if not isinstance(cached_data, list):
+                    raise ValueError("Cached branches must be a list")
+                branches = [restore_cached_document(item, CompanyBranch) for item in cached_data]
+                if any(str(item.company_id) != company_id for item in branches):
+                    raise ValueError("Cached branches do not belong to company")
+                return branches
+            except (ValueError, TypeError):
+                await CompanyRepository._delete_cache(cache_key)
 
         try:
             branches = (

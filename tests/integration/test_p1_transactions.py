@@ -320,7 +320,7 @@ async def test_uploaded_pdf_pipeline_persists_once_with_concurrent_deliveries(mo
     monkeypatch.setattr("app.workers.circuit_breaker.get_redis", lambda: None)
     owner, company, _, _ = await job_data()
     candidate = await Candidate(company_id=company.id, full_name="Synthetic Candidate", created_by=owner.id).insert()
-    current = CurrentUser(user=owner)
+    current = CurrentUser(user=owner, permission_names={"resume_files:upload", "resume_files:parse", "resume_files:view"})
     resume = await ResumeService.upload(str(company.id), str(candidate.id), None,
         UploadFile(file=BytesIO(digital_pdf()), filename="synthetic.pdf", headers=Headers({"content-type": "application/pdf"})), current)
     run = await ResumeService.start_parse(str(resume.id), ParseResumeRequest(company_id=str(company.id)), uuid4().hex, current)
@@ -573,11 +573,18 @@ async def test_membership_mutations_use_transaction_and_role_policy():
 
 async def test_stage_event_failure_rolls_back_application(monkeypatch):
     owner, company, branch, job = await job_data()
+    candidate_id = ObjectId()
+    resume = await ResumeFile(
+        company_id=company.id, company_branch_id=branch.id, candidate_id=candidate_id,
+        filename="rollback-test.pdf", original_filename="rollback-test.pdf",
+        file_path="uploads/resumes/rollback-test.pdf", file_size=100,
+        mime_type="application/pdf", uploader_id=owner.id, checksum="a" * 64,
+    ).insert()
     application = await JobApplication(
         company_id=company.id,
         company_branch_id=branch.id,
-        candidate_id=ObjectId(),
-        resume_file_id=ObjectId(),
+        candidate_id=candidate_id,
+        resume_file_id=resume.id,
         job_requirement_id=job.id,
         applied_by=owner.id,
         idempotency_key="application-test",

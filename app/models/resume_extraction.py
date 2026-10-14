@@ -1,6 +1,6 @@
 """Durable extraction input and immutable, versioned profile results."""
 from datetime import datetime
-from typing import Optional
+from typing import Literal, Optional
 
 from beanie import Document, PydanticObjectId
 from pydantic import Field
@@ -8,6 +8,7 @@ from pymongo import ASCENDING, DESCENDING, IndexModel
 
 from app.models.screening_run import ProcessingStatus
 from app.schemas.resume_extraction import ResumeExtractionOutput
+from app.schemas.resume_profile_review import HRConfirmedFact
 from app.utils.time import now_utc
 
 PROMPT_VERSION = "resume-extract-v1"
@@ -67,12 +68,23 @@ class ResumeProfile(Document):
     extractor_version: str
     profile: ResumeExtractionOutput
     review_required: bool
+    origin: Literal["ai", "hr"] = "ai"
+    parent_profile_id: Optional[PydanticObjectId] = None
+    edited_by: Optional[PydanticObjectId] = None
+    edit_reason: Optional[str] = Field(None, max_length=1000)
+    hr_annotations: list[HRConfirmedFact] = Field(default_factory=list, max_length=100)
+    idempotency_key: Optional[str] = Field(None, min_length=8, max_length=128)
+    edit_input_hash: Optional[str] = Field(None, min_length=64, max_length=64)
     created_at: datetime = Field(default_factory=now_utc)
 
     class Settings:
         name = "resume_profiles"
         indexes = [
-            IndexModel([("extraction_run_id", ASCENDING)], unique=True),
+            IndexModel([("extraction_run_id", ASCENDING)], unique=True,
+                       partialFilterExpression={"origin": "ai"}, name="uq_ai_profile_extraction_run"),
+            IndexModel([("company_id", ASCENDING), ("idempotency_key", ASCENDING)], unique=True,
+                       partialFilterExpression={"idempotency_key": {"$type": "string"}},
+                       name="uq_hr_profile_revision_key"),
             IndexModel([("resume_file_id", ASCENDING), ("version", DESCENDING)], unique=True),
             IndexModel([("company_id", ASCENDING), ("resume_file_id", ASCENDING)]),
         ]

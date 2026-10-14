@@ -98,11 +98,13 @@ async def list_companies(
     start_time = time.time()
     
     try:
+        page = max(1, page)
+        size = size if 1 <= size <= 100 else 10
         companies, total = await CompanyService.list_companies(
             page,
             size,
             str(current_user.user_id),
-            current_user.is_admin,
+            current_user.is_superuser,
         )
         
         company_responses = []
@@ -157,7 +159,7 @@ async def get_company(
         company = await CompanyService.get_company(
             company_id=company_id,
             user_id=str(current_user.id),
-            is_superuser=current_user.is_admin,
+            is_superuser=current_user.is_superuser,
             permissions=getattr(current_user, "permissions", [])
         )
         

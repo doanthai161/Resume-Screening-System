@@ -3,19 +3,8 @@
     "CriterionEvaluation": {
       "additionalProperties": false,
       "properties": {
-        "evidence": {
-          "items": {
-            "$ref": "#/$defs/CriterionEvidence"
-          },
-          "maxItems": 10,
-          "title": "Evidence",
-          "type": "array"
-        },
-        "reason": {
-          "maxLength": 2000,
-          "minLength": 1,
-          "title": "Reason",
-          "type": "string"
+        "status": {
+          "$ref": "#/$defs/CriterionStatus"
         },
         "score": {
           "anyOf": [
@@ -31,8 +20,19 @@
           "default": null,
           "title": "Score"
         },
-        "status": {
-          "$ref": "#/$defs/CriterionStatus"
+        "reason": {
+          "maxLength": 2000,
+          "minLength": 1,
+          "title": "Reason",
+          "type": "string"
+        },
+        "evidence": {
+          "items": {
+            "$ref": "#/$defs/CriterionEvidence"
+          },
+          "maxItems": 10,
+          "title": "Evidence",
+          "type": "array"
         },
         "verification_question": {
           "anyOf": [
@@ -59,20 +59,6 @@
     "CriterionEvidence": {
       "additionalProperties": false,
       "properties": {
-        "end": {
-          "anyOf": [
-            {
-              "exclusiveMinimum": 0,
-              "maximum": 1000000,
-              "type": "integer"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "End"
-        },
         "page": {
           "anyOf": [
             {
@@ -85,6 +71,12 @@
           ],
           "default": null,
           "title": "Page"
+        },
+        "text": {
+          "maxLength": 2000,
+          "minLength": 1,
+          "title": "Text",
+          "type": "string"
         },
         "start": {
           "anyOf": [
@@ -100,11 +92,41 @@
           "default": null,
           "title": "Start"
         },
-        "text": {
-          "maxLength": 2000,
-          "minLength": 1,
-          "title": "Text",
+        "end": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0,
+              "maximum": 1000000,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "End"
+        },
+        "origin": {
+          "default": "cv",
+          "enum": [
+            "cv",
+            "hr"
+          ],
+          "title": "Origin",
           "type": "string"
+        },
+        "hr_fact_id": {
+          "anyOf": [
+            {
+              "example": "5eb7cf5a86d9755df3a6c593",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Hr Fact Id"
         }
       },
       "required": [
@@ -130,16 +152,16 @@
           "title": "Ai Model Id",
           "type": "string"
         },
-        "model_id": {
-          "maxLength": 150,
-          "minLength": 1,
-          "title": "Model Id",
-          "type": "string"
-        },
         "provider": {
           "maxLength": 50,
           "minLength": 1,
           "title": "Provider",
+          "type": "string"
+        },
+        "model_id": {
+          "maxLength": 150,
+          "minLength": 1,
+          "title": "Model Id",
           "type": "string"
         },
         "version": {
@@ -161,20 +183,6 @@
     "ScreeningOutput": {
       "additionalProperties": false,
       "properties": {
-        "ai_confidence": {
-          "anyOf": [
-            {
-              "maximum": 1,
-              "minimum": 0,
-              "type": "number"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Ai Confidence"
-        },
         "criteria_evaluations": {
           "additionalProperties": {
             "$ref": "#/$defs/CriterionEvaluation"
@@ -182,22 +190,6 @@
           "maxProperties": 50,
           "title": "Criteria Evaluations",
           "type": "object"
-        },
-        "matched_skills": {
-          "items": {
-            "type": "string"
-          },
-          "maxItems": 200,
-          "title": "Matched Skills",
-          "type": "array"
-        },
-        "missing_skills": {
-          "items": {
-            "type": "string"
-          },
-          "maxItems": 200,
-          "title": "Missing Skills",
-          "type": "array"
         },
         "strengths": {
           "items": {
@@ -214,6 +206,36 @@
           "maxItems": 100,
           "title": "Weaknesses",
           "type": "array"
+        },
+        "missing_skills": {
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 200,
+          "title": "Missing Skills",
+          "type": "array"
+        },
+        "matched_skills": {
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 200,
+          "title": "Matched Skills",
+          "type": "array"
+        },
+        "ai_confidence": {
+          "anyOf": [
+            {
+              "maximum": 1,
+              "minimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Ai Confidence"
         }
       },
       "required": [
@@ -231,25 +253,19 @@
       "title": "Contract Version",
       "type": "string"
     },
+    "run_id": {
+      "example": "5eb7cf5a86d9755df3a6c593",
+      "title": "Run Id",
+      "type": "string"
+    },
     "input_hash": {
       "pattern": "^[0-9a-f]{64}$",
       "title": "Input Hash",
       "type": "string"
     },
-    "model": {
-      "$ref": "#/$defs/ScreeningModelSpec"
-    },
-    "output": {
-      "$ref": "#/$defs/ScreeningOutput"
-    },
-    "profile_version": {
-      "minimum": 1,
-      "title": "Profile Version",
-      "type": "integer"
-    },
-    "prompt_version": {
-      "const": "screening-v1",
-      "title": "Prompt Version",
+    "source_text_sha256": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Source Text Sha256",
       "type": "string"
     },
     "resume_profile_id": {
@@ -257,10 +273,10 @@
       "title": "Resume Profile Id",
       "type": "string"
     },
-    "run_id": {
-      "example": "5eb7cf5a86d9755df3a6c593",
-      "title": "Run Id",
-      "type": "string"
+    "profile_version": {
+      "minimum": 1,
+      "title": "Profile Version",
+      "type": "integer"
     },
     "scorecard_id": {
       "example": "5eb7cf5a86d9755df3a6c593",
@@ -272,10 +288,16 @@
       "title": "Scorecard Version",
       "type": "integer"
     },
-    "source_text_sha256": {
-      "pattern": "^[0-9a-f]{64}$",
-      "title": "Source Text Sha256",
+    "model": {
+      "$ref": "#/$defs/ScreeningModelSpec"
+    },
+    "prompt_version": {
+      "const": "screening-v1",
+      "title": "Prompt Version",
       "type": "string"
+    },
+    "output": {
+      "$ref": "#/$defs/ScreeningOutput"
     }
   },
   "required": [

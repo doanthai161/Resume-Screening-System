@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import Optional
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field, field_validator
 
 from app.models.screening_run import ProcessingStatus
 
@@ -17,9 +17,11 @@ def _object_id(value: Optional[str]) -> Optional[str]:
 
 
 class ResumeResponse(BaseModel):
-    id: str
+    model_config = ConfigDict(from_attributes=True)
+    id: str = Field(validation_alias=AliasChoices("id", "_id"))
     company_id: str
-    candidate_id: str
+    candidate_id: Optional[str] = None
+    company_branch_id: Optional[str] = None
     original_filename: str
     file_size: int
     mime_type: str
@@ -27,6 +29,22 @@ class ResumeResponse(BaseModel):
     status: str
     uploaded_at: datetime
     processed_at: Optional[datetime] = None
+    parse_revision: int = 0
+    latest_parse_run_id: Optional[str] = None
+    latest_extraction_profile_id: Optional[str] = None
+
+    @field_validator("id", "company_id", "candidate_id", "company_branch_id",
+                     "latest_parse_run_id", "latest_extraction_profile_id", mode="before")
+    @classmethod
+    def stringify_ids(cls, value):
+        return str(value) if value is not None else None
+
+
+class ResumeListResponse(BaseModel):
+    items: list[ResumeResponse]
+    total: int
+    page: int
+    size: int
 
 
 class ParseResumeRequest(BaseModel):

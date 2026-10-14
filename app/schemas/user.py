@@ -144,6 +144,8 @@ class VerifyOTPResponse(BaseModel):
     user: UserResponse
 
 class UserActorResponse(BaseModel):
+    id: Optional[str] = None
+    user_actor_id: Optional[str] = None
     user_id: str
     full_name: Optional[str]
     actor: ActorResponse

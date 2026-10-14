@@ -1,8 +1,9 @@
 # Worker screening kết nối AI service HTTP
 
-Ngày cập nhật: 2026-10-13. Đã triển khai contract và adapter HTTP ở BE; bản cuối
-đạt **593 passed**, không skipped, với MongoDB replica set test riêng.
-HTTP AI và Redis trong regression vẫn dùng test double.
+Ngày cập nhật: 2026-10-14. Đã triển khai contract và adapter HTTP ở BE, bổ sung
+nguồn profile và dẫn chứng HR. **593 passed** là bằng chứng lịch sử của đợt
+adapter ngày 2026-10-13; kết quả mới nhất nằm tại
+[ISSUE_STATUS.md](reviews/ISSUE_STATUS.md).
 
 Phạm vi là kết nối worker screening với một AI service riêng. Repository chưa
 có server thực thi endpoint `POST /v1/screen`. Process
@@ -107,6 +108,15 @@ do. Evidence tuân theo
 [SCREENING_PROFILE_BINDING.md](SCREENING_PROFILE_BINDING.md): text nguyên văn,
 offsets Unicode được xác minh, quote không có offsets phải duy nhất, page null.
 BE kiểm tra lại dẫn chứng trước khi commit kết quả.
+
+Từ đợt MVP ngày 2026-10-14, `source` còn có `profile_origin` và metadata người/
+lý do/thời điểm HR tạo revision, cùng `hr_annotations` đã được BE xác nhận.
+Evidence mặc định `origin=cv` giữ nguyên quy tắc quote. Evidence `origin=hr`
+phải trỏ `hr_fact_id` trong snapshot và có text bằng đúng value đã lưu;
+không được có page/offsets. AI service không tạo hoặc sửa xác nhận HR.
+Các field mới có default để đọc dữ liệu CV-only cũ, contract vẫn `1.0`;
+service dùng schema allowlist cũ cần cập nhật trước khi xử lý profile HR.
+JSON Schema/ví dụ đã được sinh lại từ model Python.
 
 ## Cấu hình và khởi động worker
 
@@ -228,7 +238,7 @@ binding để replay không tạo công việc khác. Header ổn định của 
 5. Chạy corpus có nhãn HR để kiểm tra quote, trạng thái null/mâu thuẫn và mức
    điểm. Nghiệm thu E2E worker → AI service → provider → BE riêng với tests mock.
 
-## Xác minh đợt này
+## Bằng chứng lịch sử đợt adapter 2026-10-13
 
 Bản cuối: `python -m pytest -q --disable-warnings --maxfail=1` đạt **593 passed**,
 không skipped, với `TEST_MONGODB_URI` của replica set test riêng tại loopback

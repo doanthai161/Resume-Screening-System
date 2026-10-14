@@ -25,7 +25,9 @@
             "page": null,
             "text": "Python",
             "start": 25,
-            "end": 31
+            "end": 31,
+            "origin": "cv",
+            "hr_fact_id": null
           }
         ],
         "verification_question": null

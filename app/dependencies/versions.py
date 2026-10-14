@@ -13,6 +13,9 @@ from app.api import (
     candidates,
     recruitment,
     upload,
+    ai_models,
+    resume_profile_reviews,
+    screening_overrides,
 )
 
 
@@ -31,3 +34,6 @@ api_router.include_router(job_requirements.router, prefix="/job-requirements", t
 api_router.include_router(candidates.router, prefix="/candidates", tags=["Candidates"])
 api_router.include_router(recruitment.router, prefix="/recruitment", tags=["Recruitment"])
 api_router.include_router(upload.router, prefix="/resumes", tags=["Resumes"])
+api_router.include_router(ai_models.router, prefix="/ai-models", tags=["Screening Models"])
+api_router.include_router(resume_profile_reviews.router, prefix="/resumes", tags=["HR Profile Review"])
+api_router.include_router(screening_overrides.router, prefix="/recruitment", tags=["HR Screening Review"])

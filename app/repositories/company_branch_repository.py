@@ -15,6 +15,8 @@ from app.core import cache as shared_cache
 from app.core.monitoring import monitor_db_operation, monitor_cache_operation
 from app.utils.time import now_utc
 from beanie.exceptions import RevisionIdWasChanged
+from pydantic import BaseModel
+from app.repositories.company_repository import restore_cached_document
 
 logger = logging.getLogger(__name__)
 
@@ -67,7 +69,7 @@ class CompanyBranchRepository:
         )
 
     @staticmethod
-    def cache_result(ttl: int = 300, key_func=None):
+    def cache_result(ttl: int = 300, key_func=None, model=None, many: bool = False):
         def decorator(func):
             @wraps(func)
             async def wrapper(*args, **kwargs):
@@ -84,8 +86,16 @@ class CompanyBranchRepository:
 
                 cached = await CompanyBranchRepository._get_cached(cache_key)
                 if cached is not None:
-                    logger.debug(f"Cache hit for {func.__name__}")
-                    return cached
+                    try:
+                        if model is None:
+                            return cached
+                        if many:
+                            if not isinstance(cached, list):
+                                raise ValueError("Cached documents must be a list")
+                            return [restore_cached_document(item, model) for item in cached]
+                        return restore_cached_document(cached, model)
+                    except (ValueError, TypeError):
+                        await CompanyBranchRepository._delete_cached(cache_key)
 
                 result = await func(*args, **kwargs)
 
@@ -126,7 +136,11 @@ class CompanyBranchRepository:
                 value_to_store = data
                 effective_ttl = ttl
             else:
-                value_to_store = json.dumps(data, default=str)
+                def encode(value):
+                    if isinstance(value, BaseModel):
+                        return value.model_dump(mode="json", by_alias=True)
+                    return str(value)
+                value_to_store = json.dumps(data, default=encode)
                 effective_ttl = ttl
 
             await redis_client.setex(
@@ -248,7 +262,7 @@ class CompanyBranchRepository:
     @monitor_db_operation("branch_get")
     @monitor_cache_operation("branch_get")
     @cache_result(ttl=BRANCH_CACHE_TTL, key_func=lambda branch_id:
-                  CompanyBranchRepository._get_branch_key(branch_id))
+                  CompanyBranchRepository._get_branch_key(branch_id), model=CompanyBranch)
     async def get_company_branch(branch_id: str) -> Optional[CompanyBranch]:
         pipeline = [
             {
@@ -349,7 +363,8 @@ class CompanyBranchRepository:
     @monitor_db_operation("branch_list_company")
     @monitor_cache_operation("branch_list_company")
     @cache_result(ttl=BRANCH_LIST_CACHE_TTL, key_func=lambda company_id, active_only=True:
-                  CompanyBranchRepository._get_company_branches_key(company_id, active_only))
+                  CompanyBranchRepository._get_company_branches_key(company_id, active_only),
+                  model=CompanyBranch, many=True)
     async def get_company_branches(
         company_id: str,
         active_only: bool = True
@@ -363,7 +378,7 @@ class CompanyBranchRepository:
             return branches
         except Exception as e:
             logger.error(f"Error getting company branches: {e}")
-            return []
+            raise
 
     @staticmethod
     @monitor_db_operation("branch_list_user")

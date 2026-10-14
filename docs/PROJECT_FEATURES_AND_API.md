@@ -1,7 +1,7 @@
 # Tổng hợp tính năng và API — Resume Screening System
 
-Ngày rà soát: **2026-10-13**. Tài liệu phản ánh code trong working tree hiện tại,
-bao gồm adapter HTTP screening vừa triển khai. Đây là bản tra cứu tính năng và
+Ngày rà soát: **2026-10-14**. Tài liệu phản ánh code trong working tree hiện tại,
+bao gồm API MVP cho CV, model selection, revision hồ sơ HR và screening override. Đây là bản tra cứu tính năng và
 endpoint; không phải tuyên bố đã nghiệm thu toàn bộ MVP với model/cloud thật.
 
 Nguồn đối chiếu: router đăng ký tại [versions.py](../app/dependencies/versions.py),
@@ -10,17 +10,17 @@ service, repository và policy được các handler sử dụng.
 
 ## 1. Phạm vi và cách đọc
 
-- **BE chính** (`app.main:app`): 84 endpoint nghiệp vụ dưới prefix mặc định
-  `/api/v1`, cộng 7 endpoint thông tin/health/monitoring ở root: **91 endpoint**.
+- **BE chính** (`app.main:app`): 93 endpoint nghiệp vụ dưới prefix mặc định
+  `/api/v1`, cộng 7 endpoint thông tin/health/monitoring ở root: **100 endpoint**.
 - **Extractor riêng** (`app.extraction_service:app`): **3 endpoint khai báo trực
   tiếp**. Cùng đường dẫn `/live` hoặc `/ready` ở hai process là hai API riêng.
-- Tổng cộng **94 cặp method/URL theo service** khai báo trực tiếp trong code.
+- Tổng cộng **103 cặp method/URL theo service** khai báo trực tiếp trong code.
   Các URL tài liệu OpenAPI được framework sinh tự động được ghi riêng bên dưới.
 - Các URL `/api/v1/...` dùng mặc định `API_V1_STR=/api/v1`; nếu cấu hình prefix
   khác thì thay prefix tương ứng. Giữ dấu `/` cuối URL khi bảng có ghi.
 - `Actor` là vai trò toàn hệ thống; `UserCompany` là membership/role tại chi
   nhánh. Hai loại quyền này có phạm vi khác nhau. `Administrator` không mặc
-  nhiên có quyền ghi global RBAC như superuser.
+  nhiên có quyền ghi global RBAC như superuser hoặc bỏ kiểm tra tenant/branch.
 - Cột input ghi các dữ liệu chính, không thay thế toàn bộ danh sách field/ràng
   buộc trong schema. Cột status ghi kết quả thành công thông thường; lỗi vẫn
   có thể là 400/401/403/404/409/422/429 hoặc lỗi dependency tùy handler.
@@ -35,18 +35,19 @@ service, repository và policy được các handler sử dụng.
 | Phiên đăng nhập | Access JWT, refresh cookie HttpOnly, CSRF refresh/logout, rotation, phát hiện reuse, revoke session, `auth_version` | Session bền vững trong Mongo; Redis hỗ trợ revocation/rate limit theo policy; business API kiểm tra access token/session/user active |
 | Người dùng | Tạo/đọc/sửa, deactivate, hard delete có điều kiện, cập nhật/deactivate hàng loạt, xác minh thủ công, đổi/reset password, thống kê và xóa cache user | Quyền từng endpoint khác nhau; bảo vệ superuser và field nội bộ; xem các giới hạn ở nhóm user |
 | RBAC toàn hệ thống | CRUD actor/permission, gán/gỡ permission cho actor, gán/gỡ actor cho user | Ghi global RBAC yêu cầu superuser còn active theo kiểm tra DB; quyền đọc theo dependency hiện có |
-| Company và branch | Tạo/danh sách/chi tiết/cập nhật/vô hiệu company; tạo/danh sách/chi tiết branch | Branch chưa có endpoint sửa/xóa; schema response company có giới hạn cần lưu ý khi tích hợp |
+| Company và branch | Tạo/danh sách/chi tiết/cập nhật một phần/vô hiệu company; tạo/danh sách/chi tiết branch | Company response có ID/state/timestamps; quyền đọc từ DB active/expiry; member chỉ branch được phép; chưa có branch sửa/xóa |
 | Membership | Gán/gỡ user vào branch, xem assignment, danh sách user/branch, đổi role và thống kê membership | Có policy role/ownership/active/expiry trong service; phạm vi kiểm tra cụ thể khác nhau giữa API legacy và API tenant mới |
 | Ứng viên | Tạo, danh sách, đọc chi tiết, cập nhật thông tin liên hệ/tags/metadata | Gắn với company; candidate và profile CV trích xuất là hai loại dữ liệu riêng |
 | Yêu cầu tuyển dụng | Tạo, tìm kiếm/lọc, danh sách, chi tiết, cập nhật, xóa, export | Search job và API quản lý job có scope khác nhau; export và dependency được ghi trong bảng API |
 | Đơn ứng tuyển | Tạo application gắn candidate/CV/job, phân trang, chi tiết, chuyển stage | Có idempotency, revision/CAS và lưu stage event; chưa có endpoint đọc riêng timeline stage event |
 | Scorecard | Tạo phiên bản tiêu chí, trọng số, tiêu chí bắt buộc, minimum score và ngưỡng đạt; đọc bản active | Tổng trọng số xấp xỉ 1, code tiêu chí không trùng; screening giữ snapshot scorecard |
-| Upload CV | PDF/DOCX, multipart upload, metadata/checksum, kiểm MIME/chữ ký file, giới hạn kích thước và cấu trúc DOCX | Mặc định tối đa 5 MiB; lưu filesystem local; upload và tạo parse run là hai lệnh riêng |
+| CV | PDF/DOCX, upload/list/detail/download, metadata/checksum, kiểm MIME/chữ ký file, giới hạn kích thước và cấu trúc DOCX | Mặc định tối đa 5 MiB; scope company/branch/Candidate sở hữu; download local kiểm path/file/hash; chưa có delete/restore |
 | Parsing | Worker đọc file, phân tích PDF/DOCX, nhận biết scan, OCR/tier fallback MinerU, native text fallback, quality gate và lịch sử provider attempt | Có code worker/adapter; MinerU chạy riêng, cần endpoint cấu hình; poll parse run để xem provider/OCR/quality/lỗi |
 | Extraction | Worker và HTTP extractor trích xuất thông tin cá nhân, summary, skills, experience, education, certifications, languages | Có schema v1, bằng chứng nguyên văn/Unicode offsets, trạng thái thiếu/mâu thuẫn, version profile và metadata truy nguồn; cần model endpoint phù hợp |
 | Screening | API tạo/poll run, snapshot source/profile/scorecard/model/prompt, adapter HTTP gọi AI service, kiểm response binding và dẫn chứng, lưu result | BE đã có adapter; server AI nhận `/v1/screen` chưa được triển khai trong repository |
 | Tính điểm | BE tính điểm theo trọng số, coverage, khoảng điểm, pass/fail/hold; tiêu chí chưa đánh giá giữ `null` | Có tiêu chí thiếu/mâu thuẫn thì `overall_score=null`, `decision=hold`; không dùng tổng điểm do AI trả làm kết quả chính thức |
-| HR review | Tạo và đọc nhận xét/điểm/recommendation theo vòng review | Chưa có chỉnh sửa profile trích xuất, override kết quả AI có lý do hoặc lịch sử sửa review |
+| HR review | Nhận xét theo vòng; sửa hồ sơ bằng revision có dẫn chứng/xác nhận HR riêng; override screening kèm lý do/version/history/effective assessment | Bản AI gốc giữ nguyên; kiểm source current/latest result và CAS; review độc lập chưa có API sửa/xóa |
+| Chọn model screening | List model active `scoring/skill_matcher` để lấy ID khi tạo run | Chỉ metadata công khai, không config/credentials; chưa có CRUD model |
 | Worker / queue | Redis Stream cho parse/extraction/screening; claim, heartbeat, lease/generation, retry/backoff, recovery và publish sau commit | Mongo là nguồn trạng thái chính; worker yêu cầu Mongo replica set và Redis; client poll run để theo dõi |
 | Hạ tầng dùng chung | Transaction, index/migration/bootstrap, cache TTL/invalidation, rate limit, giới hạn body/upload, lifecycle quản lý task và retention audit | Có code và regression; API audit chỉ ghi ở các điểm đã tích hợp, không có router tra cứu audit log riêng |
 | Vận hành | Root info, liveness/readiness, debug config, process/system metrics và Prometheus text | Readiness chính kiểm DB/Redis/storage; metrics yêu cầu admin; cấu hình debug và auto docs phụ thuộc `DEBUG` |
@@ -86,7 +87,7 @@ trình duyệt gửi cookie Secure. Kiểm tra `REFRESH_COOKIE_SAMESITE` trong c
 thực tế, không suy ra giá trị chỉ từ môi trường.
 
 **Idempotency:** các API tạo application, đổi stage, tạo scorecard, tạo screening,
-parse và extraction dùng `Idempotency-Key` dài 8–128 ký tự. Khi retry cùng lệnh,
+parse, extraction, HR profile revision và screening override dùng `Idempotency-Key` dài 8–128 ký tự. Khi retry cùng lệnh,
 giữ key gốc. Scope/replay cụ thể theo service; key của HTTP screening nội bộ là
 run ID, khác key command client gửi vào BE.
 
@@ -184,11 +185,11 @@ User có thể có nhiều liên kết actor; dependency auth nạp mọi actor 
 
 | Method và đường dẫn đầy đủ | Chức năng thực tế | Input/header quan trọng | Output và status | Xác thực/policy |
 | --- | --- | --- | --- | --- |
-| `POST /api/v1/user-actor/user-actors` | Gán actor active cho user active; mapping có sẵn được tái sử dụng | **Query** `user_id`, `actor_id`; không JSON body | 201 `ApiResponse<UserActorResponse>` gồm `user_id,full_name,actor`; 400 ID sai, 404 user/actor không active | Bearer + **superuser** ở router và service; invalidate authorization của user |
+| `POST /api/v1/user-actor/user-actors` | Gán actor active cho user active; mapping có sẵn được tái sử dụng | **Query** `user_id`, `actor_id`; không JSON body | 201 `ApiResponse<UserActorResponse>` gồm `id,user_actor_id,user_id,full_name,actor` và `actor.id`; 400 ID sai, 404 user/actor không active | Bearer + **superuser** ở router và service; invalidate authorization của user |
 | `GET /api/v1/user-actor/user-actors/{user_id}` | Đọc một mapping user–actor | Path `user_id` | 200 `ApiResponse<UserActorResponse>`; 400 ID sai; 404 user inactive/thiếu, mapping/actor thiếu | Bearer + `users:view`; không tự hạn chế về chính caller trong service này |
 | `DELETE /api/v1/user-actor/user-actors/{user_actor_id}` | Xóa vĩnh viễn một liên kết user–actor, không xóa user/actor | Path **ID document mapping** `user_actor_id`, không phải user ID | 200 `ApiResponse<{message,user_actor_id}>`; 400/404 ID sai/mapping thiếu | Bearer + **superuser** ở router và service; invalidate authorization của user |
 
-Giới hạn hiện tại của user–actor: assign/get không trả ID document mapping; `actor.id` cũng không được service điền. Client không thể lấy `user_actor_id` để gọi DELETE chỉ từ hai response này. Đây là giới hạn contract hiện hữu, không phải endpoint placeholder.
+Assign/get trả `id` và `user_actor_id` của mapping cùng `actor.id`; client dùng mapping ID để DELETE. GET hiện vẫn chỉ trả một mapping, không phải list mọi actor của user.
 
 Nguồn đối chiếu: `app/api/register.py`, `app/api/users.py`, `app/api/actors.py`, `app/api/permissions.py`, `app/api/actor_permission.py`, `app/api/user_actor.py`; schemas tương ứng, `AuthService`, `UserService`, repositories, `app/core/security.py`, `app/core/auth_cookies.py`, `app/core/rbac_policy.py` và `app/dependencies/versions.py`. Danh mục nhóm này có **39 cặp method/path**; rà tĩnh từ code, không gọi Mongo/Redis/Brevo để nghiệm thu runtime.
 
@@ -202,8 +203,8 @@ thay access token. Kết quả thành công được bọc trong
 `ApiResponse {success, data, message}`.
 
 `R` trong bảng là điều kiện tại router; `S` là policy tại service/repository.
-Global role `Administrator` làm `current_user.is_admin=true`; role membership
-`admin` là quyền của một branch. Phải đọc đúng điều kiện của từng endpoint,
+Global role `Administrator` làm `current_user.is_admin=true` nhưng không tự mở
+quyền đọc tenant/branch; role membership `admin` là quyền của một branch. Phải đọc đúng điều kiện của từng endpoint,
 không xem mọi API tenant đều dùng một policy giống nhau.
 
 ### Company
@@ -211,30 +212,25 @@ không xem mọi API tenant đều dùng một policy giống nhau.
 | Method và full URL | Chức năng hiện có | Input | Output / HTTP thành công | Quyền và policy thực tế |
 | --- | --- | --- | --- | --- |
 | `POST /api/v1/companies/` | Tạo công ty, owner là user đang đăng nhập | JSON `CompanyCreate`: bắt buộc `name`, `company_short_name`, `company_code`, `email`, `website`; tùy chọn `description`, `tax_code`, `logo_url` | `CompanyResponse`, **201** | R: `companies:create`. Owner ID do BE lấy từ caller, không nhận từ body. Repository kiểm tra user tồn tại; company code/tax code có unique index, trùng trả 400 |
-| `GET /api/v1/companies/` | Liệt kê công ty active với phân trang | Query `page=1`, `size=10` | `CompanyListResponse {companies,total,page,size}`, **200** | R: đăng nhập. Caller `is_admin` được liệt kê mọi công ty active; còn lại là công ty mình sở hữu hoặc có assignment `is_active` tới branch active. Luồng list này không kiểm tra `start_date/end_date` của assignment |
-| `GET /api/v1/companies/{company_id}` | Đọc thông tin công ty | Path `company_id` | `CompanyResponse`, **200** | R: đăng nhập. S: company nằm trong `get_user_companies` của caller, hoặc caller `is_admin`, hoặc permission có tên `admin`. `get_user_companies` dùng cache và assignment `is_active`, chưa áp đầy đủ expiry |
-| `PUT /api/v1/companies/{company_id}` | Cập nhật thông tin công ty theo field schema | Path ID; JSON `CompanyUpdate` có tám field như create, đều required nhưng nullable | `CompanyResponse`, **200** | R: `companies:edit`. S: role công ty `owner`/`admin`; role được lấy từ company owner hoặc mức role cao nhất trong các branch active có membership còn hiệu lực. Superuser được xem là owner; global Administrator không có tenant role vẫn có thể bị service từ chối |
+| `GET /api/v1/companies/` | Liệt kê công ty active với phân trang | Query `page=1`, `size=10` | `CompanyListResponse {companies,total,page,size}`, **200** | R: đăng nhập. S: user active từ DB; actual superuser thấy mọi company active; còn lại company sở hữu hoặc membership active/còn hạn qua branch active. Quyền không lấy từ cache hoặc cờ `is_admin` |
+| `GET /api/v1/companies/{company_id}` | Đọc thông tin công ty | Path `company_id` | `CompanyResponse`, **200** | R: đăng nhập. S: cùng scope DB active/expiry như list; company inactive/thiếu trả 404, thiếu quyền 403. Global Administrator/permission `admin` không bypass |
+| `PUT /api/v1/companies/{company_id}` | Cập nhật một phần thông tin công ty | Path ID; JSON field thuộc allowlist như create; có thể chỉ gửi một field | `CompanyResponse`, **200** | R: `companies:edit`. S: role công ty `owner`/`admin` từ DB hiện tại; superuser được xem là owner. Chặn field nội bộ/ngoài schema và null/blank cho field bắt buộc |
 | `DELETE /api/v1/companies/{company_id}` | Soft delete công ty bằng `is_active=false` | Path `company_id` | `data {message,company_id,timestamp}`, **200** | R: `companies:delete`. Repository chỉ cho **owner thực** (`Company.user_id`) xóa; membership admin hoặc superuser không phải owner không tự vượt điều kiện này. Không xóa document/company volume |
 
-`CompanyResponse` hiện khai báo `user_id`, các field thông tin công ty và
-`created_at`, **không khai báo `id`, `is_active`, `updated_at`**. Router có
-truyền các field này khi dựng response, nhưng schema không giữ chúng trong
-JSON. Đây là khoảng trống contract cần sửa trước khi frontend dựa vào company
-ID từ create/list/get.
-
-`CompanyUpdate` không phải schema PATCH: `Optional[...]` không có default nên
-body chỉ gửi một field sẽ thiếu các field required và nhận 422. Không có
-field đổi owner, `is_active` hay `industry` trong request create/update hiện
-tại. Service chuẩn hóa page < 1 thành 1 và size ngoài 1–100 thành 10, nhưng
-router list vẫn đưa giá trị query ban đầu vào metadata `page/size`.
+`CompanyResponse` có `id`, `user_id`, các field thông tin, `is_active`,
+`created_at`, `updated_at`. `CompanyUpdate` cho phép bỏ field không sửa;
+`name/company_short_name/company_code/email/website` không được null/blank;
+`description/tax_code/logo_url` có thể clear bằng null. Request không đổi owner,
+`is_active` hay `industry`. Page < 1 chuẩn hóa thành 1, size ngoài 1–100 thành
+10; metadata list dùng đúng các giá trị đã chuẩn hóa.
 
 ### Company branch
 
 | Method và full URL | Chức năng hiện có | Input | Output / HTTP thành công | Quyền và policy thực tế |
 | --- | --- | --- | --- | --- |
-| `POST /api/v1/company-branches/{company_id}/branches` | Tạo branch trong công ty active | Path company ID; JSON `CompanyBranchCreate`: `company_id`, `bussiness_type`, `branch_name`, `address`, `company_size`, `working_days`; tùy chọn phone/description/type/industry/country/city/overtime | `CompanyBranchResponse`, **201** | R: **`companies:create`**, không phải `company_branches:create`. S: owner/admin của company hoặc đặc cách `current_user.is_admin` từ router. Repository kiểm tra company active và dùng company ID của path để ghi, ghi đè body `company_id`; trùng tên branch active trong company trả 400 |
-| `GET /api/v1/company-branches/{company_id}/branches` | Liệt kê các branch active của company | Path company ID; không có pagination/query `active_only` | `CompanyBranchResponse[]`, **200** | R: đăng nhập. S: caller có một role trong company hoặc `is_admin`. Sau khi được phép, trả **tất cả** branch active của company, không chỉ branch mà caller có membership |
-| `GET /api/v1/company-branches/{company_id}/branches/{branch_id}` | Đọc chi tiết một branch | Hai path ID | `CompanyBranchResponse`, **200** | R: đăng nhập. S: branch phải thuộc company path (sai company trả 400); caller `is_admin` được đặc cách, còn lại phải có `branch_role` ở đúng branch. Owner/superuser hoặc membership còn hiệu lực với company/branch/user active |
+| `POST /api/v1/company-branches/{company_id}/branches` | Tạo branch trong công ty active | Path company ID; JSON `CompanyBranchCreate`: `company_id`, `bussiness_type`, `branch_name`, `address`, `company_size`, `working_days`; tùy chọn phone/description/type/industry/country/city/overtime | `CompanyBranchResponse`, **201** | R: **`companies:create`**. S: actual superuser hoặc owner/admin company từ DB; body company ID phải khớp path (422). Global Administrator không tự mở quyền; trùng branch active trả 400 |
+| `GET /api/v1/company-branches/{company_id}/branches` | Liệt kê branch active được phép | Path company ID; không pagination/query `active_only` | `CompanyBranchResponse[]`, **200** | R: đăng nhập. S: owner/superuser thấy mọi branch active của company; member chỉ branch có membership active/còn hạn. Kiểm quyền DB trước business cache |
+| `GET /api/v1/company-branches/{company_id}/branches/{branch_id}` | Đọc chi tiết một branch | Hai path ID | `CompanyBranchResponse`, **200** | R: đăng nhập. S: branch active thuộc company path (sai company 400); `branch_role` đúng branch, user/company active. Không bypass bằng global Administrator hoặc cache |
 
 Branch response có `id`, `company_id`, `bussiness_type`, `branch_name`, phone,
 address, description, company type/industry/country/size, working days và
@@ -265,14 +261,14 @@ Các thao tác ghi này đi qua transaction Mongo.
 
 | Method và full URL | Chức năng hiện có | Input | Output / HTTP thành công | Quyền và policy thực tế |
 | --- | --- | --- | --- | --- |
-| `POST /api/v1/user-company-branch/assign` | Tạo assignment active; có thể re-activate một assignment inactive | JSON `AssignUserToCompanyBranch`: `user_id`, `company_branch_id` là 24 hex; `role=member` hoặc manager/admin; optional `permissions` | `data {message,assignment_id,user_id,company_branch_id,role,timestamp}`, **201** | R: đăng nhập. S: `M`, user target và branch active. `permissions` không rỗng bị từ chối 403; không cấp quyền trực tiếp qua membership. Assignment active đã có không được tạo trùng |
+| `POST /api/v1/user-company-branch/assign` | Tạo assignment active; có thể re-activate assignment inactive | JSON `AssignUserToCompanyBranch`: `user_id`, `company_branch_id` là 24 hex; `role=member` hoặc manager/admin; optional `permissions` | `data {message,assignment_id,user_id,company_branch_id,role,timestamp}`, **201**; trùng active **409** | R: đăng nhập. S: `M`, user target và branch active. `permissions` không rỗng bị từ chối 403. Reactivate đặt start hiện tại/end null nếu không có lịch mới |
 | `POST /api/v1/user-company-branch/unassign` | Soft deactivate assignment active; ghi người/thời điểm unassign | Cùng schema assign; cần user ID và branch ID; role mặc định vẫn được schema kiểm tra dù không dùng để đổi role | `data {message,user_id,company_branch_id,timestamp}`, **200** | R: đăng nhập. S: `M` với role cũ của target; không tự unassign hoặc sửa owner thực. Không có assignment active trả 404 |
 | `DELETE /api/v1/user-company-branch/{assignment_id}` | Hard delete document assignment | Path assignment ID | `data {message,assignment_id,timestamp}`, **200** | R: đăng nhập. S: `M` và thêm điều kiện owner/admin đúng branch, hoặc superuser; manager bị từ chối. Owner thực/self vẫn được bảo vệ. Assignment không có trả 404 |
 | `GET /api/v1/user-company-branch/assignments/{assignment_id}` | Đọc assignment cùng thông tin user và branch | Path assignment ID | `UserCompanyResponse`, **200** | R: đăng nhập. S: caller có `branch_role` đúng branch hoặc superuser. Không chỉ trả assignment của bản thân; không có assignment trả 404 |
 | `GET /api/v1/user-company-branch/branch/{company_branch_id}/users` | Danh sách assignments của branch, join thông tin user/branch | Path branch ID; query `active_only=true`, `page=1`, `size=20` | `UserCompanyListResponse`, **200** | R: đăng nhập. S: branch access hoặc superuser. Chuẩn hóa page < 1 thành 1, size ngoài 1–100 thành 20; sort ổn định `assigned_at` rồi `_id` giảm dần. `active_only` chỉ lọc assignment flag, không chứng minh target còn hạn hoặc user target active |
 | `GET /api/v1/user-company-branch/user/{user_id}/branches` | Đọc các assignments/branches của một user được phép thấy | Path user ID; query `active_only=true` | `UserCompanyResponse[]`, **200** | R: đăng nhập. S: với mỗi assignment, caller là target và có branch role còn hiệu lực, hoặc owner/admin/manager branch; superuser đặc cách. Bỏ các branch không có quyền, tối đa 100 assignments; xem user khác mà không có kết quả được phép trả 403 |
 | `GET /api/v1/user-company-branch/statistics/{company_branch_id}` | Thống kê assignments active/inactive trong một branch | Path branch ID | `UserCompanyStats {total_users,active_users,inactive_users,total_branches,active_branches,inactive_branches}`, **200** | R: đăng nhập. S: branch access hoặc superuser. Counter users được tính theo documents/flag assignment, không phải phép kiểm tra effective membership expiry/user active; repository có cache statistics |
-| `PUT /api/v1/user-company-branch/assignments/{assignment_id}/role` | Đổi role assignment active | Path assignment ID; **query `role`**, không phải JSON body | `UserCompanyResponse`, **200** | R: đăng nhập. S: `M` với role cũ/mới; role ngoài member/manager/admin trả 400; không sửa self/actual owner. Repo không cho đổi role assignment inactive |
+| `PUT /api/v1/user-company-branch/assignments/{assignment_id}/role` | Đổi role assignment active | Path assignment ID; **query `role`**, không phải JSON body | `UserCompanyResponse`, **200**; assignment inactive **400** | R: đăng nhập. S: `M` với role cũ/mới; role ngoài member/manager/admin trả 400; không sửa self/actual owner |
 
 `UserCompanyResponse` có `id`, nested `user` (`UserResponse`) và
 `company_branch` (`CompanyBranchResponse`), role, permissions, is_active,
@@ -283,23 +279,15 @@ thể bị service bỏ qua, nên số item thực trả có thể thấp hơn c
 
 ### Giới hạn cần biết trước khi gọi từ frontend/MVP
 
-- Company list/get còn dùng assignment flag/cache; không nên mô tả đây là cùng
-  policy expiry trực tiếp, uncached như membership management/`branch_role`.
 - `active_only` và statistics membership là trạng thái stored flag. Model đã có
   start/end dates nhưng HTTP API **chưa có thao tác thiết lập/sửa thời hạn**,
-  không có invite/accept workflow hoặc ownership transfer. Assign lại một
-  record inactive không reset lịch start/end cũ trong repository.
-- Branch GET/list dùng cache decorator trả cached JSON thẳng; service/router
-  sử dụng attributes của model. Code hiện có thể không tương thích cache hit;
-  cần kiểm thử/sửa serialization trước khi coi luồng Redis cache đã được nghiệm thu.
-- Company response thiếu ID và update body yêu cầu đủ field là khoảng trống
-  contract hiện tại; frontend cần được kiểm chứng với schema thực tế.
-- Lỗi duplicate active assignment hoặc đổi role assignment inactive hiện phát
-  sinh `ValueError` ở repo và được router bọc thành **500**, không phải một
-  conflict 409 chuẩn hóa. Các path ID không có validation nhất quán; không
-  khẳng định mọi ObjectId sai đều trả 422. Policy thường trả 403, resource không
-  có thường trả 404, request schema thiếu/sai field trả 422; xác thực/rate limit
-  thêm các lỗi 401/429 theo cơ chế chung.
+  không có invite/accept workflow hoặc ownership transfer. Reactivate đã bỏ
+  thời hạn cũ mặc định để membership mới có hiệu lực.
+- Business cache company/branch serialize và revalidate model/BSON; cache
+  hỏng được evict/refetch. Quyền luôn đọc DB trước cache, gồm trạng thái và expiry.
+- IDs membership sai được service map 422; duplicate/inactive role giữ mã lỗi
+  nghiệp vụ 409/400. Không suy ra mọi endpoint legacy ngoài phạm vi đều có
+  cùng validation/status.
 - Company soft delete không cung cấp API restore/hard delete company. Branch
   chỉ có create/list/detail. Membership có assign/unassign/delete/read/list/stats
   và role update; không có public bulk assignment, direct permissions update
@@ -312,13 +300,13 @@ Nguồn đối chiếu: `app/api/companies.py`, `app/api/company_branches.py`,
 
 ## 6. Tuyển dụng, CV và xử lý AI
 
-Phần này kiểm kê **29 endpoint đang được đăng ký**: 4 candidate, 7 job requirement, 11 recruitment và 7 resume. URL dùng prefix mặc định `/api/v1` từ `app/core/config.py`; các nhóm router được gắn trong `app/dependencies/versions.py`. Nếu triển khai đổi `API_V1_STR`, prefix thực tế cũng đổi. Hai URL `/job-requirements/` có dấu `/` cuối; `/candidates` và `/resumes` không có.
+Phần này kiểm kê **38 endpoint đang được đăng ký**: 4 candidate, 7 job requirement, 11 recruitment, 10 resume, 1 model selection, 2 HR profile và 3 screening override/assessment. URL dùng prefix mặc định `/api/v1` từ `app/core/config.py`; các nhóm router được gắn trong `app/dependencies/versions.py`. Nếu triển khai đổi `API_V1_STR`, prefix thực tế cũng đổi. Hai URL `/job-requirements/` có dấu `/` cuối; `/candidates` và `/resumes` không có.
 
 Tất cả endpoint trong các bảng yêu cầu access Bearer token. `Body` là JSON, `Q` là query parameter, trừ upload dùng multipart. `K` nghĩa là header **`Idempotency-Key` dài 8–128 ký tự**; các dòng không ghi K không có yêu cầu header này. Kết quả JSON được bọc trong `ApiResponse`; export trả nội dung file trực tiếp. Mã thành công được ghi riêng từng dòng; lỗi auth/validation/rate limit vẫn có thể trả 401/403/422/429.
 
 Ký hiệu phạm vi:
 
-- **Company access**: `TenantAccessService.require_company_access()` kiểm tra company hoạt động và owner/superuser/Administrator hoặc membership còn hiệu lực tại một branch hoạt động của company. Đây là kiểm tra cấp company, không tự đồng nghĩa quyền trên từng branch.
+- **Company access**: `TenantAccessService.require_company_access()` kiểm tra user/company hoạt động, actual owner/superuser hoặc membership còn hiệu lực qua branch active. Global Administrator không bypass. Đây là kiểm tra cấp company, không tự đồng nghĩa quyền trên từng branch.
 - **Branch access**: `branch_role()` đọc user, company, branch và membership còn hiệu lực; company owner/superuser được xem là owner. Chỉ các dòng ghi rõ kiểm tra này mới nên được hiểu là có chốt quyền trên branch của resource.
 - **Candidate tự phục vụ**: một số nghiệp vụ nhận diện tài khoản Candidate chỉ truy cập application/CV gắn với chính `candidate.user_id` hoặc `application.applicant_id`; vẫn phải có permission ở router.
 
@@ -355,51 +343,84 @@ Application liên kết candidate, CV và job cụ thể. Có stage `applied →
 
 | Method / URL | Chức năng và đầu vào | Output / status | Quyền và phạm vi đang thực thi | Xử lý / giới hạn |
 | --- | --- | --- | --- | --- |
-| `POST /api/v1/recruitment/applications` | Body: `company_id`, `candidate_id`, `resume_file_id`, `job_requirement_id`; tùy chọn `source`, `assigned_recruiter_id`. **K**. | 201; `ApplicationResponse`, gồm các ID liên kết, stage/status, người phụ trách và pointer kết quả mới nhất. | `job_applications:create`; candidate/CV phải cùng company và CV phải thuộc candidate; job/branch/company hoạt động. Candidate tự phục vụ chỉ dùng hồ sơ của mình và job published chưa hết hạn; các caller khác dùng company access. Recruiter được gán phải active và có quyền/liên kết phù hợp với job branch. | Transaction tạo application + stage event `applied`. Chưa bắt buộc CV parsed/extracted. Key dùng lại cho payload khác trả 409. Không tự chạy parsing/screening. |
-| `GET /api/v1/recruitment/applications` | Q: `company_id`; tùy chọn `job_requirement_id`, `stage`; `page=1`, `size=20` (router 1–500). | 200; `{items,total,page,size}`. | `job_applications:list`; company access cho HR/admin. Candidate tự phục vụ được lọc thêm `applicant_id=current_user`. | Đồng bộ/cache; size bị chặn bởi `MAX_PAGE_SIZE` mặc định 100. HR list hiện lọc company, chưa lọc riêng branch membership của caller. |
-| `GET /api/v1/recruitment/applications/{application_id}` | Q: `company_id`. | 200; `ApplicationResponse`; không có application trong company trả 404. | `job_applications:view`; Candidate đọc application của mình, caller khác dùng company access. | Đồng bộ. Service hiện không gọi `branch_role()` riêng cho endpoint này. |
-| `POST /api/v1/recruitment/applications/{application_id}/stage` | Q: `company_id`; Body: `to_stage`, tùy chọn `reason`. **K**. | 200; application sau chuyển; transition không hợp lệ trả 400, key xung đột trả 409. | `application_stage_events:create`; company access. | Transaction/CAS revision + stage event; cập nhật status/timestamps terminal. Service chưa kiểm caller branch riêng. Không có GET lịch sử stage được đăng ký. |
-| `POST /api/v1/recruitment/scorecards` | Body: `company_id`, `job_requirement_id`, 1–50 `criteria`, `pass_threshold=70`. Mỗi criterion: code/name/weight, description, `required`, `minimum_score`. **K**. | 201; `ScorecardResponse`, version và active flag. | `job_scorecards:create`; company access; job thuộc branch hoạt động của company. | Tạo version mới, deactivate version active trước đó trong transaction. Code criterion duy nhất, tổng weight phải bằng 1 trong tolerance 0,001. Không tạo scorecard tự động từ description job. |
-| `GET /api/v1/recruitment/scorecards/active` | Q bắt buộc: `company_id`, `job_requirement_id`. | 200; scorecard active; chưa có trả 404. | `job_scorecards:view`; company access, truy vấn job/company. | Đồng bộ/cache. Không có list/version detail/edit/delete scorecard trong router. |
+| `POST /api/v1/recruitment/applications` | Body: `company_id`, `candidate_id`, `resume_file_id`, `job_requirement_id`; optional `source`, `assigned_recruiter_id`. **K**. | 201 `ApplicationResponse`: IDs, stage/status, người phụ trách và pointer result. | `job_applications:create`; candidate/CV cùng company và CV thuộc candidate; HR cần cả job branch và CV branch. Candidate tự phục vụ dùng hồ sơ mình và job published chưa hết hạn. Assigned recruiter phải active và thuộc scope job branch. | Transaction application + event `applied`; CV chưa cần parsed/extracted. Key khác payload 409; không tự chạy pipeline. |
+| `GET /api/v1/recruitment/applications` | Q `company_id`; optional job/stage; `page=1`, `size=20` (router 1–500). | 200 `{items,total,page,size}`. | `job_applications:list`; HR scope branch từ DB, join CV tenant/branch/chưa xóa trước count/pagination. Candidate self-service lọc `applicant_id=current_user`. | Size giới hạn `MAX_PAGE_SIZE` mặc định 100. HR không dùng cached list để quyết định scope; candidate cache tách theo user. |
+| `GET /api/v1/recruitment/applications/{application_id}` | Q `company_id`. | 200 `ApplicationResponse`; thiếu 404. | `job_applications:view`; Candidate đọc application của mình; HR kiểm company, job/application branch nhất quán và CV branch. CV không branch chỉ owner/superuser. | Đọc DB và kiểm quyền hiện tại; metadata không mở quyền tải CV ngoài scope. |
+| `POST /api/v1/recruitment/applications/{application_id}/stage` | Q `company_id`; Body `to_stage`, optional `reason`. **K**. | 200 application; transition sai 400, key xung đột 409. | `application_stage_events:create`; company + job/application branch + CV branch. Quyền kiểm trước replay event cũ. | Transaction/CAS revision + stage event/timestamps terminal. Không có GET timeline riêng. |
+| `POST /api/v1/recruitment/scorecards` | Body company/job IDs, 1–50 criteria, `pass_threshold=70`; code/name/weight/description/required/minimum_score. **K**. | 201 `ScorecardResponse`, version/active. | `job_scorecards:create`; company access + job branch active từ DB, kể cả replay. | Version mới/deactivate cũ trong transaction; unique criterion codes, weight tổng 1 trong tolerance 0,001. |
+| `GET /api/v1/recruitment/scorecards/active` | Q `company_id`, `job_requirement_id`. | 200 scorecard active; thiếu 404. | `job_scorecards:view`; company + job branch, kiểm trước business cache. | Cache metadata có TTL; chưa có list/version detail/edit/delete scorecard. |
 | `POST /api/v1/recruitment/screenings` | Body: `company_id`, `application_id`, `ai_model_id`. **K**. Cần CV parsed và profile hiện hành đúng nguồn. | 202; `ScreeningRunResponse`: run/attempt/status/deadline, IDs nguồn/profile/version/hash; chưa trả điểm ngay. | `screening_runs:create` **và** `resume_profiles:view`; company access + branch của application + branch của CV nếu có. Model phải active, type `scoring` hoặc `skill_matcher`. | Mongo transaction/snapshot → queue `screening`. Giữ profile/source/scorecard/model/prompt của run. Key gốc trả run cũ; key khác khi run active trả 409. Cần worker + HTTP AI screening service được cấu hình riêng. |
-| `GET /api/v1/recruitment/screenings/{run_id}` | Q: `company_id`. | 200; `ScreeningRunResponse`, có `next_retry_at` UTC và metadata nguồn; không có run trả 404. | `screening_runs:view`; company access + branch application và CV nguồn nếu còn record. | Poll trạng thái. Không trả raw CV, source snapshot nội bộ hoặc secret/config model; không có list/cancel run. |
+| `GET /api/v1/recruitment/screenings/{run_id}` | Q: `company_id`. | 200; `ScreeningRunResponse`, có `next_retry_at` UTC và metadata nguồn; không có run trả 404. | `screening_runs:view`; company access + branch application và CV nguồn nếu còn record. | Poll trạng thái; error message công khai dùng thông báo chung. Không trả raw CV, source snapshot nội bộ hoặc secret/config model; không có list/cancel run. |
 | `GET /api/v1/recruitment/screenings/{run_id}/result` | Q: `company_id`. | 200; `ScreeningResultResponse`: điểm/decision, criteria evaluations + evidence, coverage/bounds, strengths/weaknesses/skills và metadata nguồn. Chưa có kết quả trả 404. | `screening_runs:view`; cùng policy company/branch với đọc run. | BE tính aggregate từ scorecard snapshot. Dữ liệu chưa đủ/mâu thuẫn: `overall_score=null`, decision `hold`. Kết quả lịch sử giữ nguyên; `source_is_current=false` khi nguồn thay đổi, legacy không có snapshot trả metadata `null`. |
-| `POST /api/v1/recruitment/reviews` | Body: `company_id`, `application_id`, `score` 0–100, `recommendation`; tùy chọn `review_round=1`, `criteria_scores`, `summary`. Recommendation: `strong_yes`, `yes`, `hold`, `no`, `strong_no`. | 201; `ApplicationReviewResponse`, reviewer là user hiện tại. | `application_reviews:create`; company access và application thuộc company. **Chưa kiểm branch caller riêng trong service.** | Ghi nhận xét/điểm HR riêng, không thay profile, không ghi đè ScreeningResult, không tự đổi stage. Không có K; unique theo application/reviewer/round nhưng service chưa map duplicate thành 409, có thể phát sinh lỗi 500 khi gửi trùng. |
-| `GET /api/v1/recruitment/applications/{application_id}/reviews` | Q: `company_id`. | 200; list `ApplicationReviewResponse`, mới nhất trước; có thể là list rỗng. | `application_reviews:list`; router kiểm company access; repository lọc company/application, **chưa kiểm branch hoặc load application để xác minh tồn tại**. | Đồng bộ; chưa pagination hoặc giới hạn số review trả về. Không có API sửa/xóa review. |
+| `POST /api/v1/recruitment/reviews` | Body company/application IDs, score 0–100, recommendation; optional `review_round=1`, `criteria_scores`, `summary`. | 201 `ApplicationReviewResponse`, reviewer là caller. | `application_reviews:create`; company + job/application branch và CV nguồn. | Record HR riêng, không đổi profile/result/stage. Không có K; duplicate application/reviewer/round trả **409**, không ghi thêm. |
+| `GET /api/v1/recruitment/applications/{application_id}/reviews` | Q `company_id`, **`page=1`, `size=20` (1–100)**. | 200 list `ApplicationReviewResponse`, mới trước; response list cũ giữ nguyên. | `application_reviews:list`; service load application và kiểm company + job/application branch + CV nguồn. | Pagination trước trả list; thiếu application 404. Không có sửa/xóa review; client cần gọi các page tiếp theo. |
 
-### Upload, parsing và extraction — 7 endpoint
+### CV, parsing và extraction — 10 endpoint
 
 Upload chỉ lưu file; parsing chỉ tạo văn bản CV; extraction mới tạo profile có cấu trúc. Ba bước tách rời, không được coi một response upload thành kết quả AI đã hoàn thành.
 
 | Method / URL | Chức năng và đầu vào | Output / status | Quyền và phạm vi đang thực thi | Xử lý / giới hạn |
 | --- | --- | --- | --- | --- |
-| `POST /api/v1/resumes` | Multipart: `company_id`, `candidate_id`, `file`; tùy chọn `company_branch_id`. | 201; `ResumeResponse`: ID, filename gốc, size/MIME/checksum/status/timestamps. | `resume_files:upload`; candidate/company hoạt động đúng tenant; company access hoặc Candidate upload cho chính hồ sơ liên kết của mình. Branch nếu gửi phải active và thuộc company; chưa kiểm membership caller tại branch riêng trong service upload. | Đồng bộ ghi file local + Mongo. PDF/DOCX, mặc định tối đa 5 MB, kiểm signature/MIME và độ an toàn archive DOCX. Cùng company/candidate/checksum active trả lại CV cũ; không có K. Không trả path nội bộ/raw CV text. |
-| `POST /api/v1/resumes/{resume_id}/parse-runs` | Body: `company_id`; tùy chọn `parser_model_id`, `parser_version=1.0.0`. **K**. | 202; `ParseRunResponse`: run/status/attempt, thông tin parser và deadline. | `resume_files:parse`; company access, CV chưa xóa thuộc company. Parser model nếu gửi phải active, type `resume_parser`. Service parse hiện chưa kiểm branch caller riêng. | Mongo run → Redis `resume-parse` → worker MinerU/native/OCR. Thành công lưu `parsed_data.raw_text`, tăng parse revision, bỏ pointer profile hiện tại. Parser thực tế vẫn do worker factory chọn; không có dịch vụ đọc parser model ID rồi tự deploy/chọn model tương ứng. |
-| `GET /api/v1/resumes/{resume_id}/parse-runs/{run_id}` | Path: CV và run ID. | 200; `ParseRunResponse`: status, attempts/deferred attempts, deadline, provider/OCR/quality/fallback và lỗi. | `resume_files:view`; kiểm run gắn đúng CV và company access từ run. **Chưa kiểm branch hoặc trạng thái xóa của CV hiện tại** trong service đọc parse run. | Poll trạng thái; response không chứa `raw_text`. Không có list parse run hoặc endpoint đọc raw parse result. |
+| `POST /api/v1/resumes` | Multipart company/candidate IDs, `file`; optional `company_branch_id`. | 201 `ResumeResponse`: IDs, tên gốc, size/MIME/checksum/status/timestamps và pointers/revision. | `resume_files:upload`; company/candidate active cùng tenant; HR cần membership branch gửi vào hoặc owner/superuser cho CV không branch; Candidate có nhánh upload hồ sơ của mình. | Local file + Mongo; PDF/DOCX tối đa mặc định 5 MiB, signature/MIME/archive gate. Cùng company/candidate/checksum active trả CV cũ; không K; không path/raw text. |
+| `GET /api/v1/resumes` | Q `company_id`, optional `candidate_id`, `page=1`, `size=20` (1–100). | 200 `ResumeListResponse {items,total,page,size}`. | `resume_files:view`; scope company/branch DB active/expiry; owner/superuser và Candidate sở hữu có policy riêng cho CV không branch. | Projection metadata trước pagination/count; không file path/raw parse text. |
+| `GET /api/v1/resumes/{resume_id}` | ID CV. | 200 `ResumeResponse`; CV chưa xóa/phù hợp quyền, thiếu 404. | `resume_files:view`; company/user/branch active; Candidate được đọc CV mình sở hữu. | DTO metadata/pointers/hash; không trả dữ liệu file nội bộ. |
+| `GET /api/v1/resumes/{resume_id}/download` | ID CV. | 200 attachment stream, không JSON envelope. | `resume_files:view`; cùng scope detail. | Local path allowlist, không symlink/reparse point, regular file/size/SHA-256 đúng trước stream; private/no-store + nosniff, đóng handle khi disconnect; file unavailable/storage khác local 404. |
+| `POST /api/v1/resumes/{resume_id}/parse-runs` | Body company ID; optional parser model/version. **K**. | 202 `ParseRunResponse`: run/status/attempt/parser/deadline. | `resume_files:parse`; CV chưa xóa, company/branch active và có quyền đúng branch; CV không branch yêu cầu owner/superuser. Parser model active/type `resume_parser`. | Queue `resume-parse`; thành công lưu text, tăng parse revision, bỏ profile pointer. Worker factory chọn parser; model ID không tự deploy provider. |
+| `GET /api/v1/resumes/{resume_id}/parse-runs/{run_id}` | IDs CV/run. | 200 `ParseRunResponse`: status/attempt/deadline/provider/OCR/quality/fallback/lỗi. | `resume_files:view`; CV hiện tại chưa xóa và có quyền branch/ownership, run gắn đúng CV/company. | Poll; không raw text, không list run/raw result endpoint. |
 | `POST /api/v1/resumes/{resume_id}/extraction-runs` | Body chỉ gồm `company_id`. **K**. Model/prompt lấy cấu hình server. | 202; `ExtractionRunResponse`: status/attempt/deadline, revision nguồn, model/prompt, `result_id`, mã/lời lỗi đã lược bỏ dữ liệu nhạy cảm. | `resume_files:extract`; company access + branch của CV nếu có. CV phải parsed, có text và đúng company. | Queue `resume-extract` → worker → HTTP extractor → model cloud → validate source/hash/quote → profile version trong Mongo. Chưa cấu hình service trả 503; source quá lớn trả 422; key khác khi run active trả 409. |
 | `GET /api/v1/resumes/{resume_id}/extraction-runs/{run_id}` | Path: CV và run ID. | 200; `ExtractionRunResponse`; không có CV/run phù hợp trả 404. | `resume_files:view`; company access + branch CV; CV phải chưa xóa. | Poll trạng thái/`result_id`; không trả source text hoặc cấu hình secrets. Không có list/cancel extraction run. |
-| `GET /api/v1/resumes/{resume_id}/profiles/latest` | Đọc profile mà CV đang trỏ tới. | 200; `ProfileResponse`: profile đầy đủ, version, run/revision/model/prompt/extractor, `review_required`, `is_current`, timestamp. Chưa có pointer/profile trả 404. | `resume_profiles:view`; company access + branch CV, CV chưa xóa. | Đồng bộ. Profile chứa trạng thái extracted/thiếu/mâu thuẫn và quote/offset; không thay thế dữ liệu bằng thông tin tự suy diễn. Parse lại bỏ pointer, vì vậy latest có thể 404 cho đến khi extraction mới hoàn tất. |
-| `GET /api/v1/resumes/{resume_id}/profiles/{profile_id}` | Đọc một version bằng profile ID. | 200; `ProfileResponse`; không phải profile của CV/company trả 404. | `resume_profiles:view`; cùng policy company/branch/CV chưa xóa. | Giữ profile lịch sử, `is_current=false` nếu đã có version hoặc parse revision mới. Không có API chỉnh dữ liệu trích xuất hoặc list mọi version. |
+| `GET /api/v1/resumes/{resume_id}/profiles/latest` | Đọc profile mà CV đang trỏ tới. | 200 `ProfileResponse`: profile đầy đủ, origin AI/HR, version/provenance, HR facts, reviewer/reason, `review_required/is_current`; thiếu pointer 404. | `resume_profiles:view`; company/branch CV, chưa xóa. | Latest có thể là HR revision; quote/hash CV vẫn giữ nguyên, HR facts riêng. Parse lại bỏ pointer cho đến extraction mới. |
+| `GET /api/v1/resumes/{resume_id}/profiles/{profile_id}` | Đọc một version bằng profile ID. | 200 `ProfileResponse`; sai CV/company 404. | `resume_profiles:view`; cùng scope CV. | Immutable lịch sử AI/HR; `is_current=false` khi nguồn/version đã đổi. |
+
+### Chọn model screening — 1 endpoint
+
+| Method / URL | Chức năng và đầu vào | Output / status | Quyền và phạm vi đang thực thi | Xử lý / giới hạn |
+| --- | --- | --- | --- | --- |
+| `GET /api/v1/ai-models` | Q `page=1`, `size=20` (1–100), optional `model_type=scoring/skill_matcher`. | 200 `{items,total,page,size}`; item `id,name,provider,model_id,version,description`. | `screening_runs:create`; chỉ model active cho screening. | DB projection không đọc/trả config/credentials; dùng `id` cho ScreeningStartRequest. Chưa có CRUD model/provider keys. |
+
+### HR revision hồ sơ — 2 endpoint
+
+| Method / URL | Chức năng và đầu vào | Output / status | Quyền và phạm vi đang thực thi | Xử lý / giới hạn |
+| --- | --- | --- | --- | --- |
+| `POST /api/v1/resumes/{resume_id}/profile-revisions` | Body `base_profile_id`, `expected_version>=1`, `reason`; optional toàn bộ `profile` và `hr_annotations [{section,label,value,reason}]`, cần ít nhất một. **K**. | 201 `ProfileResponse` origin HR, version/parent/reviewer/reason/facts và `is_current`. | **`resume_profiles:edit` + `resume_profiles:view`**, company/branch CV; profile nguồn phải current. | Exact CV quote/hash validation; HR-only facts riêng, IDs/reviewer/time do BE tạo; original AI bất biến. CAS pointer/counter/fence cùng insert; stale/concurrent/busy parse/extraction 409, evidence/spoof 422. Replay cùng key/command/reviewer trả revision cũ. |
+| `GET /api/v1/resumes/{resume_id}/profiles` | Q `page=1`, `size=20` (1–100). | 200 `{items,total,page,size}`; version mới trước. | `resume_profiles:view`, scope CV. | Lịch sử AI/HR, mỗi item `is_current`; bỏ HR annotations trong revision giữ facts cha, `[]` clear, list khác thay toàn bộ. |
+
+HR revisions giữ extraction run provenance của cha; startup backfill legacy
+profile thiếu origin thành AI và thay unique extraction-run index bằng unique
+chỉ `origin=ai`. Source snapshot screening giữ HR origin/reviewer/reason/time và
+facts. Evidence `origin=hr` cần `hr_fact_id` thuộc snapshot và text đúng value;
+không page/offset CV. CV evidence tiếp tục nguyên văn. HR sửa khi screening
+active làm nguồn cũ stale; worker phải từ chối trước inference/complete phù hợp,
+không ghi result/pointer/event stale. Xem [BE_MVP.md](BE_MVP.md) cho body/example,
+replay và migration.
+
+### HR override và assessment screening — 3 endpoint
+
+| Method / URL | Chức năng và đầu vào | Output / status | Quyền và phạm vi đang thực thi | Xử lý / giới hạn |
+| --- | --- | --- | --- | --- |
+| `POST /api/v1/recruitment/screenings/{run_id}/overrides` | Body company ID, `expected_version>=0`, bắt buộc `overall_score`, `decision`, `reason`; optional `comments`. **K**. | 201 `ScreeningOverrideResponse` gồm version/base/reviewer/reason, AI base và quyết định HR. | **`screening_results:override` + `screening_runs:view`**, company/application/CV branch. New override chỉ latest result và current source. | Score hữu hạn 0–100; null chỉ với hold. Append-only override; original AI score/evidence giữ nguyên. Version/source/latest/concurrent/key mismatch 409; transaction result CAS + CV/app fences. |
+| `GET /api/v1/recruitment/screenings/{run_id}/overrides` | Q company ID, `page=1`, `size=20` (1–100). | 200 `{items,total,page,size}`, version mới trước. | `screening_runs:view`, cùng scope result/run; history được phép vẫn đọc được. | Immutable history theo result, không lộ raw CV/config/provider keys trong AI base. |
+| `GET /api/v1/recruitment/screenings/{run_id}/assessment` | Q company ID. | 200 `{ai,effective,latest_override,override_revision,source_is_current,is_latest_result,review_required}`. | `screening_runs:view`, cùng scope result/run. | Effective source AI hoặc HR override của result đang xem; lịch sử vẫn trả nhưng UI phải xét current/latest/review_required. Không tự đổi stage hoặc profile. |
 
 ### Luồng MVP hiện thực hiện được và các phần còn thiếu
 
 1. HR tạo candidate và job; tạo scorecard theo tiêu chí/trọng số/ngưỡng đã chốt. Upload CV nhận `resume_id`; tạo application liên kết candidate/CV/job. Application có thể được tạo ngay sau upload, không cần đợi parsing.
 2. Client tạo parse run và poll endpoint run. Worker xử lý PDF/DOCX, chọn OCR/fallback theo adapter và lưu văn bản. MinerU thật là service riêng cần được vận hành; native parser không thay thế OCR cho PDF scan.
-3. Client tạo extraction run khi parsing hoàn tất, poll run rồi đọc profile. HTTP extractor đã có trong repository; model cloud cần credentials/cấu hình tại service. Quote/hash/Unicode offsets được kiểm lại trước ghi kết quả. Schema pass chưa chứng minh model hiểu CV đúng; chất lượng cần nghiệm thu bằng CV có nhãn HR.
+3. Client tạo extraction run khi parsing hoàn tất, poll run rồi đọc profile. HR tạo revision cho sửa dữ liệu có quote CV hoặc ghi facts xác nhận riêng ngoài CV; latest/history giữ source/version/provenance. HTTP extractor đã có; model cloud cần cấu hình riêng. Quote/hash/Unicode offsets được kiểm trước ghi; chất lượng cần corpus có nhãn HR.
 4. Client tạo screening run khi có profile hiện hành và scorecard active. BE đã có HTTP screening adapter, contract `/v1/screen`, source/model/scorecard/prompt snapshot, kiểm response binding và dẫn chứng. **AI service thực hiện inference screening chưa có trong repository**; chỉ có adapter nối service đó. Không mô tả đây là luồng AI screening chạy độc lập chỉ nhờ bật BE.
 5. Worker giữ claim/heartbeat/lease/generation, fencing nguồn, transaction ghi result, recovery và idempotency. Screening lỗi HTTP tạm thời retry 5/10/20/40 rồi tối đa 60 giây, theo `next_retry_at` bền vững trong Mongo; mặc định tối đa 3 attempts. Redis chỉ chuyển metadata; queue publish sau commit. Response 202 có thể vẫn queued khi worker/service chưa hoạt động.
-6. Kết quả `scoring_version=2` trả điểm tổng khi toàn bộ tiêu chí đã đánh giá; thiếu hoặc mâu thuẫn giữ điểm `null`, coverage/bounds và `hold`. `match_percentage` không được dùng như xác suất phù hợp. HR có thể ghi review riêng và chuyển stage bằng hai API khác nhau.
+6. Kết quả `scoring_version=2` trả điểm tổng khi toàn bộ tiêu chí đã đánh giá; thiếu/mâu thuẫn giữ `null`, coverage/bounds và `hold`. `match_percentage` không là xác suất phù hợp. HR lưu review riêng hoặc override có lý do/version; frontend đọc assessment để tách AI/HR và biết source/current/latest. Chuyển stage vẫn là lệnh riêng.
 
 Các khoảng trống cần giữ rõ trong mô tả sản phẩm:
 
 - Không có API candidate delete/merge/restore. Candidate update chỉ sửa dữ liệu/status được schema cho phép.
-- Không có API list/get metadata từng CV riêng sau upload, download/xem file gốc, delete/restore CV hoặc đọc raw parse text; không có mount static uploads trong `app/main.py`.
-- Không có API sửa profile trích xuất, lưu bản sửa HR/override có lý do hoặc audit diff cho profile. Review hiện tại là record riêng; không phải tính năng ghi đè quyết định AI.
+- CV đã có list/detail/download; chưa có delete/restore hoặc đọc raw parse text; không có mount static uploads trong `app/main.py`.
+- HR đã có revision profile và override quyết định kèm lịch sử/reason/reviewer; chưa có endpoint diff riêng giữa các profile. ApplicationReview vẫn là record nhận xét độc lập.
 - Không có API list/cancel/retry explicit cho parse/extraction/screening run; retry do worker/maintenance, hoặc client tạo command mới bằng key mới sau run terminal theo policy. Các cơ chế idempotency của parse và extraction/screening không nên mô tả là giống hệt nhau: parse còn có nhánh reuse input hash active, extraction/screening yêu cầu original key khi active.
 - Không có API list/version detail scorecard, bulk screening, bảng xếp hạng ứng viên, export kết quả tuyển dụng hoặc thống kê tuyển dụng. Helper/permission có tên tương tự không chứng minh có endpoint công khai.
-- Phạm vi authorization chưa đồng nhất giữa module legacy và pipeline mới: search job không tenant filter; nhiều API candidate/application/scorecard/review dùng company access; parsing chưa kiểm branch riêng; extraction/screening kiểm branch rõ hơn. Bảng trên ghi hành vi hiện tại, không phải xác nhận mọi module đã cô lập branch hoàn chỉnh.
+- Candidate vẫn là resource cấp company; search job legacy không tenant filter. Application/scorecard/review và CV pipeline đã có chốt branch theo resource; không suy ra mọi helper/legacy endpoint ngoài phạm vi tự dùng cùng policy.
 
-Nguồn đối chiếu: `app/dependencies/versions.py`, `app/main.py`, `app/api/candidates.py`, `app/api/job_requirements.py`, `app/api/recruitment.py`, `app/api/upload.py`; schemas/services/repositories tương ứng; `app/core/scoring.py`, `app/core/tenant_policy.py`, `app/services/tenant_access_service.py`, `app/services/processing_service.py`, `app/workers/screening_adapter.py`. Việc kiểm kê chỉ đọc code, không gọi API, DB, provider hay chạy pipeline thật.
+Nguồn đối chiếu: `app/dependencies/versions.py`, `app/main.py`, các router candidates/job/recruitment/upload/ai_models/resume_profile_reviews/screening_overrides; schema/service/repository tương ứng, scoring/tenant policy và worker adapter. Inventory đọc code không tự nghiệm thu provider; kết quả regression runtime được ghi riêng trong ISSUE_STATUS.
 
 ## 7. API vận hành của BE chính — 7 endpoint
 
@@ -430,7 +451,7 @@ JSON thất bại, handler hiện có thể trả JSON chứa `error` với stat
 | BE chính | GET | `/docs/oauth2-redirect` | Callback phụ trợ của Swagger UI khi docs được bật; không phải API đăng nhập nghiệp vụ |
 | Extractor riêng | GET | `/openapi.json` | FastAPI vẫn dùng URL schema mặc định; Swagger UI/ReDoc của extractor bị tắt |
 
-Đây là route framework tạo, không tính vào 94 endpoint khai báo trực tiếp.
+Đây là route framework tạo, không tính vào 103 endpoint khai báo trực tiếp.
 
 ## 8. API extractor riêng — 3 endpoint
 
@@ -457,7 +478,7 @@ BE đã có `HTTPScreeningAdapter` gửi **POST `/v1/screen`** đến AI service
 `SCREENING_API_URL`. Request dùng service token, key run ID, source/profile,
 scorecard/model/prompt snapshots; response cần echo binding và trả đánh giá
 từng tiêu chí. Server nhận endpoint này **chưa tồn tại trong repository**, nên
-không tính vào 94 API hiện có. Xem [contract screening HTTP](SCREENING_HTTP_ADAPTER.md).
+không tính vào 103 API hiện có. Xem [contract screening HTTP](SCREENING_HTTP_ADAPTER.md).
 
 `build_screening_request()`, `claim_*`, `renew_*`, `complete_*`, `fail_*` và
 `recover_expired_leases()` là hàm nội bộ của worker/service, không có router
@@ -470,11 +491,10 @@ rỗng; pipeline đang chạy qua `app/workers/` và các service đã được 
 | --- | --- |
 | AI screening bằng model thật | Có BE adapter/contract; cần AI service `/v1/screen`, prompt, provider credentials và idempotency server |
 | Nghiệm thu thực tế | Cần E2E với MinerU/model/cloud/Redis thật và corpus CV Việt/Anh có nhãn HR; unit/mock không xác nhận chất lượng đánh giá |
-| HR sửa profile trích xuất | Có API đọc latest/version; chưa có API tạo bản chỉnh sửa của HR hoặc audit diff |
-| HR override screening | Có review độc lập; chưa có API override kết quả AI kèm lý do, phiên bản và lịch sử |
 | Frontend MVP | Chưa có giao diện upload → theo dõi run → kết quả/dẫn chứng → review trong repository |
-| Quản lý CV đầy đủ | Chưa có router list/detail/download/delete CV hoặc list/cancel run; metadata CV được trả lúc upload, parse status/profile có API riêng |
-| Quản lý AI model | Có document `AIModel`, snapshot và bootstrap/migration; chưa có router CRUD quản lý model/credentials |
+| Quản lý CV mở rộng | Đã có upload/list/detail/download; chưa delete/restore, list/cancel run hoặc đọc raw parse text |
+| HR workflow mở rộng | Revision hồ sơ và override có lịch sử đã có; chưa endpoint diff profile, sửa/xóa review độc lập hoặc tự chuyển stage bằng override |
+| Quản lý AI model | Đã có list model active cho chọn screening; chưa CRUD quản lý model/credentials |
 | Lịch sử tuyển dụng/audit | Có lưu stage events và audit log; chưa có API đọc riêng stage timeline/audit log |
 | Branch CRUD đầy đủ | Hiện chỉ create/list/detail, chưa có update/delete branch |
 | Báo cáo tuyển dụng | Có stats user/membership và metrics hạ tầng; chưa có dashboard tuyển dụng, báo cáo chất lượng/ranking AI hoàn chỉnh |
@@ -486,15 +506,17 @@ policy hoặc thay đổi response hiện hữu.
 
 ## 11. Bằng chứng và tài liệu liên quan
 
-Lần rà soát này chỉ viết tài liệu: đối chiếu router bằng AST, kiểm coverage
-method/URL, nội dung/đường dẫn và `git diff --check`; không gọi API nghiệp vụ,
-gửi email, ghi dữ liệu ứng dụng hoặc chạy lại toàn bộ test.
+Inventory ngày 2026-10-14 đối chiếu AST router: 93 business endpoint + 7 root
+BE + 3 extractor = **103 cặp method/URL theo service**; chín endpoint mới có
+trong các bảng trên. OpenAPI auto routes không cộng vào số này. Kiểm nội dung,
+links và `git diff --check` riêng cho tài liệu.
 
-Kết quả **593 passed** ở [ISSUE_STATUS.md](reviews/ISSUE_STATUS.md) là bằng chứng
-của lần triển khai BE screening HTTP trước đó, không phải test mới của tài
-liệu này. Phần model/queue giả lập và phần DB thật được phân biệt tại tài liệu đó.
+Suite regression của implementation MVP và giới hạn xác minh được ghi ở
+[ISSUE_STATUS.md](reviews/ISSUE_STATUS.md). Các số test ngày trước là lịch sử;
+không coi collect/unit mock là kết quả Mongo transaction hoặc model thật.
 
 - [README / vận hành](../README.md).
+- [Contract và workflow Backend MVP](BE_MVP.md).
 - [Local development](LOCAL_DEVELOPMENT.md).
 - [MinerU và parsing](MINERU_ADAPTER.md).
 - [Contract extraction](RESUME_EXTRACTION_CONTRACT.md).

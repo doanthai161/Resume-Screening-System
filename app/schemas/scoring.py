@@ -1,8 +1,9 @@
 """Evidence-based worker contract; aggregate scores belong to the backend."""
 from enum import Enum
-from typing import Optional
+from typing import Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
+from beanie import PydanticObjectId
 
 from app.schemas.resume_extraction import MAX_SOURCE_CHARACTERS
 
@@ -20,11 +21,19 @@ class CriterionEvidence(BaseModel):
     text: str = Field(..., strict=True, min_length=1, max_length=2000)
     start: Optional[int] = Field(None, strict=True, ge=0, lt=MAX_SOURCE_CHARACTERS)
     end: Optional[int] = Field(None, strict=True, gt=0, le=MAX_SOURCE_CHARACTERS)
+    origin: Literal["cv", "hr"] = "cv"
+    hr_fact_id: Optional[PydanticObjectId] = None
 
     @model_validator(mode="after")
     def validate_span(self):
         if not self.text.strip():
             raise ValueError("Screening evidence requires a nonblank quote")
+        if self.origin == "hr":
+            if not self.hr_fact_id or self.page is not None or self.start is not None or self.end is not None:
+                raise ValueError("HR evidence requires a fact ID and cannot claim CV offsets or pages")
+            return self
+        if self.hr_fact_id is not None:
+            raise ValueError("CV evidence cannot reference an HR confirmation")
         if (self.start is None) != (self.end is None):
             raise ValueError("Screening evidence requires both span offsets or neither")
         if self.start is not None and self.end - self.start != len(self.text):
